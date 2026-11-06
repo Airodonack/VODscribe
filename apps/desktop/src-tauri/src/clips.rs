@@ -234,7 +234,7 @@ impl Cutter {
     /// waiting, once its job has ended if it was running.
     pub(crate) fn cancel_job(&self, app: &AppHandle, id: i64) {
         let taken = !self.jobs.take_waiting(|&j| j == id).is_empty();
-        let running = self.jobs.stop_running_then(
+        let running = self.jobs.stop_running_and_mark(
             |&j| j == id,
             |&j| {
                 self.canceled.lock().unwrap().insert(j);

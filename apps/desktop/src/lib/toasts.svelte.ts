@@ -30,9 +30,9 @@ class Toasts {
     return seq;
   }
 
-  /** As `show`, unless `message` is up already: then it's left as it is, so
-   *  the same words don't come again; its number either way. */
-  once(message: string): number {
+  /** As `show`, unless `message` is up now: then it's left as it is, so the
+   *  same words don't come again while they show; its number either way. */
+  showUnlessUp(message: string): number {
     const up = this.shown;
     if (up && !up.error && up.message === message) return up.seq;
     return this.show(message);

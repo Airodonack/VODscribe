@@ -118,7 +118,8 @@ const fake = {
     /** @param {string} message */
     show: (message) => fake.toasts.push(message) - 1,
     /** @param {string} message */
-    once: (message) => (fake.toasts.at(-1) === message ? fake.toasts.length - 1 : fake.toasts.push(message) - 1),
+    showUnlessUp: (message) =>
+      fake.toasts.at(-1) === message ? fake.toasts.length - 1 : fake.toasts.push(message) - 1,
     /** @param {number} seq */
     drop: (seq) => void fake.dropped.push(seq),
   },

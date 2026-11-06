@@ -29,7 +29,7 @@
 // said (`making`), on every system: the app may show nothing meanwhile. An
 // app that refuses it unmade hears `finishedOnly` instead. Each drag says
 // one thing at most at a time: a toast replaces the one before, and the
-// same words aren't said again while they're up (`toast.once`).
+// same words aren't said again while they're up (`toast.showUnlessUp`).
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
@@ -148,7 +148,7 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     // Let go on an app that takes only files already made, before they were:
     // said, and they're kept in the clip bar, to drag again once made.
     if (end?.finished_only) {
-      toast.once(finishedOnly(end.receiver, list.length));
+      toast.showUnlessUp(finishedOnly(end.receiver, list.length));
       list.forEach(keepHidden);
     }
     // Made only for this: forgotten (the file stays, if it was handed out);
@@ -169,7 +169,7 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
   // Let go on another app before they're all made: said once.
   stopMaking = await events
     .dragMaking((made) => {
-      if (made.drag === mine && told === undefined) told = toast.once(making(made.making));
+      if (made.drag === mine && told === undefined) told = toast.showUnlessUp(making(made.making));
     })
     .catch(() => undefined);
   // Let go while that was set up (the release was already on its way when
@@ -670,7 +670,7 @@ function carryWith(p: Payload): Promise<void> {
         finish();
         // Said yes to: where the clips are to be dragged from, once.
         const count = p.stretches.length;
-        void clips.nextAnswer().then((yes) => yes && toast.once(downloading(count)));
+        void clips.nextAnswer().then((yes) => yes && toast.showUnlessUp(downloading(count)));
         p.put({ ...NOWHERE, bar: true }, null);
         return;
       }
