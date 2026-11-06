@@ -703,6 +703,9 @@ export const api = {
   streamerCard: (id: string) => invoke<unknown>("streamer_card", { id }),
   /** The file host's index of streamers' accounts, unread (streamers.ts), as `streamerCard` asks. */
   streamerIndex: () => invoke<unknown>("streamer_index"),
+  /** A site's VOD's "Refresh details": what its site names of its channel now, and its VODscription asked for
+   *  again (vods.rs `refresh_details`); the VOD then, or null when one for it is under way already. */
+  refreshDetails: (vodId: number) => invoke<Vod | null>("refresh_details", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),
   /** A mark (a cut, chapter or highlight) in edit `editId` at `time` seconds of its timeline. */

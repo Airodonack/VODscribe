@@ -16,6 +16,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Clips now live in the library. A clip or edit dragged out or shown in its folder still goes by its title; the ones already in Videos/VODscribe stay there.
 - Open on Twitch drags as a link. Drag Open on YouTube, Twitch or Kick, beside the VOD's title, to a browser or a chat to share where you are.
 - The jobs list shows three first. Past three, N more at its foot shows the rest.
+- Refresh a VOD's details. Refresh details, in a site VOD's menu, gets its channel's link and any VODscription or streamer card published since. Nothing the VOD has is lost.
 - VODscription offers have their own switch. Their "No, and don't ask again" turns off only Ask to use a VODscription when one is found, in Settings › Privacy; VODscriptions are still looked up.
 - Notes all say Don't ask again. The note before downloading and the Resolve note match their Ask switches in Settings.
 - Clip settings have their own section. Settings › Encoding has the clip format and quality; Storage keeps the downloaded and fetched videos.

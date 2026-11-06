@@ -19,7 +19,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { api, type Put, type Vod } from "./api";
-  import { os } from "./platform";
+  import { fromSite, os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, releaseNotes } from "./links";
@@ -39,6 +39,7 @@
   import Menu, { type MenuItem } from "./Menu.svelte";
   import { actionsFor } from "./actions";
   import { offers } from "./offers.svelte";
+  import { refreshDetails } from "./refresh";
   import { pressToDrag, type Pressed } from "./pressToDrag";
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
@@ -61,7 +62,8 @@
 
   // A row's menu, opened by a right click on it (or the menu key): what can
   // be done with its VOD or edit (actions.ts), and for a VOD from a site,
-  // asking for its annotations. Add to edit… there asks which edit, beside the row.
+  // asking its site about it again (refresh.ts) and asking for its
+  // annotations. Add to edit… there asks which edit, beside the row.
   let menuOpen = $state(false);
   let menuFor = $state<{ row: LibraryRow; el: HTMLElement } | null>(null);
   let addingRow = $state(false);
@@ -84,14 +86,16 @@
       { kind: "vod", vod },
       { addToEdit, onremove: (id) => id === selectedId && onselect(null) },
     );
-    // Annotations are published for VODs from sites (a file's id is this computer's own).
+    // Before Remove…: asking its site again, for a VOD from one, and
+    // annotations, published for VODs from sites (a file's id is this computer's own).
+    const asks: MenuItem[] = [];
+    if (fromSite(vod)) asks.push({ label: "Refresh details", icon: "redo", run: () => void refreshDetails(vod) });
     if (vod.platform !== "local")
-      items.splice(
-        items.length - 1,
-        0,
+      asks.push(
         { label: "Check for a VODscription", icon: "gift", run: () => void offers.check(vod) },
         { label: "Check all VODs for VODscriptions", icon: "gift", run: () => void offers.checkLibrary() },
       );
+    items.splice(items.length - 1, 0, ...asks);
     return items;
   });
 

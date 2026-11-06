@@ -301,6 +301,20 @@ export class CardCache {
   }
 
   /**
+   * `of`, past what's kept this session: the index asked for again, and the
+   * card it then names (a VOD's "Refresh details", so a card published
+   * since shows). A failure keeps nothing, as ever.
+   */
+  async fresh(member: Pick<CastMember, "streamer" | "account">, account = member.account): Promise<Streamer | null> {
+    this.#index = null;
+    const named = cardId(member.streamer);
+    const id = named ?? (account ? cardIdOf(await this.index(), account) : null);
+    if (!id) return null;
+    this.#cards.delete(id);
+    return this.card(id);
+  }
+
+  /**
    * The card of `member`: the one the VOD's annotations name, else the one
    * the index has for their account (`account`, the VOD's channel's when the
    * cast gives none), else none.

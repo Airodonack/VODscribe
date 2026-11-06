@@ -16,15 +16,22 @@
 // answers, the card's own, "Pell Harrow". Escape closes a card. A VOD
 // added from YouTube (the yt-dlp stand-in's, lib/siteVod.mjs) and one from
 // Dailymotion, with no annotations: the channel's card links to the
-// channel's page as the site named it, with no picture.
+// channel's page as the site named it, with no picture. And a YouTube VOD
+// added before the library kept its channel's login and page: its card has
+// no link to the channel until its row's Refresh details asks the site
+// again; while the site says the video's gone, that says so and changes
+// nothing; then it has the channel's page, and the card and VODscription
+// published since show, the index asked for again past the session's.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { serveFiles } from "../lib/fileHost.mjs";
-import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
+import { dataDirs, libraryPath } from "../lib/data.mjs";
+import { notFilter, serveFiles } from "../lib/fileHost.mjs";
+import { addSiteVod, offerShown, siteSaysGone, withSiteVods } from "../lib/siteVod.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
@@ -32,6 +39,8 @@ const CHAT = path.join(here, "..", "fixtures", "annotations-minute.chat.json");
 const CARDS = JSON.parse(readFileSync(path.join(here, "..", "fixtures", "streamer-cards.json"), "utf8"));
 const NAMED = "v100000091";
 const LOOKED_UP = "v100000092";
+/** The stand-in's YouTube VOD added as one before 0.7.2 was, which kept no channel login or page. */
+const OLDER = "e2eolder";
 
 /** Vance's picture: four pixels square, all yellow. */
 const PICTURE = Buffer.from(
@@ -39,9 +48,11 @@ const PICTURE = Buffer.from(
   "base64",
 );
 
+/** A file host's answer of `body`, as JSON. */
+const json = (body) => ({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
 /** The file host: the cards and their index, and Vance's picture; nothing else is there. */
 function host(method, at) {
-  const json = (body) => ({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (at === "/streamers.json") return json(CARDS.index);
   const card = /^\/streamers\/([a-z0-9_-]+)\.json$/.exec(at)?.[1];
   if (card && CARDS.cards[card]) return json(CARDS.cards[card]);
@@ -281,6 +292,110 @@ export default {
             picture: "no img",
           });
           await close();
+        }
+
+        // A VOD added before the library kept its channel's login and page,
+        // as one from 0.7.1 is upgraded: none in its row, and no info JSON
+        // left to fill them from at start (pipeline::fill_channels).
+        const older = await addSiteVod(app, OLDER);
+        await ctx.quit();
+        const db = new DatabaseSync(libraryPath());
+        try {
+          db.prepare("UPDATE vods SET channel_login = NULL, channel_url = NULL WHERE id = ?").run(older.id);
+        } finally {
+          db.close();
+        }
+        rmSync(path.join(dataDirs().at(-1), "work", `${older.id}.info.json`), { force: true });
+        app = await ctx.start();
+        // Published since it was added: the card for its channel's YouTube
+        // account, and its VODscription.
+        let published = false;
+        const since = serveFiles((method, at) => {
+          if (at === "/streamers.json" && published)
+            return json({ ...CARDS.index, accounts: { ...CARDS.index.accounts, "youtube/@marlowe": "marlowe" } });
+          if (at === `/annotations/youtube/${OLDER}.json`)
+            return published ? { status: 200, headers: { ETag: '"v1"' }, body: "{}" } : { status: 404 };
+          return host(method, at);
+        });
+        try {
+          await app.toLibrary();
+          await app.click(`.vod[data-key="${older.id}"]`);
+          await until(
+            "the older VOD open",
+            () => app.js(`return !!document.querySelector(".info .meta .platform.youtube")`),
+            MINUTE,
+          );
+          // Its channel's card: the name it has, and no link to the channel.
+          await app.click(".info .meta .channel");
+          const before = await settledCard("the older VOD's channel");
+          check("the older VOD's channel's card", before, {
+            name: "Marlowe",
+            aliases: null,
+            links: [],
+            sections: [],
+            picture: "no img",
+          });
+          await close();
+          published = true;
+
+          // The site says the video's gone: said so, and nothing changes or is asked of the file host.
+          const vodNow = async () => (await app.invoke("list_vods")).find((v) => v.id === older.id);
+          const channelOf = (vod) => JSON.stringify([vod?.channel_login ?? null, vod?.channel_url ?? null]);
+          siteSaysGone(true);
+          const asked = since.requests.filter(notFilter).length;
+          await app.rowMenu(older.id, "Refresh details");
+          const failed = await until(
+            "Refresh details to fail",
+            async () => {
+              const says = await app.toastSays();
+              return says.startsWith("Couldn't refresh") && says;
+            },
+            MINUTE,
+          ).catch(async () => `(${await app.toastSays()})`);
+          if (
+            failed !==
+            "Couldn't refresh the details. That video isn't available. It may have been deleted or made private."
+          )
+            wrong.push(`Refresh details, the video gone, says "${failed}"`);
+          if (channelOf(await vodNow()) !== "[null,null]")
+            wrong.push(`a failed refresh kept the channel ${channelOf(await vodNow())}`);
+          const after = since.requests.filter(notFilter).slice(asked);
+          if (after.length) wrong.push(`a failed refresh asked the file host for ${JSON.stringify(after)}`);
+          siteSaysGone(false);
+
+          // Asked again: the channel's login and page as the site names them,
+          // nothing else of the VOD changed; its VODscription offered, as
+          // after an add, and the card published since found.
+          await app.rowMenu(older.id, "Refresh details");
+          const said = await until(
+            "Refresh details to be done",
+            async () => {
+              const says = await app.toastSays();
+              return says !== failed && says;
+            },
+            MINUTE,
+          ).catch(async () => `(${await app.toastSays()})`);
+          if (said !== "Details refreshed") wrong.push(`Refresh details says "${said}"`);
+          const refreshed = await vodNow();
+          if (channelOf(refreshed) !== JSON.stringify(["@marlowe", "https://www.youtube.com/@marlowe"]))
+            wrong.push(`refreshed, the VOD's channel is ${channelOf(refreshed)}`);
+          if (refreshed?.title !== older.title) wrong.push(`refreshed, its title is "${refreshed?.title}"`);
+          await until("its VODscription offered", () => offerShown(app), 10_000).then(
+            () => app.clickText("Not now"),
+            () => wrong.push("a VODscription published since wasn't offered after Refresh details"),
+          );
+          await until("the offer closed", async () => !(await offerShown(app)), 10_000);
+          await app.click(".info .meta .channel");
+          const card = await settledCard("the refreshed VOD's channel");
+          const page = "youtube.com/@marlowe <https://www.youtube.com/@marlowe>";
+          if (card.name !== "Vance" || !card.links.includes(page))
+            wrong.push(`refreshed, the channel's card is ${JSON.stringify({ name: card.name, links: card.links })}`);
+          await close();
+          const index = since.requests.filter((r) => r.path === "/streamers.json").length;
+          if (index !== 1) wrong.push(`the index was asked for ${index} times, not once, by Refresh details`);
+        } finally {
+          since.stop();
+          siteSaysGone(false);
         }
       });
     if (wrong.length) throw new Error(wrong.join("; "));

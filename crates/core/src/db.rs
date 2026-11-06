@@ -2167,6 +2167,17 @@ impl Db {
         Ok(())
     }
 
+    /// VOD `vod_id`'s channel's login and page as its site names them now
+    /// (`pipeline::refresh_details`): each one named replaces the one kept;
+    /// one not named leaves it as it is, never guessed or cleared.
+    pub fn refresh_channel(&self, vod_id: i64, login: Option<&str>, page: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET channel_login = coalesce(?2, channel_login), channel_url = coalesce(?3, channel_url) WHERE id = ?1",
+            params![vod_id, login, page],
+        )?;
+        Ok(())
+    }
+
     /// VOD `vod_id` started at `secs` (Unix seconds), by its chat
     /// (`chat::vod_start`): better than anything else says, so it replaces
     /// it (see `MIGRATE_V33`).

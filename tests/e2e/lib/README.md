@@ -7,7 +7,7 @@ What the scenarios and the runners share.
 - `os.mjs`: the OS's side: whole-screen screenshots, colours read from them, and real clicks and keys.
 - `data.mjs`: empties the app's data folders before each scenario, keeping the tools and model.
 - `fixtures.mjs`: test files made at test time with ffmpeg, and a synthetic chat.
-- `siteVod.mjs`: VODs "from a site" added without the network, through a stand-in yt-dlp.
+- `siteVod.mjs`: VODs "from a site" added and refreshed without the network, through a stand-in yt-dlp.
 - `fileHost.mjs`: a stand-in for the host of VODscriptions and the cast's pictures.
 - `fileManager.mjs`: the file manager a dragged clip is dropped on, Nautilus or Dolphin on Linux and Finder on the Mac, and an app that takes finished files only (as any window class, such as Resolve's), and the drag scenarios' shared steps, such as choosing the clip format and quality.
 - `explorer.mjs`: File Explorer and drop targets on Windows, for drags in and out.

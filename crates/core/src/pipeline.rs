@@ -288,6 +288,46 @@ pub fn fill_channels(db: &Db, paths: &Paths, vods: &[Vod]) {
     }
 }
 
+/// A site's VOD's "Refresh details" (its row's menu): asks VOD `vod_id`'s
+/// site about it again, one look-up (`fetch::probe`), and keeps what the
+/// site now names of its channel, its login and page (`Db::refresh_channel`).
+/// Nothing else changes: not its title, length or anything the library has
+/// of it besides. The look-up's info JSON goes to a file of its own
+/// (`Paths::temp_probe`), removed after, so a download or transcription
+/// under way, and any later, find the VOD's own (`Paths::source_info`) as
+/// it was. Fails, changing nothing, when the site can't be asked or says
+/// the video's gone, or answers with another video. The VOD as it is then.
+///
+/// Later it may refresh the video's other details from the site too, such
+/// as its description, which VODscribe doesn't show yet.
+pub fn refresh_details(
+    db: &std::sync::Mutex<Db>,
+    yt_dlp: &YtDlp,
+    paths: &Paths,
+    vod_id: i64,
+    cancel: &AtomicBool,
+) -> Result<Vod> {
+    let gone = || anyhow::anyhow!("That VOD is gone.");
+    let vod = db.lock().unwrap().vod(vod_id)?.ok_or_else(gone)?;
+    if vod.source_path.is_some() || vod.info.platform == crate::local::PLATFORM {
+        bail!("A file on this computer has no site to ask.");
+    }
+    fs::create_dir_all(paths.work())?;
+    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let probe = paths.temp_probe(nanos);
+    let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
+    let _ = fs::remove_file(&probe);
+    let info = probed?;
+    if (info.platform.as_str(), info.platform_id.as_str())
+        != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
+    {
+        bail!("The site answered with another video, so nothing changed.");
+    }
+    let db = db.lock().unwrap();
+    db.refresh_channel(vod_id, info.channel_login.as_deref(), info.channel_url.as_deref())?;
+    db.vod(vod_id)?.ok_or_else(gone)
+}
+
 /// Removes VOD `vod_id`'s kept video, and any part of one, from `Paths::media`.
 pub fn remove_media(paths: &Paths, vod_id: i64) {
     remove_work_files(&paths.media(), vod_id);
@@ -656,6 +696,84 @@ mod tests {
         assert_eq!(channel(kept.id), (Some("@quill".into()), Some("https://www.youtube.com/@quill".into())));
         assert_eq!(channel(other.id), (None, None));
         assert_eq!(channel(none.id), (None, None), "nothing kept, nothing known");
+    }
+
+    /// Refresh details takes the channel's login and page from what the
+    /// site says now (a stand-in yt-dlp answering with `answer` beside it),
+    /// only for the VOD's own video, and only what's named; the VOD's own
+    /// info JSON, which the pipeline reads, stays as it was, and nothing of
+    /// the look-up is left in the work folder.
+    #[test]
+    fn refreshing_details_takes_the_channel_the_site_names() {
+        let root = crate::TempDir::new("refresh-details");
+        let paths = Paths::new(root.join("data"));
+        fs::create_dir_all(paths.work()).unwrap();
+        let answer = root.join("answer.json");
+        let path = root.join("yt-dlp");
+        fs::write(&path, format!("#!/bin/sh\ncat '{}' || exit 1\n", answer.display())).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        let yt_dlp = YtDlp { path, js_runtime: None };
+        let db = std::sync::Mutex::new(Db::open(Path::new(":memory:")).unwrap());
+        let info = VodInfo {
+            platform: "youtube".into(),
+            url: "https://www.youtube.com/watch?v=aaa".into(),
+            title: "As added".into(),
+            ..crate::edits::tests::info("aaa")
+        };
+        let vod = db.lock().unwrap().add_vod(&info).unwrap().0;
+        // What the pipeline found when it was added, and reads for a download.
+        fs::write(paths.source_info(vod.id), b"{\"kept\":true}").unwrap();
+        let say = |id: &str, channel: serde_json::Value| {
+            let mut json = serde_json::json!({ "id": id, "extractor_key": "Youtube", "title": "Renamed since",
+                "webpage_url": format!("https://www.youtube.com/watch?v={id}"), "duration": 99.0 });
+            json.as_object_mut().unwrap().extend(channel.as_object().unwrap().clone());
+            fs::write(&answer, json.to_string()).unwrap();
+        };
+        let no = AtomicBool::new(false);
+        let refresh = || refresh_details(&db, &yt_dlp, &paths, vod.id, &no);
+        let channel = || {
+            let info = db.lock().unwrap().vod(vod.id).unwrap().unwrap().info;
+            (info.channel_login, info.channel_url)
+        };
+
+        // Nothing named, nothing guessed: what's kept stays as it is.
+        say("aaa", serde_json::json!({ "channel": "Quill" }));
+        refresh().unwrap();
+        assert_eq!(channel(), (None, None));
+
+        // Another video's info isn't this VOD's.
+        say("zzz", serde_json::json!({ "uploader_id": "@other", "uploader_url": "https://www.youtube.com/@other" }));
+        assert!(refresh().unwrap_err().to_string().contains("another video"));
+        assert_eq!(channel(), (None, None));
+
+        // Its own: the channel's login and page, and nothing else of it.
+        say("aaa", serde_json::json!({ "uploader_id": "@quill", "uploader_url": "https://www.youtube.com/@quill" }));
+        let refreshed = refresh().unwrap();
+        assert_eq!(
+            (refreshed.info.channel_login.as_deref(), refreshed.info.channel_url.as_deref()),
+            (Some("@quill"), Some("https://www.youtube.com/@quill"))
+        );
+        assert_eq!((refreshed.info.title.as_str(), refreshed.info.duration), ("As added", info.duration));
+
+        // A page off the VOD's site isn't one; the login named still is. And
+        // what the site no longer names stays.
+        say("aaa", serde_json::json!({ "uploader_id": "@quill2", "uploader_url": "https://evil.example/@quill" }));
+        refresh().unwrap();
+        assert_eq!(channel(), (Some("@quill2".into()), Some("https://www.youtube.com/@quill".into())));
+
+        // The site can't be asked: an error, and nothing changes.
+        fs::remove_file(&answer).unwrap();
+        assert!(refresh().is_err());
+        assert_eq!(channel(), (Some("@quill2".into()), Some("https://www.youtube.com/@quill".into())));
+
+        assert_eq!(fs::read(paths.source_info(vod.id)).unwrap(), b"{\"kept\":true}");
+        let left: Vec<_> = fs::read_dir(paths.work()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, [paths.source_info(vod.id).file_name().unwrap()], "nothing of the look-ups left");
+
+        // A file on this computer has no site to ask.
+        let file = VodInfo { platform: crate::local::PLATFORM.into(), ..crate::edits::tests::info("f") };
+        let file = db.lock().unwrap().add_vod(&file).unwrap().0;
+        assert!(refresh_details(&db, &yt_dlp, &paths, file.id, &no).is_err());
     }
 
     #[test]

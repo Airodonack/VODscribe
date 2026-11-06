@@ -4,7 +4,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 
 - `main.rs`: starts the app.
 - `lib.rs`: the app's state and startup, and the list of commands.
-- `vods.rs`: the library's commands: adding, ordering and controlling VODs, and reading transcripts.
+- `vods.rs`: the library's commands: adding, ordering and controlling VODs, refreshing a site's VOD's details, and reading transcripts.
 - `setup.rs`: first-run setup, settings, the GPU add-on and storage.
 - `recovery.rs`: the recovery screen's commands, when the library won't open.
 - `worker.rs`: the transcription queue, downloading in one stage and transcribing in another.

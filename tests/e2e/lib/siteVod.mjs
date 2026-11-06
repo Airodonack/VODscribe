@@ -2,7 +2,10 @@
 // stand-in in the data folder's bin (the real one put back after) that
 // answers any lookup as a YouTube video whose id is the link's last part, a
 // minute long, of channel Marlowe (@marlowe) (or a Dailymotion one, for a
-// link to /dailymotion/<id>, its channel's page named), and does nothing else: it has no chat replay, and a download fails. YouTube's,
+// link to /dailymotion/<id>, its channel's page named), and does nothing
+// else: it has no chat replay, and a download fails. Asked again at the
+// address it gave for the video, it answers for the same one, or, while
+// told to (`siteSaysGone`), says the video's gone. YouTube's,
 // as the file host is asked only about Twitch's, YouTube's and Kick's VODs,
 // and YouTube's chat comes through yt-dlp alone; the answer names no
 // thumbnail and its player loads only on Play, so adding one reaches nothing
@@ -28,13 +31,24 @@ done
 # A chat replay asked for: none written, as for a video that wasn't a livestream.
 [ "$chat" = 1 ] && exit 0
 [ "$json" = 1 ] || exit 1
+# The site says the video's gone while a file named as this one and ".gone" is beside it (\`siteSaysGone\`).
+[ -e "$0.gone" ] && { echo "ERROR: [youtube] \${link##*/}: Video unavailable" >&2; exit 1; }
+# A VOD's own address, as the site gave it when it was added, asks for the same video.
 id="\${link##*/}"
+id="\${id#watch?v=}"
 rest="\${link%/*}"
 case "\${rest##*/}" in
-  dailymotion) printf '{"id":"%s","extractor_key":"Dailymotion","webpage_url":"https://www.dailymotion.com/video/%s","title":"A minute with Marlowe","channel":"Marlowe","channel_url":"https://www.dailymotion.com/marlowe","duration":60}\\n' "$id" "$id" ;;
+  dailymotion|video) printf '{"id":"%s","extractor_key":"Dailymotion","webpage_url":"https://www.dailymotion.com/video/%s","title":"A minute with Marlowe","channel":"Marlowe","channel_url":"https://www.dailymotion.com/marlowe","duration":60}\\n' "$id" "$id" ;;
   *) printf '{"id":"%s","extractor_key":"Youtube","webpage_url":"https://www.youtube.com/watch?v=%s","title":"A minute with Marlowe","channel":"Marlowe","uploader":"Marlowe","uploader_id":"@marlowe","uploader_url":"https://www.youtube.com/@marlowe","duration":60}\\n' "$id" "$id" ;;
 esac
 `;
+
+/** Has the stand-in (`withSiteVods`) say every video is gone, or, with `gone` false, answer again. */
+export function siteSaysGone(gone) {
+  const marker = path.join(dataDirs().at(-1), "bin", "yt-dlp.gone");
+  if (gone) writeFileSync(marker, "");
+  else rmSync(marker, { force: true });
+}
 
 /** The link the stand-in answers for VOD `id`: YouTube's, or `site`'s ("dailymotion"). */
 export const linkTo = (id, site = null) => `https://vods.example.invalid/${site ? `${site}/` : ""}${id}`;
@@ -61,6 +75,7 @@ export async function withSiteVods(ctx, fn) {
     return await fn(await ctx.start());
   } finally {
     rmSync(ytDlp, { force: true });
+    rmSync(`${ytDlp}.gone`, { force: true });
     if (existsSync(real)) renameSync(real, ytDlp);
   }
 }

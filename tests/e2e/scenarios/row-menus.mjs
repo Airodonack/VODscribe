@@ -3,10 +3,11 @@
 // edit's row does once rendered. Its menu opens with the focus on its first
 // item, the arrows move it, Escape closes it and gives the focus back; it
 // has Show in folder, Add to edit… and Remove…, which asks as removing
-// several does, saying the transcript is erased. An edit's row has a menu
+// several does, saying the transcript is erased, and no Refresh details. An edit's row has a menu
 // too: Add to edit… asks which edit, and Delete edit… asks before it goes.
 // A site's VOD whose video was downloaded has Show in folder too, on its
-// row and in its menu, beside Open on its site and Copy link; the menu is
+// row and in its menu, beside Open on its site, Copy link and Refresh
+// details; the menu is
 // as wide as its longest item, and a click on the row closes it without
 // opening or picking the row. So has one
 // whose download is paused part way, for the part file as it is; with no
@@ -64,6 +65,8 @@ export default {
     for (const want of ["Show in folder", "Add to edit…", "Remove…"])
       if (!items.some((i) => i.startsWith(want)))
         throw new Error(`the VOD's menu has ${JSON.stringify(items)}, no ${want}`);
+    // A file has no site to ask again.
+    if (items.includes("Refresh details")) throw new Error(`a file's menu has ${JSON.stringify(items)}`);
     await until("the focus on its first item", async () => (await focused()) === items[0], 10_000);
     await app.js(
       `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))`,
@@ -148,7 +151,7 @@ export default {
     });
     await app.rowMenu(vod.id);
     const siteItems = await menu("VOD menu");
-    for (const want of ["Show in folder", "Open on", "Copy link"])
+    for (const want of ["Show in folder", "Open on", "Copy link", "Refresh details"])
       if (!siteItems.some((i) => i.startsWith(want)))
         throw new Error(`the downloaded VOD's menu has ${JSON.stringify(siteItems)}, no ${want}`);
     // Its longest item (Check all VODs for VODscriptions) fits: nothing to

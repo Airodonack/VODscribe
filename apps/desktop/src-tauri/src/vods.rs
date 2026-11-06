@@ -1,7 +1,9 @@
 //! Commands on the library: adding, ordering and controlling VODs, and reading
 //! their transcripts.
 
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -108,6 +110,50 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
     }
     Ok(added)
+}
+
+/// One VOD's "Refresh details" under way (`refresh_details`), held in
+/// `AppState::refreshing` until it ends, however it ends.
+struct Refreshing<'a>(&'a Mutex<HashSet<i64>>, i64);
+
+impl<'a> Refreshing<'a> {
+    /// None when VOD `vod_id`'s is under way already.
+    fn claim(under_way: &'a Mutex<HashSet<i64>>, vod_id: i64) -> Option<Self> {
+        // Lazily: a guard made and dropped here would take the lock held now.
+        under_way.lock().unwrap().insert(vod_id).then(|| Self(under_way, vod_id))
+    }
+}
+
+impl Drop for Refreshing<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// A site's VOD's "Refresh details" (its row's menu): what its site names
+/// of its channel now (`pipeline::refresh_details`; only that, for now),
+/// then the file host asked again about its VODscription, as when it was
+/// added (`annotations::look_up_refreshed`). The page asks again for its
+/// streamer card itself (streamers.ts `CardCache.fresh`). It runs beside a
+/// download or transcription of the VOD without touching either, and a
+/// failure changes nothing. None when one for the VOD is under way
+/// already: a second press does nothing. Later it may refresh the video's
+/// other details from its site too, such as its description.
+#[tauri::command]
+pub(crate) async fn refresh_details(app: AppHandle, vod_id: i64) -> CmdResult<Option<Vod>> {
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Option<Vod>> {
+        let state = app.state::<AppState>();
+        let Some(_under_way) = Refreshing::claim(&state.refreshing, vod_id) else { return Ok(None) };
+        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(fetch::NO_YT_DLP))?;
+        let mut vod = pipeline::refresh_details(&state.db, &yt_dlp, &state.paths, vod_id, &AtomicBool::new(false))?;
+        pipeline::mark_partial(&state.paths, &mut vod);
+        crate::page::emit(&app, "vod", &vod);
+        crate::annotations::look_up_refreshed(&app, &vod);
+        Ok(Some(vod))
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 
 #[derive(Serialize)]
@@ -643,7 +689,7 @@ pub(crate) fn remove_kept(storyboards: &crate::storyboards::Storyboards, paths: 
 
 /// `delete_video`'s work: `remove` deletes the files (`remove_kept`).
 pub(crate) fn delete_kept_video(
-    db: &std::sync::Mutex<Db>,
+    db: &Mutex<Db>,
     videos: &crate::videos::Videos,
     paths: &Paths,
     id: i64,
@@ -948,6 +994,18 @@ pub(crate) async fn kick_stream(url: String) -> CmdResult<Vec<vodscribe_core::ki
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A second Refresh details of a VOD while its first is under way gets
+    /// nothing to do; another VOD's goes ahead, and once the first ends, its next does.
+    #[test]
+    fn one_refresh_of_a_vod_at_a_time() {
+        let under_way = Mutex::default();
+        let first = Refreshing::claim(&under_way, 7).unwrap();
+        assert!(Refreshing::claim(&under_way, 7).is_none());
+        assert!(Refreshing::claim(&under_way, 8).is_some());
+        drop(first);
+        assert!(Refreshing::claim(&under_way, 7).is_some());
+    }
 
     #[test]
     fn a_stretch_asked_for_is_within_the_vod() {

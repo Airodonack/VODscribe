@@ -88,6 +88,8 @@ struct AppState {
     embed: embed::Embed,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// VODs whose details are being refreshed (`vods::refresh_details`), one at a time each.
+    refreshing: Mutex<std::collections::HashSet<i64>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -243,6 +245,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         player: player::Native::default(),
         embed: embed::Embed::default(),
         adding: Mutex::default(),
+        refreshing: Mutex::default(),
     });
     // First, so the queues' first news (what's left from last time) is heard.
     app.state::<AppState>().job_list.run(app.handle().clone())?;
@@ -422,6 +425,7 @@ pub fn run() {
             annotations::streamer_card,
             annotations::streamer_index,
             vods::cancel_add,
+            vods::refresh_details,
             vods::list_vods,
             vods::add_files,
             vods::media_extensions,

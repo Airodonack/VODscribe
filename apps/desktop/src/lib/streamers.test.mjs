@@ -176,6 +176,24 @@ test("cards are asked for once a session; offline, asked again next time", async
   assert.deepEqual(asked, ["quill", "index", "quill", "index", "nobody"]);
 });
 
+test("a card asked for fresh is asked for past what's kept, so one published since shows", async () => {
+  /** @type {string[]} */
+  const asked = [];
+  let published = false;
+  const cache = new CardCache(
+    async (id) => (asked.push(id), published ? card({ name: "Quill" }) : null),
+    async () => (asked.push("index"), index(published ? { "twitch/quill_live": "quill" } : {})),
+  );
+  assert.equal(await cache.of({}, twitch), null, "not in the index yet");
+  assert.equal(await cache.of({ streamer: "quill" }), null, "nor the card");
+  published = true;
+  assert.equal(await cache.of({}, twitch), null, "kept for the session");
+  assert.equal((await cache.fresh({}, twitch))?.name, "Quill", "by the index asked again");
+  assert.equal((await cache.of({ streamer: "quill" }))?.name, "Quill", "and kept so");
+  assert.equal(await cache.fresh({}), null, "no account, no card: nothing to ask for");
+  assert.deepEqual(asked, ["index", "quill", "index", "quill"]);
+});
+
 test("annotations name a cast member's card and the VOD's contexts, and drop what can't be one", () => {
   const file = {
     format: "vodscribe-annotations",

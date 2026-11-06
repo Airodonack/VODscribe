@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   DEFAULT_HEIGHT,
   chaptersText,
+  fromSite,
   HEIGHTS,
   hasSitePlayer,
   keepsVideo,
@@ -45,6 +46,16 @@ test("sites with their own player don't keep their video; other sites do; files 
   for (const p of ["youtube", "twitch", "kick"]) assert.ok(hasSitePlayer(vod(p)) && !keepsVideo(vod(p)));
   assert.ok(keepsVideo(vod("rumble")) && !hasSitePlayer(vod("rumble")));
   assert.ok(!keepsVideo(vod("local")) && !hasSitePlayer(vod("local")));
+});
+
+test("a VOD from a site can be asked about again; a file, added or received, can't", () => {
+  /** @param {string} platform @param {string | null} source_path */
+  const vod = (platform, source_path = null) =>
+    /** @type {import("./api").Vod} */ (/** @type {unknown} */ ({ platform, source_path }));
+  for (const p of ["youtube", "twitch", "kick", "dailymotion"]) assert.ok(fromSite(vod(p)), p);
+  assert.ok(!fromSite(vod("local", "/videos/a.mp4")));
+  assert.ok(!fromSite(vod("local")), "a file's VOD, whatever its path");
+  assert.ok(!fromSite(vod("youtube", "/videos/a.mp4")), "nor a file with a site's name");
 });
 
 test("chapters copy as YouTube reads them", () => {
