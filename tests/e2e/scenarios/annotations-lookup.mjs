@@ -1,8 +1,8 @@
 // Asking the file host about the VODs added from sites (lib/fileHost.mjs),
 // and the setting that stops it. A VOD it has nothing for: asked once,
 // then nothing offered and no gift button. One it has something for:
-// offered, and Don't ask again turns the setting off, the dialog then
-// saying where it's turned back on. With the setting off, a VOD added is
+// offered, and "No, and don't show again" turns the setting off, the dialog
+// then saying where it's turned back on. With the setting off, a VOD added is
 // never asked about, and its menu's "Check for a VODscription" says asking is
 // turned off; turned back on in Settings › Privacy, the same item asks, and
 // says when there's nothing. A VOD from another site (Dailymotion) is never
@@ -65,10 +65,10 @@ export default {
         if (asked.join() !== "HEAD /annotations/youtube/xe2enone.json")
           wrong.push(`for the VOD with none, the file host was asked: ${asked.join(", ")}`);
 
-        // Published: offered; Don't ask again turns the setting off.
+        // Published: offered; "No, and don't show again" turns the setting off.
         await addSiteVod(app, "xe2eask");
         await until("the offer", () => offerShown(app), MINUTE);
-        await app.clickText("Don't ask again");
+        await app.clickText("No, and don't show again");
         const said = await until(
           "where it's turned back on",
           () =>
@@ -80,9 +80,10 @@ export default {
           10_000,
         );
         await ctx.checkpoint("offer-stopped");
-        if (!said.includes("won't ask about the VODs you add any more")) wrong.push(`after Don't ask again: "${said}"`);
+        if (!said.includes("won't ask about the VODs you add any more"))
+          wrong.push(`after "No, and don't show again": "${said}"`);
         if ((await app.invoke("get_settings")).ask_for_annotations !== false)
-          wrong.push("Don't ask again left the setting on");
+          wrong.push("No, and don't show again left the setting on");
         await app.clickText("OK");
         await until("the dialog closed", async () => !(await offerShown(app)), 10_000);
 
@@ -95,7 +96,7 @@ export default {
         if (toast !== "VODscription is turned off in Settings › Privacy.") wrong.push(`the menu's toast: "${toast}"`);
         if (host.requests.length !== before)
           wrong.push(`with the setting off, the file host was asked: ${JSON.stringify(host.requests.slice(before))}`);
-        if (await settingTicked(app)) wrong.push("Settings shows the setting on after Don't ask again");
+        if (await settingTicked(app)) wrong.push("Settings shows the setting on after No, and don't show again");
         await ctx.checkpoint("lookup-setting");
 
         // Back on, from Settings: the menu asks, and says there's nothing.

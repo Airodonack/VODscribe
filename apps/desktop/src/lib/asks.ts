@@ -3,7 +3,7 @@
 // the pane of its subject, and Reset settings brings them all back. The note
 // itself turns its switch off: the permission note's "Don't show this
 // again", ticked; the Resolve hint, once answered either way. The
-// VODscription offer's "Don't ask again" is the Privacy switch
+// VODscription offer's "No, and don't show again" is the Privacy switch
 // `ask_for_annotations`.
 
 import type { Settings } from "./api";

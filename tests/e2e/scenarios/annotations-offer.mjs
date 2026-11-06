@@ -1,14 +1,14 @@
 // Annotations published for a VOD from a site (lib/fileHost.mjs serves
 // fixtures/annotations-minute.json as that VOD's): adding the VOD asks the
 // file host about it, once, and the app offers them: "A VODscription is
-// available for this VOD", Use, Not now, Don't ask again.
+// available for this VOD", Use, Not now, "No, and don't show again".
 // Use fetches the file and imports it: the transcript reads as the file's,
 // under its speakers' names, with its chapters, and the
 // library row has the gift button. The Timeline panel's Marks toggles hide
 // the imported chapters and highlights, or the user's own (here, as the
 // transcript's chapter dividers), and stay as left after a restart. The gift button,
 // with the file unchanged, says the VOD has the latest already and offers
-// Replace anyway (no Don't ask again); replaced, the import's marks are
+// Replace anyway (no "No, and don't show again"); replaced, the import's marks are
 // brought anew and a chapter of the user's own stays. The gift button asks the
 // file host first: with the file published anew it offers the newer ones; with asking
 // turned off it asks nothing and says its answer is from the last check.
@@ -84,9 +84,9 @@ export default {
   name: "annotations-offer",
   expects: {
     "offer-after-add":
-      'A small dialog titled "VODscription" over the app: the VOD\'s title in bold, "A VODscription is available for this VOD: a transcript, chapters and highlights.", a line in small gray print, and a row of buttons: "Don\'t ask again" as a link at the left, then "Not now" and a highlighted "Use".',
+      'A small dialog titled "VODscription" over the app: the VOD\'s title in bold, "A VODscription is available for this VOD: a transcript, chapters and highlights.", a line in small gray print, and a row of buttons at the right: "No, and don\'t show again", "Not now" and a highlighted "Use".',
     "offer-gift":
-      'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "VODscription" says the VOD has the latest VODscription already, with "Not now" and a highlighted "Replace anyway", and no "Don\'t ask again".',
+      'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "VODscription" says the VOD has the latest VODscription already, with "Not now" and a highlighted "Replace anyway", and no "No, and don\'t show again".',
   },
   async run(app, ctx) {
     const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${ID}"`);
@@ -105,7 +105,7 @@ export default {
         const wrong = [];
         if (!offered.text.includes("A VODscription is available for this VOD: a transcript, chapters and highlights."))
           wrong.push(`the offer says "${offered.text}"`);
-        if (offered.buttons.join(", ") !== "Don't ask again, Not now, Use")
+        if (offered.buttons.join(", ") !== "No, and don't show again, Not now, Use")
           wrong.push(`the offer's buttons: ${offered.buttons.join(", ")}`);
         // The filter the app asks for at its start (none published here) aside.
         const asked = host.requests.filter(notFilter).map((r) => `${r.method} ${r.path}`);

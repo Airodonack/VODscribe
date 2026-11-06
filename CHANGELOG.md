@@ -9,6 +9,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Clips come in more formats. Settings › Storage adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
 - Open on Twitch drags as a link. Drag Open on YouTube, Twitch or Kick, beside the VOD's title, to a browser or a chat to share where you are.
 - Searches that leave words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
+- The VODscription offer has plainer buttons. After you add a VOD, "No, and don't show again" sits beside Not now.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
 - The timeline shows what's downloaded. A Dailymotion VOD playing as its video downloads is darker past what's in, as an edit's footage still to come is.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.

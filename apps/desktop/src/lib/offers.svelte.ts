@@ -16,7 +16,7 @@ import { toast } from "./toasts.svelte";
 export interface Offered {
   vod: Vod;
   offer: AnnotationsOffer;
-  /** Offered because it was just added: "Don't ask again" is one of the answers. */
+  /** Offered because it was just added: "No, and don't show again" is one of the answers. */
   afterAdd: boolean;
   /** Why the file host wasn't asked just now (asking is off, or it failed), when the
    *  offer goes by the last check: the dialog says so. Null when it was asked. */
@@ -31,7 +31,7 @@ class Offers {
   /** The file host being asked, for the gift button. */
   asking = $state(false);
   error = $state<string | null>(null);
-  /** "Don't ask again" was picked: the dialog says where that's undone, then closes. */
+  /** "No, and don't show again" was picked: the dialog says where that's undone, then closes. */
   stopped = $state(false);
 
   /** Offers `vod`'s annotations, as last found, unless something else is offered already. */
@@ -121,7 +121,7 @@ class Offers {
     }
   }
 
-  /** "Don't ask again": the app stops asking the file host at all. */
+  /** "No, and don't show again": the app stops asking the file host at all. */
   async stop() {
     await settings.update({ ask_for_annotations: false });
     this.stopped = true;
