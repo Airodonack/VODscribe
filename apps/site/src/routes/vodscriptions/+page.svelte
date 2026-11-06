@@ -34,19 +34,6 @@
     { id: "youtube", name: "YouTube" },
     { id: "kick", name: "Kick" },
   ] as const;
-
-  // The FAQ is kept, not shown, for when there are more questions than these.
-  /* const FAQ = [
-    {
-      q: "Which platforms?",
-      a: "Twitch, YouTube and Kick.",
-    },
-    {
-      q: "Is there a rate for small channels?",
-      a: "Sometimes, on different terms from the standard VODscription. Email and say what you stream and how often; you'll get a straight answer.",
-      link: { text: "Send an email", href: CONTACT_MAILTO },
-    },
-  ]; */
 </script>
 
 <svelte:head>
@@ -134,7 +121,7 @@
         </p>
       </li>
       <li>
-        <h2>We wait for your consent</h2>
+        <h2>I wait for your consent</h2>
         <p class="muted">
           Nothing is charged or made until the creator signs in and says yes, even when someone else pays.
         </p>
@@ -143,7 +130,7 @@
         <h2>See annotations within hours</h2>
         <p class="muted">
           Once your stream ends, they're made automatically and show up in VODscribe and on this site. If anything looks
-          wrong, <a href={SUPPORT_MAILTO}>let us know right away</a>.
+          wrong, <a href={SUPPORT_MAILTO}>let me know right away</a>.
         </p>
       </li>
     </ul>
@@ -154,33 +141,18 @@
     <div>
       <h2><Icon name="shield" size={20} />You choose who sees them</h2>
       <p class="muted">
-        Annotations are open to everyone by default. If bad actors follow your channel, whitelist who sees them; you or
-        your managers handle requests for access.
+        Annotations are open to everyone by default. If bad actors follow your channel, keep an allow list of who sees
+        them; you or your managers handle requests for access.
       </p>
     </div>
     <div>
       <h2><Icon name="user" size={20} />Smaller channel?</h2>
       <p class="muted">
-        A lower rate on different terms may be available. <a href={CONTACT_MAILTO}>Send an email</a> and tell us what you
+        A lower rate on different terms may be available. <a href={CONTACT_MAILTO}>Send an email</a> and tell me what you
         stream.
       </p>
     </div>
   </section>
-
-  <!-- The FAQ is kept, not shown, for when there are more questions than these.
-  <section class="faq">
-    <h2>Questions</h2>
-    {#each FAQ as item (item.q)}
-      <details>
-        <summary>{item.q}</summary>
-        <p class="muted">
-          {item.a}
-          {#if item.link}<a href={item.link.href}>{item.link.text}</a>{/if}
-        </p>
-      </details>
-    {/each}
-  </section>
-  -->
 </main>
 
 <style>
