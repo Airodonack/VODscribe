@@ -5,8 +5,9 @@
   // being received (desktop job_list.rs). A line
   // says what's going on, with the progress of what's being made; clicked,
   // it opens the list above it: each job with its name, what it's doing and
-  // how far, and Cancel. The clips and edits waiting can be dragged into
-  // another order. Shown only while there's something to show.
+  // how far, and Cancel; past three, "N more" shows the rest. The clips and
+  // edits waiting can be dragged into another order. Shown only while
+  // there's something to show.
   import { onMount } from "svelte";
   import { flip } from "svelte/animate";
   import { api, events, type Job } from "./api";
@@ -54,6 +55,14 @@
     if (!jobs.length) open = false;
   });
 
+  /** How many the list shows until "N more" is clicked. */
+  const SHOWN = 3;
+  // All shown once "N more" is clicked, till the list closes.
+  let expanded = $state(false);
+  $effect(() => {
+    if (!open) expanded = false;
+  });
+
   const running = $derived(jobs.filter((j) => j.kind !== "erase" && j.running));
   const erasing = $derived(jobs.filter((j) => j.kind === "erase"));
   const byId = $derived(new Map(waitingJobs(jobs).map((j) => [j.id, j])));
@@ -68,6 +77,17 @@
     },
   );
   const waiting = $derived(reorder.order.map((id) => byId.get(id)).filter((j) => j !== undefined));
+
+  // Folded, the first three: those being made, then those waiting, then
+  // those being erased. The waiting ones folded away aren't drawn, so a
+  // dragged row goes no further than the last shown (Reorder skips rows
+  // that aren't drawn).
+  const hidden = $derived(expanded ? 0 : Math.max(0, jobs.length - SHOWN));
+  const shownRunning = $derived(expanded ? running : running.slice(0, SHOWN));
+  const shownWaiting = $derived(expanded ? waiting : waiting.slice(0, SHOWN - shownRunning.length));
+  const shownErasing = $derived(
+    expanded ? erasing : erasing.slice(0, SHOWN - shownRunning.length - shownWaiting.length),
+  );
 
   // It leaves the list with the news that it's out of the queue (one being
   // made, once its ffmpeg has ended).
@@ -115,11 +135,11 @@
 <Popover bind:open anchor={button} label="Jobs" width={Math.max(220, width - 16)} padding={4} above>
   <div class="jobs" role="list" aria-label="Jobs">
     <!-- (Keyed by kind too: a file received and a clip may share an id.) -->
-    {#each running as job (`${job.kind}-${job.id}`)}
+    {#each shownRunning as job (`${job.kind}-${job.id}`)}
       <div class="job" role="listitem" data-job="{job.kind}-{job.id}">{@render inner(job)}</div>
     {/each}
     <div class="waiting" bind:this={reorder.list}>
-      {#each waiting as job (job.id)}
+      {#each shownWaiting as job (job.id)}
         <!-- Dragged anywhere but its Cancel to move it in the queue. -->
         <div
           class="job movable"
@@ -139,10 +159,15 @@
         </div>
       {/each}
     </div>
-    {#each erasing as job (job.id)}
+    {#each shownErasing as job (job.id)}
       <div class="job" role="listitem" data-job="{job.kind}-{job.id}">{@render inner(job)}</div>
     {/each}
   </div>
+  {#if hidden}
+    <button class="more" onclick={() => (expanded = true)}>
+      {hidden} more <Icon name="chevron-down" size={14} />
+    </button>
+  {/if}
 </Popover>
 
 <style>
@@ -173,6 +198,28 @@
   }
 
   .open:hover:not(:disabled) {
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* Under the first three, as a menu's last choice. */
+  .more {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    margin-top: 2px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+    text-align: left;
+  }
+
+  .more:hover:not(:disabled) {
     background: var(--bg);
     color: var(--text);
   }

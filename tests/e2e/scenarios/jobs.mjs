@@ -1,8 +1,10 @@
 // The list of jobs at the bottom of the library: three clips of all of a
 // long file asked for at once, one made at a time, show there with their
-// names, the first being made, the other two waiting. The last is dragged
-// above the one before it, and the queue takes that order: it's the one
-// made next. Cancel on the one being made ends it: its part file goes, it
+// names, the first being made, the other two waiting, and nothing more to
+// show. A fourth asked for: the list still shows three, and "1 more". The
+// last of the three is dragged above the one before it, and the queue takes
+// that order: it's the one made next. "1 more" shows all four; the fourth's
+// Cancel takes it out, and "1 more" doesn't come back. Cancel on the one being made ends it: its part file goes, it
 // leaves the list, and the clip says it was canceled. Then a site's VOD with
 // its video kept here and a long chat is removed from the library: it's
 // erased at once, a job of its own in the list ("Erasing"), and quitting
@@ -27,6 +29,8 @@ import * as os from "../lib/os.mjs";
 const QUIT_WITHIN = 2000;
 /** The jobs' list, opened (Jobs.svelte). */
 const LIST = '[role="dialog"][aria-label="Jobs"]';
+/** "N more" in it, past three. */
+const MORE = `${LIST} button.more`;
 
 /** The part files of clips being made (`.<name>.part`), in the clips' folder or anywhere in the app's data. */
 function partFiles() {
@@ -152,10 +156,23 @@ export default {
     if (!listed[0].line.startsWith("Making the clip")) throw new Error(`the first says "${listed[0].line}"`);
     if (listed[1].line !== "Waiting" || listed[2].line !== "Waiting")
       throw new Error(`the others say "${listed[1].line}", "${listed[2].line}"`);
+    const moreSays = () => app.js(`return document.querySelector(arguments[0])?.textContent.trim() ?? null`, MORE);
+    if ((await moreSays()) !== null) throw new Error(`with three jobs, the list has "${await moreSays()}"`);
     log(`listed: ${listed.map((r) => `${r.label} (${r.line})`).join("; ")}`);
     await ctx.checkpoint("jobs-list");
 
-    // The last dragged above the one before it, a frame at a time (the
+    // A fourth: the list still shows three, and "1 more".
+    const [d] = (await app.invoke("add_clips", { vodId: vod.id, ranges: [[3, 180]] })).map((m) => m.id);
+    await until("the fourth waiting", async () => (await order()) === `${a}* ${b} ${c} ${d}`, MINUTE);
+    await until("1 more under the three", async () => (await moreSays()) === "1 more", 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: it says ${await moreSays()}`);
+    });
+    const folded = (await rows()).map((r) => r.job).join(" ");
+    if (folded !== `clip-${a} clip-${b} clip-${c}`) throw new Error(`with four jobs, the list shows ${folded}`);
+    await ctx.checkpoint("jobs-folded");
+
+    // The last of the three dragged above the one before it (the fourth
+    // folded away), a frame at a time (the
     // list moves as it passes the other's middle: reorder.svelte.ts): with
     // the system's own pointer where this layer drives it, as a hand does,
     // else with pointer events made in the page.
@@ -189,7 +206,7 @@ export default {
         `clip-${c}`,
         `clip-${b}`,
       );
-    await until("the queue in the order dragged", async () => (await order()) === `${a}* ${c} ${b}`, 10_000).catch(
+    await until("the queue in the order dragged", async () => (await order()) === `${a}* ${c} ${b} ${d}`, 10_000).catch(
       async (e) => {
         throw new Error(`${e.message}: it's ${await order()}`);
       },
@@ -197,6 +214,28 @@ export default {
     const shown = (await rows()).map((r) => r.job).join(" ");
     if (shown !== `clip-${a} clip-${c} clip-${b}`) throw new Error(`the list shows ${shown} after the drag`);
     log(`dragged ${byHand ? "with the system's pointer" : "by pointer events in the page"}: the last is made next`);
+
+    // "1 more": all four. The fourth's Cancel: out of the queue, and no "more".
+    await app.click(MORE);
+    const all = await until(
+      "all four shown",
+      async () => {
+        const r = await rows();
+        return r.length === 4 && r;
+      },
+      10_000,
+    );
+    if (all.map((r) => r.job).join(" ") !== `clip-${a} clip-${c} clip-${b} clip-${d}`)
+      throw new Error(`"1 more" shows ${all.map((r) => r.job).join(" ")}`);
+    if ((await moreSays()) !== null) throw new Error(`with all shown, the list still has "${await moreSays()}"`);
+    await ctx.checkpoint("jobs-all");
+    await app.click(`${LIST} [data-job="clip-${d}"] button.cancel`);
+    await until("the fourth out", async () => (await order()) === `${a}* ${c} ${b}`, 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: it's ${await order()}`);
+    });
+    await until("three shown", async () => (await rows()).length === 3, 10_000);
+    if ((await moreSays()) !== null) throw new Error(`after the fourth's Cancel, the list has "${await moreSays()}"`);
+    log(`a fourth: "1 more" showed all four; canceled, it's gone with the "more"`);
 
     // Cancel on the one being made: its ffmpeg ends, its part file goes,
     // and the one dragged up is made next.
