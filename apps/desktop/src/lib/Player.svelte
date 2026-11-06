@@ -307,8 +307,10 @@
   const stripShown = $derived(!drawsCaptions && prefs.captions && hasCues);
   const stripCue = $derived(stripShown ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null);
   // Ours in the strip, a site's own captions in its player go off (embed.ts):
-  // captions show once.
-  $effect(() => player?.stripCaptions?.(stripShown));
+  // captions show once. Only once ours are read and there are some: the strip
+  // kept on a guess before that, theirs went off for a transcript with no
+  // cues, and none showed anywhere.
+  $effect(() => player?.stripCaptions?.(stripShown && cuesRead));
   const now = $derived(reading.now);
   // The chapter playing, named in the header where there's room for it.
   const chapterNow = $derived(cuts.isOf({ kind: "vod", id: vod.id }) ? cuts.chapterAt(now) : undefined);

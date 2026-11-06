@@ -84,11 +84,27 @@ class Clips {
     const mine = ++this.#seq;
     // Those whose file was deleted outside the app go first, then the rest are listed.
     this.#forgetGone(doc)
-      .then(() => this.#listOf(doc))
+      .then(() => this.#listing(doc))
       .then(
         (list) => mine === this.#seq && (this.list = list),
         (e) => mine === this.#seq && (this.error = String(e)),
       );
+  }
+
+  /** `doc`'s clips as listed now, with the news that comes before the answer (`#listed`). */
+  #listing(doc: Doc): Promise<Clip[]> {
+    const since = this.#serial;
+    return this.#listOf(doc).then((list) => this.#listed(list, since));
+  }
+
+  /** `list`, the clips as listed when the news was at `since`, with the news
+   *  since: a clip with news after it as that has it, or gone if deleted. */
+  #listed(list: Clip[], since: number): Clip[] {
+    const now = new Map(this.list.map((c) => [c.id, c]));
+    const listed = new Set(list.map((c) => c.id));
+    const fresh = (id: number) => (this.#news.get(id) ?? 0) <= since;
+    const kept = list.flatMap((c) => (fresh(c.id) ? [c] : (now.get(c.id) ?? [])));
+    return [...kept, ...this.list.filter((c) => !listed.has(c.id) && !fresh(c.id))];
   }
 
   #listOf = (doc: Doc) => (doc.kind === "vod" ? api.listClips(doc.id) : api.editClips(doc.id));
@@ -97,7 +113,7 @@ class Clips {
   reload(doc: Doc) {
     if (!this.doc || docKey(doc) !== docKey(this.doc)) return;
     const mine = ++this.#seq;
-    this.#listOf(doc).then(
+    this.#listing(doc).then(
       (list) => mine === this.#seq && (this.list = list),
       (e) => mine === this.#seq && (this.error = String(e)),
     );
@@ -120,12 +136,18 @@ class Clips {
       this.#put(clip);
     });
     events.clipProgress((id, progress) => this.progress.set(id, progress));
-    events.clipRemoved((id) => (this.list = this.list.filter((c) => c.id !== id)));
+    events.clipRemoved((id) => {
+      this.#news.set(id, ++this.#serial);
+      this.list = this.list.filter((c) => c.id !== id);
+    });
   }
 
-  // Each clip's latest news (its "clip" event), numbered: a command's answer
-  // is older than news that came after it was sent (a quick cut's "ready"
-  // can beat the answer's "waiting"), and isn't put over it.
+  // Each clip's latest news (its "clip" or "clip-removed" event), numbered:
+  // a command's answer is older than news that came after it was sent (a
+  // quick cut's "ready" can beat the answer's "waiting"; on Linux an event
+  // sent from another thread can reach the page before an answer sent
+  // earlier, page.rs), and isn't put over it: an answer after the clip's
+  // deletion brought its pill back.
   #serial = 0;
   #news = new Map<number, number>();
 

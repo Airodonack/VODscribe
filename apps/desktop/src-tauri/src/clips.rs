@@ -329,13 +329,23 @@ pub(crate) fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
 /// stays as it was, for the editor whose project uses it, and the next hand
 /// out gets a name of its own. The clip's own file if none can be made.
 pub(crate) fn handed_out(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> PathBuf {
-    named(paths, id, file, name).unwrap_or_else(|e| {
+    named(paths, id, file, name, true).unwrap_or_else(|e| {
         eprintln!("clip {id}: handing out its file as {name}: {e}");
         file.to_path_buf()
     })
 }
 
-fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> std::io::Result<PathBuf> {
+/// `handed_out`, but never a copy: where the disk takes no hard link, the
+/// clip's own file. For a drag, whose receiver asks on the main thread: a
+/// copy of the whole clip there froze the window till it was written.
+fn linked_out(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> PathBuf {
+    named(paths, id, file, name, false).unwrap_or_else(|e| {
+        eprintln!("clip {id}: handing out its file as {name}: {e}");
+        file.to_path_buf()
+    })
+}
+
+fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str, may_copy: bool) -> std::io::Result<PathBuf> {
     let dir = paths.clip_names(id);
     let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
     let names = std::iter::once(name.to_string()).chain((2..).map(|n| format!("{stem} ({n}).{ext}")));
@@ -348,7 +358,12 @@ fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> std
             continue;
         }
         std::fs::create_dir_all(&dir)?;
-        if std::fs::hard_link(file, &at).is_err() {
+        if let Err(e) = std::fs::hard_link(file, &at) {
+            if !may_copy {
+                // (The folder only if it's empty: made for this name alone.)
+                let _ = std::fs::remove_dir(&dir);
+                return Err(e);
+            }
             // Copied under a name of its own first, so a copy cut short is
             // never handed out; its time kept, so it's known as this file.
             let part = dir.join(format!(".{}.part", at.file_name().unwrap_or_default().to_string_lossy()));
@@ -1088,18 +1103,37 @@ pub(crate) enum Made {
 /// elsewhere, `made_in`).
 fn made(app: &AppHandle, id: i64) -> Option<Made> {
     let state = app.state::<AppState>();
+    let db = briefly(&state.db)?;
+    Some(made_in(&db, id))
+}
+
+/// The library, unless it's busy for more than a moment (`made`).
+fn briefly(db: &Mutex<Db>) -> Option<std::sync::MutexGuard<'_, Db>> {
     let end = Instant::now() + Duration::from_millis(50);
-    let db = loop {
-        match state.db.try_lock() {
-            Ok(db) => break db,
-            Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+    loop {
+        match db.try_lock() {
+            Ok(db) => return Some(db),
+            Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
             Err(std::sync::TryLockError::WouldBlock) if Instant::now() < end => {
                 std::thread::sleep(Duration::from_millis(2))
             }
             Err(std::sync::TryLockError::WouldBlock) => return None,
         }
-    };
-    Some(made_in(&db, id))
+    }
+}
+
+/// Clip `id`'s file as a drag hands it out, under `name` (`linked_out`), if
+/// it's made; still being made while the library is busy (`made`). Named
+/// under the library's lock: a delete lets go of the clip's names under it
+/// too (`remove`), so it comes wholly before or after. Between them, a name
+/// linked after the delete had looked for them stayed, a full-size file that
+/// no clip named and nothing removed.
+fn hand_out_made(db: &Mutex<Db>, paths: &vodscribe_core::Paths, id: i64, name: &str) -> Made {
+    let Some(db) = briefly(db) else { return Made::Making };
+    match made_in(&db, id) {
+        Made::Ready(file) => Made::Ready(linked_out(paths, id, &file, name)),
+        other => other,
+    }
 }
 
 /// Where clip `id`'s file is, as `db` has it.
@@ -1186,13 +1220,7 @@ pub(crate) async fn drag_clip(
     // address); one that copies it names its copy so anyway.
     let files = move || {
         let paths = &asking.state::<AppState>().paths;
-        listed
-            .iter()
-            .map(|(id, name)| match made(&asking, *id).unwrap_or(Made::Making) {
-                Made::Ready(file) => Made::Ready(handed_out(paths, *id, &file, name)),
-                other => other,
-            })
-            .collect()
+        listed.iter().map(|(id, name)| hand_out_made(&asking.state::<AppState>().db, paths, *id, name)).collect()
     };
     // Another app's once one takes them (not when the drag begins: called
     // off, or dropped on nothing, the files are still the app's to delete).
@@ -1703,6 +1731,67 @@ mod tests {
         make_edit_clips_in(&db, &history, edit, vec![(3.0, 4.0)], true, Some(made[0].id)).unwrap();
         let starts: Vec<f64> = db.bar_clips(edit).unwrap().iter().map(|c| c.start).collect();
         assert_eq!(starts, [1.0, 5.0, 3.0]);
+    }
+
+    /// A drag's receiver asked for a clip's file (its name made beside it,
+    /// `handed_out`) as the clip was deleted: the name was linked after the
+    /// delete had looked for names to remove, and a full-size copy stayed in
+    /// the clips folder that nothing named or removed.
+    #[test]
+    fn a_clip_deleted_as_a_drag_hands_it_out_leaves_no_name_behind() {
+        use std::sync::atomic::AtomicU64;
+        static N: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "vodscribe-hand-out-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let paths = vodscribe_core::Paths::new(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Db::open(&root.join("library.sqlite")).unwrap();
+        let vod = db.add_vod(&info()).unwrap().0.id;
+        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap();
+        let file = db.files().clip_file(clip.id, "mp4");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"clip").unwrap();
+        db.set_clip_file(clip.id, 1.0, 2.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
+        let db = Arc::new(Mutex::new(db));
+        let asking = {
+            let (db, paths) = (db.clone(), paths.clone());
+            std::thread::spawn(move || hand_out_made(&db, &paths, clip.id, "c 0:01.mp4"))
+        };
+        // Deleted while the receiver's ask is under way, as `remove` does.
+        std::thread::sleep(Duration::from_millis(100));
+        {
+            let db = db.lock().unwrap();
+            let path = db.clip(clip.id).unwrap().and_then(|c| c.file_path);
+            db.delete_clip(clip.id).unwrap();
+            let_go_files(&paths, clip.id, path.as_deref(), false);
+        }
+        let given = asking.join().unwrap();
+        let left: Vec<_> = std::fs::read_dir(paths.clip_names(clip.id)).into_iter().flatten().flatten().collect();
+        assert!(left.is_empty(), "left in the clips folder: {left:?}");
+        assert!(!paths.clip_names(clip.id).exists(), "its names' folder is left");
+        // Given only if the ask came first; then it was deleted with the clip.
+        if let Made::Ready(path) = given {
+            assert!(!path.exists(), "handed out {path:?}, still there");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn info() -> vodscribe_core::fetch::VodInfo {
+        vodscribe_core::fetch::VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            channel_login: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+            started_at: None,
+        }
     }
 
     fn library() -> (Db, i64) {

@@ -20,7 +20,12 @@ class VideoDownloads {
   start() {
     if (this.#started || DEMO) return;
     this.#started = true;
+    // Those heard of before the list answers: their news is newer than it (on
+    // Linux an event from another thread can overtake an answer, page.rs), so
+    // one that ended meanwhile isn't shown waiting again.
+    const heard = new Set<number>();
     events.videoProgress(({ id, progress, error, streamed }) => {
+      heard.add(id);
       if (progress === null) this.progress.delete(id);
       else this.progress.set(id, progress);
       if (progress === null || streamed) this.playsOnceIn.delete(id);
@@ -28,7 +33,7 @@ class VideoDownloads {
       if (error) this.errors.set(id, error);
     });
     api.videoDownloads().then(
-      (ids) => ids.forEach((id) => this.progress.has(id) || this.progress.set(id, 0)),
+      (ids) => ids.forEach((id) => heard.has(id) || this.progress.has(id) || this.progress.set(id, 0)),
       (e) => console.error("video downloads", e),
     );
   }

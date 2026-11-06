@@ -92,10 +92,12 @@ class Edits {
     this.#reloadList();
     events.edit((edit) => {
       if (edit.status !== "cutting") this.progress.delete(edit.id);
+      this.#heard(edit.id);
       this.#put(edit);
     });
     events.editProgress((id, p) => this.progress.set(id, p));
     events.editRemoved((id) => {
+      this.#heard(id);
       nav.forget({ kind: "edit", id });
       this.#gone(id);
     });
@@ -104,6 +106,7 @@ class Edits {
     // an edit does.
     events.clipRemoved((id) => {
       if (this.openId !== id || this.list.some((e) => e.id === id)) return;
+      this.#heard(id);
       nav.forget({ kind: "edit", id });
       this.#gone(id);
     });
@@ -120,10 +123,43 @@ class Edits {
   }
 
   #reloadList() {
+    const since = this.#serial;
     api.listEdits().then(
-      (list) => (this.list = list),
+      (list) => (this.list = this.#listed(list, since)),
       (e) => (this.error = String(e)),
     );
+  }
+
+  // Each edit's latest news (its "edit" or "edit-removed" event), numbered,
+  // as the clips store numbers its clips': a command's answer is older than
+  // news that came after it was sent (on Linux an event sent from another
+  // thread can reach the page before an answer sent earlier: page.rs), and
+  // isn't put over it. A rename's answer saying "rendering", over the
+  // render's "ready" just before, left the row rendering with no progress.
+  #serial = 0;
+  #news = new Map<number, number>();
+
+  /** How far the edits' news has come: `took` takes what a command sent at this point answers. */
+  get news(): number {
+    return this.#serial;
+  }
+
+  #heard(id: number) {
+    this.#news.set(id, ++this.#serial);
+  }
+
+  /** Whether edit `id` has had no news since `since`. */
+  #current(id: number, since: number): boolean {
+    return (this.#news.get(id) ?? 0) <= since;
+  }
+
+  /** `list`, the edits as listed when the news was at `since`, with the news
+   *  since: an edit with news after it as that has it, or gone if deleted. */
+  #listed(list: Edit[], since: number): Edit[] {
+    const now = new Map(this.list.map((e) => [e.id, e]));
+    const listed = new Set(list.map((e) => e.id));
+    const kept = list.flatMap((e) => (this.#current(e.id, since) ? [e] : (now.get(e.id) ?? [])));
+    return [...kept, ...this.list.filter((e) => !listed.has(e.id) && !this.#current(e.id, since))];
   }
 
   /** How far (the VOD's time) the section downloading of VOD `vodId` plays
@@ -172,35 +208,43 @@ class Edits {
   /** Loads edit `id` again (undo or redo changed it), if it's in the list or open. */
   reload(id: number) {
     if (id === this.openId) this.#load(id);
-    else if (this.list.some((e) => e.id === id))
+    else if (this.list.some((e) => e.id === id)) {
+      const since = this.#serial;
       api.getEdit(id).then(
-        (view) => this.#put(view.edit),
+        (view) => this.#current(id, since) && this.#put(view.edit),
         () => {},
       );
+    }
   }
 
   #load(id: number) {
     const mine = ++this.#seq;
+    const since = this.#serial;
     api.getEdit(id).then(
-      (view) => mine === this.#seq && this.#show(view),
+      (view) => mine === this.#seq && this.#show(view, since),
       (e) => mine === this.#seq && (this.error = String(e)),
     );
   }
 
-  #show(view: EditView) {
-    this.#put(view.edit);
+  /** Shows `view`, a command's answer to one sent when the news was at
+   *  `since`: its pieces (only commands change them), and the edit itself
+   *  unless news of it has come since. */
+  #show(view: EditView, since: number) {
+    if (this.#current(view.edit.id, since)) this.#put(view.edit);
     if (view.edit.id === this.openId) this.pieces = view.pieces;
   }
 
-  /** Shows `view`, what a change made elsewhere (a paste: copyPaste.ts) left the edit as. */
-  took(view: EditView) {
-    this.#show(view);
+  /** Shows `view`, what a change made elsewhere (a paste: copyPaste.ts) left
+   *  the edit as, sent when the news was at `since` (`news`). */
+  took(view: EditView, since: number) {
+    this.#show(view, since);
   }
 
   /** Runs a change to an edit; what comes back is the edit as it is now. */
   async #change(action: Promise<EditView>): Promise<boolean> {
+    const since = this.#serial;
     try {
-      this.#show(await saving(action));
+      this.#show(await saving(action), since);
       this.error = null;
       return true;
     } catch (e) {
@@ -255,9 +299,10 @@ class Edits {
   }
 
   async create(): Promise<Edit | null> {
+    const since = this.#serial;
     try {
       const edit = await api.createEdit();
-      this.#put(edit);
+      if (this.#current(edit.id, since)) this.#put(edit);
       return edit;
     } catch (e) {
       this.error = String(e);

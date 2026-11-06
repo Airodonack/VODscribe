@@ -15,6 +15,7 @@ import { ownPlayer } from "./ownPlayer.svelte";
 import { cueAt, elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { OwnStatus } from "./ownStatus";
+import { HeldMute } from "./heldMute";
 import { settling } from "./settle";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
@@ -385,13 +386,12 @@ async function twitch(
   clock.asked(time, play);
   // Its sound as it last said (their own controls set it too), or as last
   // set in any player till it says (`remembered`); it has no speed to set.
-  const sound = { volume: prefs.volume() ?? 1, muted: false };
+  const sound = { volume: prefs.volume() ?? 1 };
   // Whether the volume last set has been told to it, once it's ready.
   let told = false;
-  // A mute set before it's ready (on the bar before Play): it takes none
-  // till then, so it's sent again once it is, and stands for its own word
-  // till it reports it.
-  let muting: boolean | null = null;
+  // Its mute: one set before it's ready (on the bar before Play) is sent
+  // again once it is, as it takes none till then (heldMute.ts).
+  const mute = new HeldMute();
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
   let resumeAt: number | null = null;
   const command = (eventName: number, params: unknown = null) =>
@@ -409,10 +409,7 @@ async function twitch(
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         const playback = data.params?.playback;
         if (typeof data.params?.volume === "number") sound.volume = data.params.volume;
-        if (typeof data.params?.muted === "boolean") {
-          if (muting === null) sound.muted = data.params.muted;
-          else if (told && data.params.muted === muting) muting = null;
-        }
+        if (typeof data.params?.muted === "boolean") mute.heard(data.params.muted);
         // Reloaded plain (bridge), it now and then starts from the start
         // whatever its URL said (seen in macOS's WebKit): sent where it was, once.
         const now = data.params?.currentTime;
@@ -436,7 +433,8 @@ async function twitch(
       if (ready && !told) {
         told = true;
         remembered((volume) => command(TWITCH_SET_VOLUME, volume));
-        if (muting !== null) command(TWITCH_SET_MUTED, muting);
+        const held = mute.ready();
+        if (held !== null) command(TWITCH_SET_MUTED, held);
       }
       return ready;
     },
@@ -457,16 +455,15 @@ async function twitch(
       ),
       volume: {
         get: () => sound.volume,
-        muted: () => sound.muted,
+        muted: () => mute.muted,
         set(volume) {
           sound.volume = volume;
           prefs.setVolume(volume);
           command(TWITCH_SET_VOLUME, volume);
-          if (sound.muted && volume > 0) this.setMuted(false);
+          if (mute.muted && volume > 0) this.setMuted(false);
         },
         setMuted(muted) {
-          sound.muted = muted;
-          if (!told || muting !== null) muting = muted;
+          mute.set(muted);
           command(TWITCH_SET_MUTED, muted);
         },
       },

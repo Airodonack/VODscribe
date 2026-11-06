@@ -199,9 +199,10 @@ async function pasteHere(text: string) {
   const after = "after" in point ? point.after : null;
   try {
     const since = clips.news;
+    const editsSince = edits.news;
     const pasted = await api.pasteItems(target, onBar, at, after, text);
     if (!pasted) return;
-    if (pasted.view) edits.took(pasted.view);
+    if (pasted.view) edits.took(pasted.view, editsSince);
     if (onBar) {
       // What's pasted is selected: the clips made, and those it already was.
       const all = [...pasted.clips, ...pasted.found];

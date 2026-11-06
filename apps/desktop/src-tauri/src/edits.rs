@@ -511,20 +511,17 @@ pub(crate) async fn stop_render(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Edit `id`'s rendered video, if it's there.
-fn rendered(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
-    let state = app.state::<AppState>();
-    let edit = state.db.lock().unwrap().edit(id).map_err(err)?.ok_or("That edit is gone.")?;
-    edit.file_path.map(PathBuf::from).filter(|p| p.is_file()).ok_or_else(|| "This edit isn't rendered yet.".into())
-}
-
 /// Edit `id`'s rendered video under the name it's handed out by: its title
-/// (`clips::handed_out`).
+/// (`clips::handed_out`). Named under the library's lock, as a clip's is
+/// (`clips::hand_out_made`): a delete in between left a name made after it
+/// had looked for them, a full-size file nothing removed.
 fn handed_out(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
-    let path = rendered(app, id)?;
     let state = app.state::<AppState>();
     let format = Settings::load(&state.paths.settings()).clip_encoding().format();
-    let name = crate::clips::drag_name(&state.db.lock().unwrap(), format, id);
+    let db = state.db.lock().unwrap();
+    let edit = db.edit(id).map_err(err)?.ok_or("That edit is gone.")?;
+    let path = edit.file_path.map(PathBuf::from).filter(|p| p.is_file()).ok_or("This edit isn't rendered yet.")?;
+    let name = crate::clips::drag_name(&db, format, id);
     Ok(crate::clips::handed_out(&state.paths, id, &path, &name))
 }
 
