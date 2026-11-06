@@ -18,6 +18,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `clip-bar-long.mjs`: a clip bar that scrolls sideways keeps every pill clickable.
 - `clip-drag.mjs`: the Clip button dragged onto the clip bar.
 - `clip-format.mjs`: clips made in each format and quality, their pictures read back, and a sound-only file's clip as WAV.
+- `clip-sources-long.mjs`: a clip in the editor whose links to its VODs scroll sideways keeps every link clickable.
 - `clip.mjs`: a clip cut between two cuts, resized and made again.
 - `controls.mjs`: keyboard controls changed in Settings › Controls take effect.
 - `copy-chapters.mjs`: Copy chapters puts each chapter's time and title on the clipboard.

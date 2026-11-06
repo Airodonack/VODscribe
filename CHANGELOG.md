@@ -16,6 +16,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Menus answer their first click. After a Control-click on a Mac, or a press the system called off, the next click on a row's menu could be ignored.
   - Re-added VODs leave no old files. A VOD removed and added again before its download stopped kept its old files on disk.
   - An edit's frames load while it plays. The small frames on its timeline, of videos not yet seen, waited until you paused.
+  - Clip links to videos click again. In the editor, when a clip's row of links to its videos scrolls sideways, a click on a link's lower half did nothing on some Linux systems.
 
 ## 0.7.1 — 2026-11-05
 

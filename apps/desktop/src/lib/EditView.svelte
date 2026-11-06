@@ -1260,8 +1260,11 @@
     gap: 6px;
     min-height: 40px;
     padding: 6px 16px;
+    /* The page's own scrollbar (app.css), below the links, as on a clip bar
+       (ClipStrip.svelte): scrollbar-width: thin makes WebKitGTK draw an
+       overlay whose hit area covers the row's lower half, so a click on a
+       link's middle reaches the row instead. */
     overflow-x: auto;
-    scrollbar-width: thin;
   }
 
   .source {
