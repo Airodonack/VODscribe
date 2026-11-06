@@ -125,7 +125,7 @@ export default {
       mute: !!document.querySelector('.bar button[aria-label="Mute"], .bar button[aria-label="Unmute"]'),
       volume: !!document.querySelector('.bar input[aria-label="Volume"]'),
       speed: !!document.querySelector(".bar button.speed"),
-      captions: document.querySelector('.bar button[aria-label="Captions"]')?.disabled ?? null,
+      captions: document.querySelector('.bar button[aria-label="Captions"]')?.getAttribute("aria-disabled") === "true",
       strip: !!document.querySelector(".caption-strip"),
     }`);
     const want = { mute: true, volume: true, speed: SITE === "youtube", captions: true, strip: false };

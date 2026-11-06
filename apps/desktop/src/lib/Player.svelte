@@ -22,7 +22,7 @@
   import { Hold } from "./hold.svelte";
   import Thumb from "./Thumb.svelte";
   import TranscribeFrom from "./TranscribeFrom.svelte";
-  import { demoOff, keysForApp } from "./demo";
+  import { DEMO, demoOff, keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
   import { forPlayer, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
@@ -44,7 +44,7 @@
   import { videoDownloads } from "./videos.svelte";
   import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
   import { snippets } from "./selection.svelte";
-  import { gaps, transcribeRest } from "./stretches";
+  import { gaps, transcribeChoices, transcribeRest, transcribeStretchOf } from "./stretches";
   import { shortMode } from "./shortMode.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a jump (a search
@@ -390,29 +390,35 @@
   }
   const canClip = $derived(!!cuts.selection || !!stretch || chosenSegments().length > 0);
 
-  // Transcribe (T), at the bar's right beside the captions: the selection;
-  // else the whole VOD, or what of it isn't transcribed yet (stretches.ts
-  // `transcribeRest`), or all of it again once all of it is, after asking
-  // (as the library row's Transcribe again: it replaces it all). Right-clicked,
-  // or pressed and held, a menu of how much from the playhead instead
-  // (TranscribeFrom.svelte, hold.svelte.ts). Hovering it lights up on the timeline what it would
-  // transcribe, as Clip does.
-  let transcribeButton = $state<HTMLElement>();
-  // Where the menu was opened: the stretch starts there, though the video plays on.
+  // Transcribe: T, or the first entry of the captions button's menu, which
+  // that button right-clicked, or pressed and held, opens (hold.svelte.ts):
+  // the selection; else the whole VOD, or what of it isn't transcribed yet
+  // (stretches.ts `transcribeRest`), or all of it again once all of it is,
+  // after asking (as the library row's Transcribe again: it replaces it all).
+  // The menu's other entries are how much from the playhead
+  // (TranscribeFrom.svelte). Hovering an entry lights up on the timeline what
+  // it would transcribe, as hovering Clip does. The bar had a Transcribe
+  // button of its own till 0.7.2; it was seldom used, so it went for a
+  // simpler bar, at the cost of a right-click for the few who want it.
   let transcribeFrom = $state(0);
   const transcribeHold = new Hold(
     "[data-choice]",
     (item) => item.click(),
-    () => (transcribeFrom = now),
+    // Where the menu was opened: the stretch starts there, though the video plays on.
+    () => {
+      transcribeFrom = now;
+      transcribeHover = null;
+      readUntranscribed();
+    },
   );
   let transcribeError = $state<string | null>(null);
-  let transcribeHover = $state(false);
-  // The parts not transcribed nor asked for yet: read as the button's hovered, for the rest to light up.
+  // The menu's entry hovered: "lead" for the first (TranscribeFrom.svelte), else a from-here choice's key.
+  let transcribeHover = $state<string | null>(null);
+  // The parts not transcribed nor asked for yet: read as the menu opens, for the rest to light up.
   let untranscribed = $state.raw<{ start: number; end: number }[]>([]);
   // Read for none transcribed too: the whole VOD asked for already (T pressed
   // once) leaves nothing to light, as nothing's left to ask.
-  function onTranscribeEnter() {
-    transcribeHover = true;
+  function readUntranscribed() {
     if (vod.transcribed === "all") return;
     const id = vod.id;
     api.transcriptStretches(id).then(
@@ -431,28 +437,36 @@
     if (vod.transcribed !== "all") return untranscribed;
     return duration ? [{ start: 0, end: duration }] : [];
   });
-  // On the timeline, while Clip or Transcribe is hovered: what it would act on.
+  const transcribeLit = $derived.by(() => {
+    const key = transcribeHold.open ? transcribeHover : null;
+    if (key === null) return [];
+    if (key === "lead") return transcribes;
+    const choice = transcribeChoices(transcribeFrom, vod.duration).find((c) => c.key === key);
+    if (!choice) return [];
+    const { start, end } = transcribeStretchOf(choice, transcribeFrom, vod.duration);
+    const to = end ?? vod.duration ?? duration;
+    return to > start ? [{ start, end: to }] : [];
+  });
+  // On the timeline, while Clip or an entry of the Transcribe menu is hovered: what it would act on.
   const lit = $derived.by(() => {
     if (clipHover && canClip && !chosenSegments().length) {
       const range = cuts.selection ?? stretch;
       return range ? [range] : [];
     }
-    return transcribeHover ? transcribes : [];
+    return transcribeLit;
   });
-  const transcribeTitle = $derived(
-    `${
-      cuts.selection
-        ? "Transcribe the selection, replacing any lines there"
-        : vod.transcribed === "some"
-          ? "Transcribe the rest: what isn't transcribed yet"
-          : vod.transcribed === "all"
-            ? "Transcribe again…"
-            : "Transcribe the whole VOD"
-    }${keyHint("transcribe.here")}. Right-click for how much from here.`,
+  const transcribeLead = $derived(
+    cuts.selection
+      ? {
+          label: "Transcribe selection",
+          title: "Transcribe the selection, replacing any lines there",
+        }
+      : vod.transcribed === "some"
+        ? { label: "Transcribe the rest", title: "Transcribe what isn't transcribed yet" }
+        : vod.transcribed === "all"
+          ? { label: "Transcribe again…", title: "Transcribe the whole VOD again, replacing its transcript" }
+          : { label: "Transcribe VOD", title: "Transcribe the whole VOD" },
   );
-  function onTranscribeClick() {
-    if (!transcribeHold.held) transcribe();
-  }
   async function transcribe() {
     transcribeError = null;
     const picked = cuts.selection;
@@ -523,7 +537,7 @@
     if (!forPlayer(e) || !canEmbed(vod) || !keysForApp()) return;
     // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), C
     // makes a clip (bare: Ctrl+C is copy), and T transcribes, as the
-    // button does.
+    // captions button's menu first offers.
     const cut = is(e, "cut.here");
     const clip = is(e, "clip.make");
     if (cut || clip || is(e, "transcribe.here")) {
@@ -729,6 +743,19 @@
   {/if}
 {/snippet}
 
+{#snippet transcribeMenu(anchor: HTMLElement | undefined)}
+  <TranscribeFrom
+    bind:open={transcribeHold.open}
+    {anchor}
+    {vod}
+    from={transcribeFrom}
+    above
+    lead={{ ...transcribeLead, key: labelOf("transcribe.here"), run: transcribe }}
+    onhover={(key) => (transcribeHover = key)}
+    onerror={(e) => (transcribeError = e)}
+  />
+{/snippet}
+
 {#snippet vodControls()}
   {#if duration}
     <Scrubber
@@ -762,6 +789,9 @@
     ontoggleplay={togglePlay}
     onfullscreen={setFullscreen}
     hide={!shortMode.on || swap ? { label: toggleLabel, run: toggleHidden } : undefined}
+    captions={DEMO
+      ? undefined
+      : { hold: transcribeHold, title: `Right-click to transcribe${keyHint("transcribe.here")}`, menu: transcribeMenu }}
   >
     {#snippet actions()}
       <button
@@ -797,33 +827,6 @@
       {:else}
         <span class="context muted" title={context}>{context}</span>
       {/if}
-    {/snippet}
-    {#snippet beside()}
-      <button
-        class="action transcribe"
-        class:picking={!!cuts.selection}
-        bind:this={transcribeButton}
-        onpointerdown={transcribeHold.down}
-        oncontextmenu={transcribeHold.menu}
-        onclick={onTranscribeClick}
-        onmouseenter={onTranscribeEnter}
-        onmouseleave={() => (transcribeHover = false)}
-        aria-expanded={transcribeHold.open}
-        {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD, or the part selected.")}
-        title={transcribeTitle}
-      >
-        <Icon name="audio-lines" size={14} /> Transcribe {#if labelOf("transcribe.here")}<kbd
-            >{labelOf("transcribe.here")}</kbd
-          >{/if}
-      </button>
-      <TranscribeFrom
-        bind:open={transcribeHold.open}
-        anchor={transcribeButton}
-        {vod}
-        from={transcribeFrom}
-        above
-        onerror={(e) => (transcribeError = e)}
-      />
     {/snippet}
   </PlayerBar>
 {/snippet}
@@ -886,18 +889,16 @@
   }
 
   /* A selection (made on the timeline or in the transcript) waits to be cut
-     or clipped (or transcribed): Split, Clip and Transcribe take its color. (:not(:disabled) to win
+     or clipped: Split and Clip take its color. (:not(:disabled) to win
      over the bar's own style for its buttons.) */
   .split.picking:not(:disabled),
-  .clip.picking:not(:disabled),
-  .transcribe.picking:not(:disabled) {
+  .clip.picking:not(:disabled) {
     color: var(--pick);
     background: color-mix(in srgb, var(--pick) 14%, transparent);
   }
 
   .split.picking :global(svg),
-  .clip.picking :global(svg),
-  .transcribe.picking :global(svg) {
+  .clip.picking :global(svg) {
     color: var(--pick);
   }
 

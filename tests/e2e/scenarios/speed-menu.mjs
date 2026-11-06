@@ -2,16 +2,18 @@
 // next speed, as it always has; pressed and held, it opens a menu of the
 // speeds beside it (above, where there's room), the current one marked, and let go over 1.5× that's the
 // speed. Held and let go away from the menu, it closes with the speed as it
-// was. Linux (X11) only, so far.
+// was. The captions button right-clicked, with a stretch selected, opens the
+// Transcribe menu, Transcribe selection first, and keeps the selection.
+// Linux (X11) only, so far.
 
 import { until } from "../lib/app.mjs";
 import * as os from "../lib/os.mjs";
 
 const BUTTON = ".bar button.speed";
 const MENU = '[role=dialog][aria-label="Playback speed"]';
-const TRANSCRIBE = ".bar button.action.transcribe";
-/** Transcribe's menu of how much from the playhead (TranscribeFrom.svelte). */
-const FROM = '[role=dialog][aria-label^="Transcribe from"]';
+const CAPTIONS = '.bar button[aria-label="Captions"]';
+/** The captions button's Transcribe menu (TranscribeFrom.svelte). */
+const FROM = '[role=dialog][aria-label="Transcribe"]';
 
 export default {
   name: "speed-menu",
@@ -128,9 +130,19 @@ export default {
     await until("the menu closed", async () => !(await menuOpen()), 5_000);
     ctx.log("right-clicked, the menu opened and stayed; a click on 0.75× picked it");
 
-    // Transcribe right-clicked: its menu of how much from the playhead, which
-    // Escape closes with nothing asked.
-    const transcribe = await os.rectOf(app, TRANSCRIBE);
+    // The captions button right-clicked: the Transcribe menu, all of it
+    // first (transcribed already, so again), then how much from the
+    // playhead; Escape closes it with nothing asked, and the captions as they were.
+    const captionsOn = () =>
+      app.js(`return document.querySelector(arguments[0]).getAttribute("aria-pressed")`, CAPTIONS);
+    const wasOn = await captionsOn();
+    const selection = () => app.js(`return !!document.querySelector(".scrubber .selection")`);
+    await app.toStart();
+    await app.key("ArrowRight", { shift: true });
+    await until("the player at 1 s", async () => (await app.shownTime()) === 1, 10_000);
+    await app.key("o");
+    await until("a selection", selection, 10_000);
+    const transcribe = await os.rectOf(app, CAPTIONS);
     const [tx, ty] = [transcribe.x + Math.round(transcribe.w / 2), transcribe.y + Math.round(transcribe.h / 2)];
     const fromOpen = () => app.js(`return !!document.querySelector(arguments[0])`, FROM);
     await released(
@@ -141,14 +153,26 @@ export default {
       ],
       2,
     );
-    await until("Transcribe's menu, right-clicked open, still open once let go", fromOpen, 5_000);
+    await until("the Transcribe menu, right-clicked open, still open once let go", fromOpen, 5_000);
     const choices = await app.js(
       `return [...document.querySelectorAll(arguments[0] + " [data-choice]")].map((b) => b.dataset.choice)`,
       FROM,
     );
-    if (!choices.length) throw new Error("Transcribe's menu, right-clicked open, has no choices");
+    if (choices[0] !== "lead" || choices.length < 2)
+      throw new Error(`the Transcribe menu, right-clicked open, has ${JSON.stringify(choices)}`);
+    const lead = await app.js(
+      `return document.querySelector(arguments[0] + ' [data-choice="lead"] span')?.textContent.trim()`,
+      FROM,
+    );
+    if (lead !== "Transcribe selection" || !(await selection()))
+      throw new Error(
+        `with a selection, the menu's first entry says "${lead}", the selection ${(await selection()) ? "kept" : "gone"}`,
+      );
     await os.gesture([["key", "Escape"]]);
-    await until("Transcribe's menu closed", async () => !(await fromOpen()), 5_000);
-    ctx.log(`Transcribe right-clicked: its menu opened (${choices.join(", ")}); Escape closed it`);
+    await until("the Transcribe menu closed", async () => !(await fromOpen()), 5_000);
+    if ((await captionsOn()) !== wasOn) throw new Error("the captions button, right-clicked, turned the captions over");
+    ctx.log(
+      `the captions button right-clicked: the Transcribe menu opened (${choices.join(", ")}), "${lead}" first; Escape closed it`,
+    );
   },
 };

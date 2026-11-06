@@ -72,10 +72,10 @@ async function setBeforePlay(app, log) {
         mute: !!document.querySelector('.bar button[aria-label="Mute"]'),
         volume: !!document.querySelector('.bar input[aria-label="Volume"]'),
         speed: document.querySelector(".bar button.speed")?.textContent.trim() ?? null,
-        captions: document.querySelector('.bar button[aria-label="Captions"]')?.disabled ?? null,
+        captions: document.querySelector('.bar button[aria-label="Captions"]')?.getAttribute("aria-disabled") ?? null,
       }`);
       // The captions button is greyed until the transcript's lines are in.
-      return bar.captions === false && bar;
+      return bar.captions === "false" && bar;
     },
     10_000,
   ).catch((e) => {

@@ -164,7 +164,7 @@
     shown?: number | null;
     /** The video's frame rate, for marks (assumed, for players that don't say). */
     fps: number;
-    /** Stretches to light up: what the Clip or Transcribe button would act on, while it's hovered. */
+    /** Stretches to light up: what Clip or an entry of the Transcribe menu would act on, while it's hovered. */
     highlight?: { start: number; end: number }[];
     /** A stretch to light up as going: the piece Remove would take out, while it's hovered. */
     removing?: { start: number; end: number } | null;

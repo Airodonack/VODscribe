@@ -69,7 +69,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `site-in-out.mjs`: I right after a timeline click, on a site's VOD; needs the network.
 - `site-plain.mjs`: a site's VOD in its own player, left as it is; needs the network.
 - `snippet-editor.mjs`: a clip opened in the editor.
-- `speed-menu.mjs`: the speed button clicked, and held for its menu.
+- `speed-menu.mjs`: the speed button clicked, and held for its menu; the captions button right-clicked for the Transcribe menu.
 - `store-errors.mjs`: errors show as toasts wherever the user is.
 - `transcribe-search-play.mjs`: adding, transcribing, searching and playing a file.
 - `transcribe-stretch.mjs`: transcribing only a stretch of a file.
