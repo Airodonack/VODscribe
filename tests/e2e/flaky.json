@@ -2,5 +2,7 @@
   "clip-format": "Ubuntu 22.04 (CI), 2026-10-23: timed out once waiting for the player at 1 s after Pause at the start; the 22.04 cell with that build then passed it 5 of 5",
   "holes": "Windows, 2026-10-23: deleting the copied file while the app still read it was refused (EPERM); the scenario now waits that out, kept here until clean rounds show it",
   "upgrade": "macOS (CI), 2026-10-23: the page lost the keyboard on the hosted runner (\"not focused\"), so Shift+→ went elsewhere; not the app",
-  "transcribe-search-play": "Ubuntu 22.04, 2026-10-24: 'fetch failed' after 301 s once in the first full-lane run (passed in the fast lane minutes before on the same commit); an audio scenario on 22.04's WebKit, see the first-line playback freeze note; cause not named"
+  "transcribe-search-play": "Ubuntu 22.04, 2026-10-24: 'fetch failed' after 301 s once in the first full-lane run (passed in the fast lane minutes before on the same commit); an audio scenario on 22.04's WebKit, see the first-line playback freeze note; cause not named",
+  "edits": "Windows (CI), 2026-11-06: timed out once waiting for a render, begun and done, in the full lane on e7cc403; win-11 and the next full lane (5d96c6d) passed it",
+  "readd-erasing": "Windows (CI), 2026-11-06: the test hook's 504, the page didn't answer, once in the full lane on e7cc403; win-11 and the next full lane (5d96c6d) passed it"
 }
