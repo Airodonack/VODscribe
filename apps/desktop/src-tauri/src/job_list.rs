@@ -168,7 +168,7 @@ pub(crate) fn describe(db: &Db, queue: Queue, id: i64, out: impl Fn(i64) -> bool
                 let clip = db.clip(id).ok()??;
                 (clip.shown || out(id)).then_some((Kind::Clip, clip.title))
             }
-            false => Some((Kind::Edit, db.edit(id).ok()??.title)),
+            false => Some((Kind::Edit, db.clip_title(id).ok()??)),
         },
         Queue::Erase => Some((Kind::Erase, db.vod(id).ok()??.info.title)),
     }

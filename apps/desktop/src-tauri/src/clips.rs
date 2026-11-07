@@ -302,7 +302,7 @@ fn settle_canceled(app: &AppHandle, id: i64) {
         {
             emit(app, &db, id);
         }
-    } else if let Ok(Some(edit)) = db.edit(id)
+    } else if let Ok(Some(edit)) = db.edit(id, crate::edits::made_now(app))
         && unmade(edit.status)
         && db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok()
     {
@@ -1268,7 +1268,7 @@ pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, i
         let pieces = db.edit_pieces(id)?;
         if !vodscribe_core::edits::cut_whole(&pieces) {
             let audio_only = pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
-            let title = db.edit(id)?.map(|e| e.title).unwrap_or_default();
+            let title = db.clip_title(id)?.unwrap_or_default();
             let ext = made.unwrap_or_else(|| clips::extension(audio_only, format).into());
             return Ok(Some(format!("{}.{ext}", clips::safe_name(&title))));
         }
@@ -1796,7 +1796,7 @@ mod tests {
         let clips: Vec<_> = gone.clips.iter().map(|(c, out)| (c.id, c.file_path.as_deref(), *out)).collect();
         assert_eq!(clips, [(a, None, false), (b, Some(&*file), true)], "its clips, b dragged out");
         assert_eq!(*stopped.borrow(), [a, b], "their cuts stopped");
-        assert!(db.edit(edit).unwrap().is_none() && db.clip(a).unwrap().is_none() && db.clip(b).unwrap().is_none());
+        assert!(db.revision(edit).unwrap().is_none() && db.clip(a).unwrap().is_none() && db.clip(b).unwrap().is_none());
         assert_eq!(db.clips(vod).unwrap().len(), 1, "the VOD's own clip stays");
     }
 

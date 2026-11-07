@@ -48,7 +48,7 @@
   import AnnotationsOffer from "./AnnotationsOffer.svelte";
   import ResolveNote from "./ResolveNote.svelte";
   import { offers } from "./offers.svelte";
-  import type { Doc } from "./api";
+  import type { Doc, Settings as SettingsValues } from "./api";
   import { nav, searching, type Search, type Step } from "./nav.svelte";
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
@@ -852,6 +852,15 @@
   // Edits show in the clip bar under the player (ClipStrip.svelte); one opened
   // there takes the main area, and a VOD picked (or played) takes it back.
   edits.start();
+  // Whether a rendered edit is current depends on how clips are made, so a
+  // change of that in Settings reads them again once it's saved.
+  const madeWith = (s: SettingsValues | null) => s && `${s.clip_format} ${s.clip_codec} ${s.clip_quality}`;
+  let editsMadeWith = madeWith(settings.value);
+  settings.onSaved((saved) => {
+    if (madeWith(saved) === editsMadeWith) return;
+    editsMadeWith = madeWith(saved);
+    edits.reread();
+  });
   $effect(() => {
     if (edits.openId !== null) selectedId = null;
   });

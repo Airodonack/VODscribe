@@ -234,14 +234,7 @@
       Removing…
     </span>
   </div>
-{:else if refreshingDetails}
-  <div class="status-area">
-    <span class="status">
-      <Spinner label="Refreshing details" />
-      Refreshing details…
-    </span>
-  </div>
-{:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
+{:else if refreshingDetails || vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
     {#if untouched}
       <span class="status muted">
@@ -273,6 +266,13 @@
       </span>
     {:else if vod.note}
       <span class="note muted" title={vod.note}>{vod.note}</span>
+    {/if}
+    <!-- Asking its site takes seconds, beside whatever else it's doing: said under that, which stays. -->
+    {#if refreshingDetails}
+      <span class="status">
+        <Spinner label="Refreshing details" />
+        Refreshing details…
+      </span>
     {/if}
   </div>
 {/if}

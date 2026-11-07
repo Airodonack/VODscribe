@@ -14,7 +14,12 @@
 // Switch to MOV renders it again as MOV, which then lands. Back to MP4, the pill
 // dropped on Resolve again: the note asks again; Don't ask again, ticked,
 // and Not now turn it off, and the MP4 then lands. Last, as MP4 H.265, the
-// pill (H.264) dragged out is made again as H.265, and then lands so. Driven with the OS's pointer
+// pill (H.264) dragged out is made again as H.265, and then lands so. Then,
+// as High quality, the edit (rendered as MOV) says it's changed since, and
+// dragged out it's rendered again so rather than handed over, a toast
+// saying so; a clip of its
+// clip bar, made as Standard, is made again on its drag as the VOD's pill
+// is; both then land as H.265 High. Driven with the OS's pointer
 // (lib/os.mjs). Linux (X11) only: on Wayland the drop's app isn't named, and
 // macOS and Windows never ask.
 
@@ -24,7 +29,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } f
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs } from "../lib/data.mjs";
-import { noFinishedOnly, openFinishedOnly, probeVideo, setFormat, windowsOf } from "../lib/fileManager.mjs";
+import { noFinishedOnly, openFinishedOnly, probeVideo, setFormat, setQuality, windowsOf } from "../lib/fileManager.mjs";
 import { videos } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -364,6 +369,112 @@ exec '${real}' "$@"
       if (picture !== "hevc") throw new Error(`the pill's file is ${picture} once made again as H.265`);
       ctx.log(
         `as MP4 H.265, the H.264 pill was made again on its drag, and the other app took ${path.basename(given)}`,
+      );
+
+      // 6. The edit's clip bar holds a clip made as H.265 Standard; clips
+      // are High then. The edit, rendered as MOV, says it's changed since;
+      // dragged out, it's rendered again as H.265 High, not handed over,
+      // and then lands. The clip of its bar is made again on its drag, as
+      // the VOD's pill was, and then lands.
+      await app.click(`.vod.edit[data-key="-${edit.id}"] button.main`);
+      await until(
+        "the edit's Rendered button",
+        () => app.js(`return !!document.querySelector(arguments[0])`, out),
+        MINUTE,
+      );
+      const barClip = await app.invoke("add_edit_clip", { editId: edit.id, from: 0, to: 2, shown: true });
+      /** The edit's clip, once made as H.265 at `quality`. */
+      const barClipAs = (quality) =>
+        until(
+          `the edit's clip made as H.265 ${quality}`,
+          async () => {
+            const c = (await app.invoke("edit_clips", { id: edit.id })).find((c) => c.id === barClip.id);
+            if (c?.status === "error") throw new Error(`the edit's clip failed: ${c.error}`);
+            return c?.status === "ready" && c.encoding?.codec === "h265" && c.encoding.quality === quality && c;
+          },
+          MINUTE,
+        );
+      await barClipAs("standard");
+      await setQuality(app, "High");
+      const outSays = () => app.js(`return document.querySelector(arguments[0])?.textContent.trim() ?? null`, out);
+      await until(
+        "the edit said to be changed since",
+        async () => (await outSays()) === "Rendered (changed since)",
+        10_000,
+      ).catch(async () => {
+        throw new Error(`as H.265 High, the MOV edit's button says "${await outSays()}"`);
+      });
+      // Pressed and carried onto the other app: no system drag begins, so
+      // none is waited for (dropOn's), only the release there.
+      since = taker.said().length;
+      await os.toFront(app);
+      const box = await os.rectOf(app, out);
+      const press = { x: box.x + Math.round(box.w / 2), y: box.y + Math.round(box.h / 2) };
+      const steps = [
+        ["down", press.x, press.y],
+        ["wait", 100],
+      ];
+      for (let i = 1; i <= 18; i++)
+        steps.push(
+          [
+            "move",
+            Math.round(press.x + (taker.drop.x - press.x) * (i / 18)),
+            Math.round(press.y + (taker.drop.y - press.y) * (i / 18)),
+          ],
+          ["wait", 50],
+        );
+      steps.push(["wait", 300], ["letgo", taker.drop.x, taker.drop.y]);
+      await os.gesture(steps);
+      const { title: editTitle } = (await app.invoke("list_edits")).find((e) => e.id === edit.id);
+      const rendering = `“${editTitle}” is rendering as MP4 H.265 High. Drag it again once it's rendered.`;
+      await until(
+        "the toast saying why nothing landed",
+        async () => (await app.toastSays()) === rendering,
+        10_000,
+      ).catch(async () => {
+        throw new Error(`the edit's drag said "${await app.toastSays()}", not "${rendering}"`);
+      });
+      const highEdit = await until(
+        "the edit rendered again as H.265 High",
+        async () => {
+          const e = (await app.invoke("list_edits")).find((e) => e.id === edit.id);
+          if (e?.status === "error") throw new Error(`the render failed: ${e.error}`);
+          return e?.status === "ready" && e.encoding?.codec === "h265" && e.encoding.quality === "high" && e;
+        },
+        2 * MINUTE,
+      );
+      if (!highEdit.current || !highEdit.file_path.endsWith(".mp4"))
+        throw new Error(`rendered again, the edit is ${JSON.stringify(highEdit)}`);
+      const handed = taker
+        .said()
+        .slice(since)
+        .find((l) => / took \d+ of \d+/.test(l));
+      if (handed) throw new Error(`the edit's MOV was handed over: the other app says "${handed}"`);
+      await until("the edit said to be rendered", async () => (await outSays()) === "Rendered", 10_000);
+      since = taker.said().length;
+      heard = await dropOn(taker, out);
+      const highEditTaken = await took(taker, since);
+      if (!/ took 1 of 1: .*\.mp4$/.test(highEditTaken) || heard.resolve)
+        throw new Error(`the other app says "${highEditTaken}" of the edit, the page heard ${JSON.stringify(heard)}`);
+      if (probeVideo(highEdit.file_path).codec !== "hevc") throw new Error("the edit's video isn't H.265");
+      const barPill = `.chip[data-clip="${barClip.id}"] .length`;
+      await until(
+        "the edit's clip's pill",
+        () => app.js(`return !!document.querySelector(arguments[0])`, barPill),
+        10_000,
+      );
+      await dropOn(taker, barPill);
+      const highClip = await barClipAs("high");
+      since = taker.said().length;
+      heard = await dropOn(taker, barPill);
+      const highClipTaken = await took(taker, since);
+      if (!/ took 1 of 1: .*\.mp4$/.test(highClipTaken) || heard.resolve)
+        throw new Error(
+          `the other app says "${highClipTaken}" of the edit's clip, the page heard ${JSON.stringify(heard)}`,
+        );
+      if (probeVideo(highClip.file_path).codec !== "hevc") throw new Error("the edit's clip isn't H.265");
+      ctx.log(
+        "as High: the MOV edit said changed since, was rendered again on its drag, and its clip made again on its",
       );
     } finally {
       taker?.close();

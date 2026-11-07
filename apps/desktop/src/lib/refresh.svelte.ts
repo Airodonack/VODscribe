@@ -12,8 +12,8 @@
 // shows. It runs beside a download or transcription of the VOD; a second
 // press while one runs does nothing, and a failure says so and changes nothing.
 // Asking the site takes seconds (yt-dlp), so the row says "Refreshing
-// details…" meanwhile (VodRow.svelte), as it does while a VOD is removed, and
-// what's said after names the VOD. The file host's answers aren't waited
+// details…" meanwhile (VodRow.svelte), under what it says of a download or
+// transcription, and what's said after names the VOD. The file host's answers aren't waited
 // for: an offer, or the card, comes when it's in.
 
 import { SvelteSet } from "svelte/reactivity";

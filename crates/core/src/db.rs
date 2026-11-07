@@ -2845,7 +2845,7 @@ mod tests {
             .unwrap();
         }
         let db = Db::open(&path).unwrap();
-        let edit = db.edits().unwrap()[0].id;
+        let edit = db.edits(crate::edits::tests::at_first()).unwrap()[0].id;
         let pieces = db.edit_pieces(edit).unwrap();
         assert_eq!(pieces.len(), 1);
         let p = &pieces[0];
@@ -2906,7 +2906,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         use crate::edits::LibraryItem::{Edit, Vod};
-        let edit = db.edits().unwrap().remove(0);
+        let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0);
         assert_eq!(db.library_order().unwrap(), [Vod(2), Edit(edit.id), Vod(1)], "the order kept");
         assert_eq!((edit.title.as_str(), edit.current), ("Best of", true));
         // Its file isn't there, nor where settle takes files from: read as

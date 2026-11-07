@@ -351,7 +351,7 @@ test("the note at the window's edge said no to: nothing made, nothing said", asy
 });
 
 /** Two stretches picked, carried from (100, 100); `files` makes their clips. @param {boolean} early @param {() => Promise<unknown[]>} files */
-const carriedSet = (early, files) =>
+const carriedSet = (early, files, ofEdit = false) =>
   carrySet(
     /** @type {Parameters<typeof carrySet>[0]} */ (
       /** @type {unknown} */ ({
@@ -363,7 +363,7 @@ const carriedSet = (early, files) =>
         ],
         files,
         early,
-        vodId: 1,
+        vodId: ofEdit ? undefined : 1,
         from: { left: 0, top: 0, width: 10, height: 10 },
         x: 100,
         y: 100,
@@ -594,10 +594,11 @@ const madePair = (encoding, ext = "mp4") =>
   pair().map((c) => ({ ...c, shown: true, status: "ready", file_path: `/${c.id}.${ext}`, encoding }));
 
 /** `list` carried out of the window by the pill, with clips made with `codec` and `quality`: those made again first.
- *  @param {any[]} list @param {string} codec @param {string} quality */
-async function carriedOutAs(list, codec, quality) {
+ *  Of a VOD's clip bar, or (`ofEdit`) the open edit's.
+ *  @param {any[]} list @param {string} codec @param {string} quality @param {boolean} [ofEdit] */
+async function carriedOutAs(list, codec, quality, ofEdit = false) {
   fake.settings.value = { ...fake.settings.value, clip_codec: codec, clip_quality: quality };
-  const done = carriedSet(true, async () => list);
+  const done = carriedSet(true, async () => list, ofEdit);
   move(120, 120);
   move(0, 300);
   await done;
@@ -634,6 +635,22 @@ test("a clip made as clips are made now isn't made again on its next drag", asyn
   assert.deepEqual(await carriedOutAs(madePair({ codec: "h264", quality: "standard" }, "m4a"), "h265", "high"), []);
 });
 
+test("a clip of an edit's clip bar made as H.264 is rendered again on its next drag once clips are H.265", async () => {
+  // It may hold several pieces: rendered as an edit is, not cut again as a
+  // VOD's clip is.
+  const h264 = { codec: "h264", quality: "standard" };
+  for (const beforeMade of [true, false]) {
+    reset();
+    fake.beforeMade = beforeMade;
+    assert.deepEqual(await carriedOutAs(madePair(h264), "h265", "standard", true), [], "cut again as a VOD's");
+    assert.deepEqual(fake.edits.rendered, [3, 4], `the H.264 files handed over (before made: ${beforeMade})`);
+    assert.deepEqual(fake.dragged, [[3, 4]]);
+  }
+  reset();
+  await carriedOutAs(madePair({ codec: "h265", quality: "standard" }), "h265", "standard", true);
+  assert.deepEqual(fake.edits.rendered, [], "one made as clips are made now is made again");
+});
+
 test("an MP4 edit refused to Resolve: the note asks of the edit, and Switch to MOV renders it again", async () => {
   reset();
   const edit = /** @type {import("./api").Edit} */ (/** @type {unknown} */ ({ id: 7, file_path: "/e.mp4" }));
@@ -661,12 +678,49 @@ test("an edit let go where Resolve may be is rendered again too once switched; o
   await tick();
   assert.deepEqual(fake.edits.rendered, [7]);
   reset();
+  fake.settings.value = { clip_format: "mov", clip_codec: "dnxhr", clip_quality: "proxy" };
   await dragEditOut(/** @type {import("./api").Edit} */ (/** @type {unknown} */ ({ id: 8, file_path: "/e.mov" })));
+  assert.deepEqual(fake.dragged, [["edit", 8]]);
   fake.ended({ delivered: true, failed: null, finished_only: false, receiver: null, resolve: "maybe" });
-  fake.settings.value.clip_format = "mov";
   fake.remake?.();
   await tick();
   assert.deepEqual(fake.edits.rendered, []);
+});
+
+test("an edit rendered otherwise than clips are made now is rendered again on its drag, not handed over", async () => {
+  /** @param {unknown} edit */
+  const dragged = async (edit) => {
+    await dragEditOut(/** @type {import("./api").Edit} */ (edit));
+    return { dragged: fake.dragged, rendered: fake.edits.rendered };
+  };
+  reset();
+  fake.settings.value = { ...fake.settings.value, clip_codec: "h265" };
+  const h264 = { codec: "h264", quality: "standard" };
+  const landing = { id: 7, title: "Landing", file_path: "/e.mp4" };
+  assert.deepEqual(await dragged({ ...landing, encoding: h264 }), { dragged: [], rendered: [7] });
+  // Nothing lands where it was let go: said why, and what to do.
+  assert.deepEqual(fake.toasts, ["“Landing” is rendering as MP4 H.265 Standard. Drag it again once it's rendered."]);
+  reset();
+  fake.settings.value = { clip_format: "mov", clip_codec: "prores", clip_quality: "high" };
+  assert.deepEqual(await dragged({ ...landing, encoding: null }), { dragged: [], rendered: [7] });
+  assert.deepEqual(fake.toasts, ["“Landing” is rendering as MOV ProRes High. Drag it again once it's rendered."]);
+  reset();
+  await dragged({ ...landing, file_path: "/e.m4a", encoding: null, title: "Talk" });
+  fake.settings.value = { clip_format: "mov", clip_codec: "dnxhr", clip_quality: "proxy" };
+  await dragged({ ...landing, file_path: "/e.m4a", encoding: null, title: "Talk" });
+  assert.deepEqual(
+    fake.toasts,
+    ["“Talk” is rendering as MOV. Drag it again once it's rendered."],
+    "sound alone: its format",
+  );
+  reset();
+  assert.deepEqual(
+    await dragged({ id: 7, file_path: "/e.mp4", encoding: null }),
+    { dragged: [["edit", 7]], rendered: [] },
+    "rendered before that was recorded, as clips are made now",
+  );
+  reset();
+  assert.deepEqual(await dragged({ id: 8, file_path: "/e.mov", encoding: null }), { dragged: [], rendered: [8] });
 });
 
 test("an edit's drag that never began listens no more", async () => {

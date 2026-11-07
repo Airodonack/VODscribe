@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::{ClipStatus, Db, MARK_DETAIL_COLUMNS, MarkDetail, mark_detail, now};
 use crate::footage::Source;
 use crate::render::Piece;
+use crate::settings::ClipEncoding;
 use crate::time::Flicks;
 use crate::transcript::{Cue, Segment, Word};
 
@@ -43,8 +44,12 @@ pub struct Edit {
     pub error: Option<String>,
     /// The revision it's at (`Db::change`).
     pub revision: i64,
-    /// Whether the rendered file is of the edit as it is now.
+    /// Whether the rendered file is of the edit as it is now, made as clips
+    /// are made now (`clips::made_as`).
     pub current: bool,
+    /// What the rendered file was made with; None if it isn't rendered, or
+    /// was before that was recorded (`Clip::encoding`).
+    pub encoding: Option<ClipEncoding>,
     /// How many pieces it has, and how long it plays, in seconds.
     pub pieces: usize,
     pub length: f64,
@@ -756,21 +761,25 @@ impl Db {
         Ok(id)
     }
 
-    /// Every edit (listed clips other than VODs' own), in their order.
-    pub fn edits(&self) -> Result<Vec<Edit>> {
+    /// Every edit (listed clips other than VODs' own), in their order, each
+    /// `current` as `edit` says with clips made with `now`.
+    pub fn edits(&self, now: ClipEncoding) -> Result<Vec<Edit>> {
         let mut stmt = self
             .conn
             .prepare("SELECT id FROM clips WHERE position IS NOT NULL AND whole_of IS NULL ORDER BY position, id")?;
         let ids: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        ids.into_iter().filter_map(|id| self.edit(id).transpose()).collect()
+        ids.into_iter().filter_map(|id| self.edit(id, now).transpose()).collect()
     }
 
-    pub fn edit(&self, id: i64) -> Result<Option<Edit>> {
+    /// Edit `id`; `current` if its file is of it as it is and made as one is
+    /// made with `now` (Settings' `clip_encoding`, the caller's to read).
+    pub fn edit(&self, id: i64, now: ClipEncoding) -> Result<Option<Edit>> {
         let row = self
             .conn
             .query_row(
                 "SELECT c.title, r.status, r.file_ext, r.error, c.revision, r.revision,
-                        c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of, r.file_path
+                        c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of, r.file_path,
+                        r.encoding
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -784,21 +793,27 @@ impl Db {
                         crate::db::ClipBar::of(r.get(6)?, r.get(7)?),
                         r.get::<_, Option<String>>(8)?,
                         r.get::<_, Option<String>>(9)?,
+                        r.get::<_, Option<String>>(10)?.and_then(|e| serde_json::from_str(&e).ok()),
                     ))
                 },
             )
             .optional()?;
-        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old)) = row else {
+        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old, encoding)) = row else {
             return Ok(None);
         };
         let file_path = crate::db::clip_file_of(&self.files, id, file_ext, old);
         let pieces = self.edit_pieces(id)?;
         // Of the edit as it is if made of what it's made of now (a file made
-        // before that was recorded: of the revision it was made at).
-        let current = match made_of {
-            Some(made) => made == self.made_of(id, &title, &pieces)?,
-            None => rendered == Some(revision),
-        };
+        // before that was recorded: of the revision it was made at), and as
+        // clips are made now: Settings › Encoding changed since, it's made
+        // again, as a clip is.
+        let made_as =
+            file_path.as_deref().is_none_or(|f| crate::clips::made_as(std::path::Path::new(f), encoding, now));
+        let current = made_as
+            && match made_of {
+                Some(made) => made == self.made_of(id, &title, &pieces)?,
+                None => rendered == Some(revision),
+            };
         let ranges: Vec<EditRange> = pieces
             .iter()
             .flat_map(|p| p.spans().into_iter().map(|(start, end)| EditRange { vod_id: p.vod_id, start, end }))
@@ -814,6 +829,7 @@ impl Db {
             error,
             revision,
             current,
+            encoding,
             pieces: pieces.len(),
             length: ranges.iter().map(|r| r.end - r.start).sum(),
             vod_ids,
@@ -867,7 +883,8 @@ impl Db {
     /// A new, empty edit, at the top of the library's list (as new VODs go).
     pub fn add_edit(&self, title: &str) -> Result<Edit> {
         let id = self.new_clip(title, Place::Listed)?;
-        Ok(self.edit(id)?.expect("just inserted"))
+        // Not rendered: how clips are made doesn't come into it.
+        Ok(self.edit(id, ClipEncoding::default())?.expect("just inserted"))
     }
 
     pub fn rename_edit(&self, id: i64, title: &str) -> Result<()> {
@@ -1225,7 +1242,7 @@ impl Db {
     /// on its clip bar each is a clip of its own, and one already there is
     /// left as it is. The clips made on the bar, in order.
     pub fn put(&self, edit: i64, items: &[Put], onto: Onto) -> Result<Vec<i64>> {
-        self.edit(edit)?.context("That edit is gone.")?;
+        self.revision(edit)?.context("That edit is gone.")?;
         self.atomically(|db| {
             let mut made = Vec::new();
             // Where the next one goes on the timeline: after those put so far.
@@ -1564,6 +1581,11 @@ impl Db {
         Ok(self.conn.query_row("SELECT bar_of IS NOT NULL FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
+    /// Clip `id`'s title (an edit's, or a clip's on a clip bar); None if it's gone.
+    pub fn clip_title(&self, id: i64) -> Result<Option<String>> {
+        Ok(self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+    }
+
     /// Clip `id`'s revision now; None if it's gone.
     pub fn revision(&self, id: i64) -> Result<Option<i64>> {
         Ok(self.conn.query_row("SELECT revision FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
@@ -1841,6 +1863,11 @@ pub(crate) mod tests {
     use crate::time::Rate;
     use std::path::Path;
 
+    /// How clips are made at first (H.264 Standard), as the tests' edits are.
+    pub(crate) fn at_first() -> ClipEncoding {
+        ClipEncoding::default()
+    }
+
     #[test]
     fn struck_lines_are_jumped_over() {
         assert_eq!(spans(0.0, 10.0, &[]), [(0.0, 10.0)]);
@@ -1963,7 +1990,7 @@ pub(crate) mod tests {
         let pieces = db.piece_rows(clip).unwrap();
         assert_eq!((pieces.len(), pieces[0].vod_id, pieces[0].start, pieces[0].end), (1, vod, Flicks::ZERO, None));
         assert_eq!(db.edit_pieces(clip).unwrap()[0].end, 600.0, "to the VOD's end");
-        assert!(db.edits().unwrap().is_empty(), "not an edit");
+        assert!(db.edits(at_first()).unwrap().is_empty(), "not an edit");
         assert!(!db.delete_edit(clip).unwrap(), "nor deleted as one");
         assert_eq!(db.vod_clip(vod).unwrap(), Some(clip));
         assert_eq!(db.library_order().unwrap(), [LibraryItem::Vod(vod)]);
@@ -1996,7 +2023,7 @@ pub(crate) mod tests {
         let state = db.edit_state(edit).unwrap().unwrap();
         db.restore_edit(edit, &state).unwrap();
         assert_eq!(rev(edit), 8);
-        assert_eq!(db.edit(edit).unwrap().unwrap().revision, 8);
+        assert_eq!(db.edit(edit, at_first()).unwrap().unwrap().revision, 8);
 
         // A VOD's own clip: its marks, and its clip bar.
         let mark = db.add_mark(vod, "cut", 5.0, None).unwrap().id;
@@ -2031,7 +2058,7 @@ pub(crate) mod tests {
         .unwrap();
         db.hand_out_edit(edit).unwrap();
         assert_eq!(rev(edit), 8);
-        assert!(db.edit(edit).unwrap().unwrap().current);
+        assert!(db.edit(edit, at_first()).unwrap().unwrap().current);
     }
 
     #[test]
@@ -2273,7 +2300,7 @@ pub(crate) mod tests {
         let edit = db.add_edit("e").unwrap().id;
         db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
         let made = || {
-            let e = db.edit(edit).unwrap().unwrap();
+            let e = db.edit(edit, at_first()).unwrap().unwrap();
             db.made_of(edit, &e.title, &db.edit_pieces(edit).unwrap()).unwrap()
         };
         db.set_edit_render(
@@ -2285,7 +2312,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         db.set_made_of(edit, &made()).unwrap();
-        let current = || db.edit(edit).unwrap().unwrap().current;
+        let current = || db.edit(edit, at_first()).unwrap().unwrap().current;
         assert!(current());
         db.add_clip_mark(edit, vod, "highlight", 12.0, None).unwrap();
         db.add_clip_mark(edit, vod, "cut", 13.0, None).unwrap();
@@ -2297,6 +2324,39 @@ pub(crate) mod tests {
         assert!(current(), "and back as it was");
         db.remove_edit_stretch(edit, 1.0, 2.0).unwrap();
         assert!(!current(), "what plays changed");
+    }
+
+    /// A rendered edit is of the edit as it is only if it was made as clips
+    /// are made now (the encoding the caller gives, Settings'); one made
+    /// before that was recorded, as a file of its kind was made then.
+    #[test]
+    fn an_edit_made_otherwise_than_clips_are_made_now_is_out_of_date() {
+        use crate::settings::{ClipCodec, ClipQuality};
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 10.0), "a", None).unwrap();
+        db.set_edit_render(
+            edit,
+            ClipStatus::Ready,
+            Some(&db.files().clip_file(edit, "mp4").to_string_lossy()),
+            None,
+            None,
+        )
+        .unwrap();
+        db.set_made_now(edit).unwrap();
+        let current = |codec, quality| db.edit(edit, ClipEncoding { codec, quality }).unwrap().unwrap().current;
+        use ClipCodec::{H264, H265, Prores};
+        use ClipQuality::{High, Standard};
+        assert!(current(H264, Standard), "an MP4 made before that was recorded is H.264, as clips are made at first");
+        assert!(!current(H265, Standard), "clips are made as H.265 now");
+        let h265 = ClipEncoding { codec: H265, quality: Standard };
+        assert!(!db.edits(h265).unwrap()[0].current, "listed too");
+        db.set_made_as(edit, Some(h265)).unwrap();
+        assert!(current(H265, Standard));
+        assert_eq!(db.edit(edit, h265).unwrap().unwrap().encoding, Some(h265));
+        assert!(!current(H265, High), "a change of quality too");
+        assert!(!current(Prores, Standard), "and of format");
     }
 
     #[test]
@@ -2313,7 +2373,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         db.set_made_now(clip).unwrap();
-        let current = || db.edit(clip).unwrap().unwrap().current;
+        let current = || db.edit(clip, at_first()).unwrap().unwrap().current;
         assert!(current());
         db.add_clip_mark(clip, vod, "chapter", 14.0, Some("Start")).unwrap();
         db.add_clip_mark(clip, vod, "highlight", 15.0, None).unwrap();
@@ -2336,12 +2396,12 @@ pub(crate) mod tests {
         db.add_piece(edit, vod, (0.0, 10.0), "a", None).unwrap();
         let of_vod = db.add_clip(vod, 1.0, 2.0, "v", true).unwrap().id;
         let of_edit = db.add_edit_clip(edit, 1.0, 2.0, "e", true).unwrap().id;
-        let snippet_of = |id| db.edit(id).unwrap().unwrap().snippet_of;
+        let snippet_of = |id| db.edit(id, at_first()).unwrap().unwrap().snippet_of;
         assert_eq!(snippet_of(of_vod), Some(crate::db::ClipBar::Vod { id: vod }));
         // Opened in the editor, the page lists what isn't a snippet as an edit.
         assert_eq!(snippet_of(of_edit), Some(crate::db::ClipBar::Edit { id: edit }), "an edit's bar");
         assert_eq!(snippet_of(edit), None, "a listed edit");
-        assert_eq!(db.edits().unwrap().iter().map(|e| e.id).collect::<Vec<_>>(), [edit]);
+        assert_eq!(db.edits(at_first()).unwrap().iter().map(|e| e.id).collect::<Vec<_>>(), [edit]);
     }
 
     #[test]
@@ -2634,7 +2694,7 @@ pub(crate) mod tests {
         db.change(edit, Some(0), rename("a")).unwrap();
         let e = db.change(edit, Some(0), rename("b")).unwrap_err();
         assert_eq!(e.downcast_ref::<Stale>(), Some(&Stale { clip: edit, base: 0, now: 1 }));
-        assert_eq!(db.edit(edit).unwrap().unwrap().title, "a", "nothing written");
+        assert_eq!(db.edit(edit, at_first()).unwrap().unwrap().title, "a", "nothing written");
         db.change(edit, Some(1), rename("c")).unwrap();
         assert!(db.change(edit + 100, None, rename("d")).is_err(), "a clip that isn't there");
     }
@@ -2732,7 +2792,7 @@ pub(crate) mod tests {
         db.add_piece(edit.id, vod, (30.0, 35.0), "b", Some(0)).unwrap();
         let titles = |db: &Db| db.edit_pieces(edit.id).unwrap().iter().map(|p| p.title.clone()).collect::<Vec<_>>();
         assert_eq!(titles(&db), ["b", "a"]);
-        assert_eq!(db.edit(edit.id).unwrap().unwrap().vod_ids, [vod]);
+        assert_eq!(db.edit(edit.id, at_first()).unwrap().unwrap().vod_ids, [vod]);
         let pieces = db.edit_pieces(edit.id).unwrap();
         db.move_piece(pieces[0].id, 1).unwrap();
         assert_eq!(titles(&db), ["a", "b"]);
@@ -2746,12 +2806,12 @@ pub(crate) mod tests {
         db.set_piece_range(a_piece, 10.0, 18.0).unwrap();
         let p = &db.edit_pieces(edit.id).unwrap()[0];
         assert_eq!(p.spans(), [(10.0, 12.0), (14.0, 18.0)]);
-        let ranges = db.edit(edit.id).unwrap().unwrap().ranges;
+        let ranges = db.edit(edit.id, at_first()).unwrap().unwrap().ranges;
         assert_eq!(
             ranges.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
             [(10.0, 12.0), (14.0, 18.0), (30.0, 35.0)]
         );
-        assert_eq!(db.edit(edit.id).unwrap().unwrap().length, 6.0 + 5.0);
+        assert_eq!(db.edit(edit.id, at_first()).unwrap().unwrap().length, 6.0 + 5.0);
         // Kept in flicks: what went in comes out, to the flick.
         let row = db.piece_row(a_piece).unwrap().unwrap();
         assert_eq!((row.start, row.end), (Flicks::from_seconds(10.0), Some(Flicks::from_seconds(18.0))));
@@ -2779,16 +2839,16 @@ pub(crate) mod tests {
             version,
         )
         .unwrap();
-        assert!(db.edit(edit.id).unwrap().unwrap().current);
+        assert!(db.edit(edit.id, at_first()).unwrap().unwrap().current);
         db.remove_piece(split[1].id).unwrap();
-        let after = db.edit(edit.id).unwrap().unwrap();
+        let after = db.edit(edit.id, at_first()).unwrap().unwrap();
         assert!(!after.current);
         assert_eq!(after.file_path, Some(db.files().clip_file(edit.id, "mp4").to_string_lossy().into_owned()));
         // Deleting the VOD takes its pieces with it.
         db.delete_vod(vod).unwrap();
-        assert_eq!(db.edit(edit.id).unwrap().unwrap().pieces, 0);
+        assert_eq!(db.edit(edit.id, at_first()).unwrap().unwrap().pieces, 0);
         db.delete_edit(edit.id).unwrap();
-        assert!(db.edits().unwrap().is_empty());
+        assert!(db.edits(at_first()).unwrap().is_empty());
     }
 
     #[test]

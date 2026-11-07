@@ -173,10 +173,9 @@ async function dragOut(
     // Let go on DaVinci Resolve, or perhaps (where the system can't tell),
     // with MP4 clips it can't open: asked whether to switch to MOV. Refused
     // there, they're kept in the clip bar, to drag again, made again as MOV
-    // if switched (those of a VOD's bar; another's are made so as they're
-    // dragged next).
+    // if switched.
     if (end?.resolve) {
-      const remake = () => vodId !== undefined && list.forEach((c) => void remadeOnceMade(c, vodId));
+      const remake = () => list.forEach((c) => void remadeOnceMade(c, vodId));
       resolveNote.show(end.resolve, list.length, end.resolve === "refused" ? remake : undefined);
     }
     if (end?.resolve === "refused") list.forEach(keepHidden);
@@ -242,13 +241,22 @@ const formatOf = (clip: { file_path?: string | null }): ClipFormat =>
 
 /**
  * Starts the system drag of edit `edit`'s rendered video out of the window
- * (call while the button is down). Let go on DaVinci Resolve as MP4, as a
- * clip's: refused there on X11, and once it's over asked whether to switch
- * to MOV (or where the system doesn't say where it went, and Resolve is
- * installed); switched, the edit is rendered again so, to drag once it's
- * ready.
+ * (call while the button is down). Rendered otherwise than clips are made
+ * now (`madeAsWanted`: Settings › Encoding changed since), it's rendered
+ * again instead, to drag once it's ready, as a clip is made again. Let go
+ * on DaVinci Resolve as MP4, as a clip's: refused there on X11, and once
+ * it's over asked whether to switch to MOV (or where the system doesn't say
+ * where it went, and Resolve is installed); switched, the edit is rendered
+ * again so, to drag once it's ready.
  */
 export async function dragEditOut(edit: Edit): Promise<void> {
+  await settings.load();
+  const want = settings.value ?? { clip_format: "mp4" };
+  if (!madeAsWanted(edit, want)) {
+    // Nothing lands where it's let go: said why, and what to do.
+    toast.show(`“${edit.title}” is rendering as ${madeAsSaid(edit, want)}. Drag it again once it's rendered.`);
+    return edits.render(edit.id);
+  }
   const mine = ++numbered;
   let stop: (() => void) | undefined;
   stop = await events
@@ -271,6 +279,27 @@ export async function dragEditOut(edit: Edit): Promise<void> {
   if (!began) stop?.();
 }
 
+/** How Settings › Encoding names each codec and quality (Settings.svelte shows these). */
+export const CODEC_NAMES: Record<ClipEncoding["codec"], string> = {
+  h264: "MP4 H.264",
+  h265: "MP4 H.265",
+  dnxhr: "MOV DNxHR",
+  prores: "MOV ProRes",
+};
+export const QUALITY_NAMES: Record<ClipEncoding["quality"], string> = {
+  proxy: "Proxy",
+  standard: "Standard",
+  high: "High",
+};
+
+/** How clips are made now (`want`, the settings), in Settings' words, for
+ *  `clip`: its format alone if it's sound alone, which has no codec to choose. */
+function madeAsSaid(clip: { file_path?: string | null }, want: Parameters<typeof madeAsWanted>[1]): string {
+  if (/\.(m4a|wav)$/i.test(clip.file_path ?? "")) return want.clip_format.toUpperCase();
+  const made = encodingBefore(want.clip_format);
+  return `${CODEC_NAMES[want.clip_codec ?? made.codec]} ${QUALITY_NAMES[want.clip_quality ?? made.quality]}`;
+}
+
 /** What a file in `format` was made with before codecs were a choice (as
  *  crates/core `Settings::clip_encoding` reads settings from then). */
 const encodingBefore = (format: ClipFormat): ClipEncoding =>
@@ -291,12 +320,18 @@ export function madeAsWanted(
   return made.codec === (want.clip_codec ?? wanted.codec) && made.quality === (want.clip_quality ?? wanted.quality);
 }
 
-/** Clip `clip` (of VOD `vodId`) to be as clips are made now (format, codec
- *  and quality: `madeAsWanted`): as it is, or being made again; null if it
- *  can't be. */
-async function remade(clip: Clip, vodId: number): Promise<Clip | null> {
+/** Clip `clip` (of VOD `vodId`; with none, of the open edit's clip bar) to
+ *  be as clips are made now (format, codec and quality: `madeAsWanted`): as
+ *  it is, or being made again; null if it can't be. */
+async function remade(clip: Clip, vodId?: number): Promise<Clip | null> {
   await settings.load();
   if (clip.status !== "ready" || madeAsWanted(clip, settings.value ?? { clip_format: "mp4" })) return clip;
+  // An edit's clip can hold several pieces, and a range is only its first
+  // one's: rendered again as it is, as one opened in the editor is.
+  if (vodId === undefined) {
+    await edits.render(clip.id);
+    return { ...clip, status: "cutting", file_path: null };
+  }
   if (clips.vodId === vodId) {
     await clips.move(clip.id, clip.start, clip.end);
     return { ...clip, status: "waiting", file_path: null };
@@ -304,18 +339,18 @@ async function remade(clip: Clip, vodId: number): Promise<Clip | null> {
   return api.setClipRange(clip.id, clip.start, clip.end).catch(() => null);
 }
 
-/** Clip `clip` (of VOD `vodId`), carried in a drag, made again as clips
- *  are made now once it's made: one still being made when
- *  the drag ended (as it is now, not as it was then) is made in the format
- *  its making began in. */
-async function remadeOnceMade(clip: Clip, vodId: number): Promise<void> {
+/** Clip `clip` (of VOD `vodId`, or the open edit's clip bar), carried in a
+ *  drag, made again as clips are made now once it's made: one still being
+ *  made when the drag ended (as it is now, not as it was then) is made in
+ *  the format its making began in. */
+async function remadeOnceMade(clip: Clip, vodId?: number): Promise<void> {
   const made = await clips.ready(clip.id, () => true, vodId);
   if (made) await remade(made, vodId);
 }
 
-/** Clip `clip` (of VOD `vodId`) as clips are made now, once made (again,
- *  if it was otherwise), while `still()`. */
-async function inFormat(clip: Clip, vodId: number, still: () => boolean): Promise<Clip | null> {
+/** Clip `clip` (of VOD `vodId`, or the open edit's clip bar) as clips are
+ *  made now, once made (again, if it was otherwise), while `still()`. */
+async function inFormat(clip: Clip, vodId: number | undefined, still: () => boolean): Promise<Clip | null> {
   const want = await remade(clip, vodId);
   return want && (want === clip ? clip : clips.ready(clip.id, still, vodId));
 }
@@ -630,7 +665,7 @@ interface Payload {
   files?: () => Promise<Clip[]>;
   /** Whether those are made as the carry begins (their footage is here: no download), not at the edge. */
   early?: boolean;
-  /** The VOD they're clips of, if it's one: made in the format clips are made in. */
+  /** The VOD they're clips of, if it's one; else they're the open edit's. */
   vodId?: number;
   /** Where it came from, if coming back there ends the carry. */
   home?: CarryHome;
@@ -787,8 +822,8 @@ function carryWith(p: Payload): Promise<void> {
         for (const clip of made) {
           if (!down) break;
           const cut = waits ? await clips.ready(clip.id, () => down, p.vodId) : clip;
-          const want = (c: Clip) => (waits ? inFormat(c, p.vodId!, () => down) : remade(c, p.vodId!));
-          const done = cut && p.vodId !== undefined ? await want(cut) : cut;
+          const want = (c: Clip) => (waits ? inFormat(c, p.vodId, () => down) : remade(c, p.vodId));
+          const done = cut && (await want(cut));
           if (!done) break;
           ready.push(done);
         }
@@ -900,7 +935,7 @@ export interface CarrySet {
   files?: () => Promise<Clip[]>;
   /** Whether those are made as the carry begins (their footage is here: no download), not at the edge. */
   early?: boolean;
-  /** The open VOD, if it's its: the files are made in the format clips are made in. */
+  /** The open VOD, if the files are its clips; else they're the open edit's. Either way made as clips are made now. */
   vodId?: number;
   /** Where it came from, if coming back there ends the carry (an edit's timeline). */
   home?: CarryHome;

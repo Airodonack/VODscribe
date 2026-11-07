@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use vodscribe_core::db::{ClipStatus, Db, MarkState};
 use vodscribe_core::edits::EditState;
+use vodscribe_core::settings::ClipEncoding;
 
 use crate::{AppState, CmdResult, err};
 
@@ -299,14 +300,16 @@ impl BarQueue for AppHandle {
 /// the change left it, or as an undo of it did) to `to`. Only that: what the
 /// change didn't touch stays as it is now, so a clip that went meanwhile
 /// without a change of its own (its file deleted outside the app) stays gone.
-fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+/// A clip is made again unless its file is as clips are made `now`.
+fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+    let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| remake_clip(db, now, clip, want);
     match (doc, from, to) {
         (Doc::Edit(id), Snapshot::Edit { state: was, bar: had }, Snapshot::Edit { state, bar }) => {
             if was != state {
                 db.restore_edit(id, state)?;
             }
             let add = |db: &Db, want: &BarClip<EditState>| db.add_bar_clip(id, &want.made);
-            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake_clip, add)?;
+            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
             order_bar(db, id, bar, &edit_bar(db, id)?)?;
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
@@ -316,7 +319,7 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
             let add = |db: &Db, want: &BarClip<EditState>| {
                 db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made)
             };
-            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake_clip, add)?;
+            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
             if let Some(bar) = db.vod_clip(id)? {
                 order_bar(db, bar, clips, &vod_bar(db, id)?)?;
             }
@@ -327,15 +330,16 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
 }
 
 /// Clip `clip` of a clip bar made of what `want` holds and titled as it:
-/// waiting to be made again unless its file is of that already. The cutter
+/// waiting to be made again unless its file is of that already, made as
+/// clips are made `now`. The cutter
 /// makes only a clip that isn't ready (`clips::cut`), so one left ready kept
 /// the file of what the undone change made it. One change: in between, the
 /// clip read from elsewhere (`list_clips`) would be back as it was yet ready,
 /// with the file of what it no longer is.
-fn remake_clip(db: &Db, clip: i64, want: &BarClip<EditState>) -> Result<()> {
+fn remake_clip(db: &Db, now: ClipEncoding, clip: i64, want: &BarClip<EditState>) -> Result<()> {
     db.atomically(|db| {
         db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })?;
-        if db.edit(clip)?.is_some_and(|e| !e.current) {
+        if db.edit(clip, now)?.is_some_and(|e| !e.current) {
             db.set_edit_render(clip, ClipStatus::Waiting, None, None, None)?;
         }
         Ok(())
@@ -480,7 +484,7 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let mut s = state.history.0.lock().unwrap();
     let Some(mut entry) = History::take(&mut s, view, undo) else { return Ok(None) };
     let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
-    if let Err(e) = restore(app, &db, entry.doc, from, to) {
+    if let Err(e) = restore(app, &db, crate::edits::made_now(app), entry.doc, from, to) {
         // Kept, to try again: it's the newest of its stack still.
         let stacks = if undo { &mut s.undo } else { &mut s.redo };
         stacks.entry(entry.doc).or_default().push(entry);
@@ -733,7 +737,7 @@ mod tests {
         let mut s = history.0.lock().unwrap();
         let entry = History::take(&mut s, doc, undo).expect("a step to take");
         let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
-        restore(&NoQueue, db, doc, from, to).unwrap();
+        restore(&NoQueue, db, ClipEncoding::default(), doc, from, to).unwrap();
         let other = if undo { &mut s.redo } else { &mut s.undo };
         other.entry(doc).or_default().push(entry);
     }

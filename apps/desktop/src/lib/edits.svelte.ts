@@ -205,6 +205,14 @@ class Edits {
     }
   }
 
+  /** Loads every edit again, and the one open: Settings › Encoding changed,
+   *  which decides whether each one's video is current (crates/core
+   *  `Edit::current`). */
+  reread() {
+    this.#reloadList();
+    if (this.openId !== null) this.#load(this.openId);
+  }
+
   /** Loads edit `id` again (undo or redo changed it), if it's in the list or open. */
   reload(id: number) {
     if (id === this.openId) this.#load(id);

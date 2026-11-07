@@ -405,8 +405,11 @@ export interface Edit {
   error: string | null;
   /** The revision it's at: every change to it is one. */
   revision: number;
-  /** Whether the rendered video is of the edit as it is now. */
+  /** Whether the rendered video is of the edit as it is now, made as clips are made now. */
   current: boolean;
+  /** What its video was made with; null if it isn't rendered, or was before
+   *  this was recorded (crates/core `Edit::encoding`). */
+  encoding?: ClipEncoding | null;
   pieces: number;
   /** How long it plays, in seconds. */
   length: number;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { CODEC_NAMES, QUALITY_NAMES } from "./dragout";
   // Settings, a section at a time; which one is shown, and the list of them,
   // are settingsWindow.svelte.ts's, so a section can be opened from elsewhere.
   import Controls from "./Controls.svelte";
@@ -45,32 +46,32 @@
     {
       id: "h264",
       format: "mp4",
-      label: "MP4 H.264",
+      label: CODEC_NAMES.h264,
       hint: "Small files that nearly every video editor and player opens.",
     },
     {
       id: "h265",
       format: "mp4",
-      label: "MP4 H.265",
+      label: CODEC_NAMES.h265,
       hint: "Smaller files, but some editors and Windows players cannot open them.",
     },
     {
       id: "dnxhr",
       format: "mov",
-      label: "MOV DNxHR",
+      label: CODEC_NAMES.dnxhr,
       hint: "Large files that scrub smoothly in DaVinci Resolve and Premiere.",
     },
     {
       id: "prores",
       format: "mov",
-      label: "MOV ProRes",
+      label: CODEC_NAMES.prores,
       hint: "Large files that scrub smoothly in Final Cut and other Apple editors.",
     },
   ] as const;
   const QUALITIES = [
-    { id: "proxy", label: "Proxy" },
-    { id: "standard", label: "Standard" },
-    { id: "high", label: "High" },
+    { id: "proxy", label: QUALITY_NAMES.proxy },
+    { id: "standard", label: QUALITY_NAMES.standard },
+    { id: "high", label: QUALITY_NAMES.high },
   ] as const;
   let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
   let loadCastPictures = $derived(appSettings.value?.load_cast_pictures ?? true);
@@ -441,7 +442,7 @@
             </button>
           {/each}
         </div>
-        <p class="muted hint">A clip made in another format or quality is made again when next dragged out.</p>
+        <p class="muted hint">A clip or edit made in another format or quality is made again when next dragged out.</p>
         {#if os === "linux"}
           <label class="toggle">
             <input

@@ -657,7 +657,10 @@ mod tests {
         assert_eq!(there(db.playable_path(vod).unwrap()).as_deref(), Some("video"));
         assert_eq!(there(db.media_path(old_vod).unwrap()).as_deref(), Some("old video"));
         assert_eq!(there(db.clip(clip).unwrap().unwrap().file_path).as_deref(), Some("clip"));
-        assert_eq!(there(db.edit(edit).unwrap().unwrap().file_path).as_deref(), Some("edit"));
+        assert_eq!(
+            there(db.edit(edit, crate::edits::tests::at_first()).unwrap().unwrap().file_path).as_deref(),
+            Some("edit")
+        );
         assert_eq!(unsettled(&db).unwrap(), 0);
     }
 

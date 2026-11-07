@@ -21,7 +21,8 @@
 // channel's page as the site named it, with no picture. And a YouTube VOD
 // added before the library kept its channel's login and page: its card has
 // no link to the channel until its row's Refresh details asks the site
-// again, its row saying "Refreshing details…" meanwhile; while the site
+// again, its row saying "Refreshing details…" meanwhile, under what it
+// says of the VOD (Not transcribed), which stays; while the site
 // says the video's gone, that says so, naming the VOD, and changes nothing;
 // then it has the channel's page, and the card and VODscription published
 // since show, the index asked for again past the session's.
@@ -92,15 +93,17 @@ const READ = `
  *  it may say so for less time than a look from here takes. */
 const watchRefreshing = (app, id) =>
   app.js(
-    `const says = () => document.querySelector('.vod[data-key="' + arguments[0] + '"] .status-area')?.textContent.includes("Refreshing details…");
-     window.__refreshingSeen = false;
+    `const area = () => document.querySelector('.vod[data-key="' + arguments[0] + '"] .status-area');
+     window.__refreshingSeen = null;
      const seen = new MutationObserver(() => {
-       if (says()) { window.__refreshingSeen = true; seen.disconnect(); }
+       const says = area()?.textContent.replace(/\\s+/g, " ").trim();
+       if (says?.includes("Refreshing details…")) { window.__refreshingSeen = says; seen.disconnect(); }
      });
      seen.observe(document.body, { childList: true, subtree: true, characterData: true });`,
     String(id),
   );
-const sawRefreshing = (app) => app.js(`return window.__refreshingSeen === true`);
+/** What the row said once it said "Refreshing details…" (`watchRefreshing`), or null if it never did. */
+const sawRefreshing = (app) => app.js(`return window.__refreshingSeen`);
 
 export default {
   name: "streamer-card",
@@ -392,7 +395,10 @@ export default {
             `Couldn't refresh the details of “${older.title}”. That video isn't available. It may have been deleted or made private.`
           )
             wrong.push(`Refresh details, the video gone, says "${failed}"`);
-          if (!(await sawRefreshing(app))) wrong.push(`the row never said "Refreshing details…"`);
+          const refreshingSaid = await sawRefreshing(app);
+          if (!refreshingSaid) wrong.push(`the row never said "Refreshing details…"`);
+          else if (!refreshingSaid.includes("Not transcribed"))
+            wrong.push(`refreshing, the row says "${refreshingSaid}", not what it said of the VOD`);
           if (channelOf(await vodNow()) !== "[null,null]")
             wrong.push(`a failed refresh kept the channel ${channelOf(await vodNow())}`);
           const after = since.requests.filter(notFilter).slice(asked);
