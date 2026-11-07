@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Puts the ffmpeg the app ships for Linux x86_64 (the build pinned in
-crates/core/src/deps.rs, checked by its SHA-256) at <dir>/ffmpeg. For CI's
-player tests: Ubuntu 22.04's own ffmpeg (4.4) lacks options the player uses.
+crates/core/src/deps.rs, checked by its SHA-256) at <dir>/ffmpeg. For CI:
+Ubuntu 22.04's own ffmpeg (4.4) lacks options the player tests use, and the
+format job's apt download of it kept running out of time.
 
 The archive is kept in <dir> (CI caches it) and checked against the pin at
 every run, and the binary is taken from it each time: nothing that only
