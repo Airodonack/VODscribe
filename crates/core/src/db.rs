@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chat::{ChatMessage, ChatPart, Kind};
 use crate::fetch::VodInfo;
+use crate::settings::ClipEncoding;
 use crate::stretches::Transcribed;
 use crate::time::{Flicks, Rate};
 use crate::transcript::{Segment, Word};
@@ -797,6 +798,13 @@ ALTER TABLE vods ADD COLUMN channel_url TEXT;";
 const MIGRATE_V38: &str = "
 ALTER TABLE vod_annotations ADD COLUMN contexts TEXT;";
 
+/// Version 41: the codec and quality a clip's (or edit's) file was made
+/// with (`Clip::encoding`, as JSON), so a change of either in Settings makes
+/// it again as a change of format does. Null for a file made before: known
+/// only by its extension.
+const MIGRATE_V41: &str = "
+ALTER TABLE renders ADD COLUMN encoding TEXT;";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -951,6 +959,9 @@ pub struct Clip {
     /// How long it plays: on an edit's clip bar, where it may hold several
     /// pieces (`start`..`end` are its first one's); else `end - start`.
     pub length: f64,
+    /// What its file was made with (`set_made_as`); None if it isn't made, or
+    /// was made before this was recorded.
+    pub encoding: Option<ClipEncoding>,
 }
 
 /// Whose clip bar a clip is on.
@@ -1080,7 +1091,7 @@ pub struct MarkState {
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
-     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path";
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
 /// one (a clip pasted or dropped at its start): a group has no stretch to read.
@@ -1109,6 +1120,7 @@ pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<C
         revision: r.get(9)?,
         bar: ClipBar::of(r.get(10)?, r.get(11)?),
         length: 0.0,
+        encoding: r.get::<_, Option<String>>(13)?.and_then(|e| serde_json::from_str(&e).ok()),
     };
     clip.length = clip.end - clip.start;
     Ok(clip)
@@ -1382,6 +1394,7 @@ impl Db {
             MIGRATE_V38,
             MIGRATE_BUILT_PATHS,
             MIGRATE_V40,
+            MIGRATE_V41,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1630,6 +1643,23 @@ impl Db {
             params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), ext, error, file],
         )?;
         Ok(n > 0)
+    }
+
+    /// What clip `id`'s file (or edit `id`'s video) was made with, if that's
+    /// recorded (`set_made_as`).
+    pub fn made_as(&self, id: i64) -> Result<Option<ClipEncoding>> {
+        let made: Option<Option<String>> =
+            self.conn.query_row("SELECT encoding FROM renders WHERE clip_id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(made.flatten().and_then(|e| serde_json::from_str(&e).ok()))
+    }
+
+    /// Records that clip `id`'s file (or edit `id`'s video) was made with
+    /// `encoding`: None for one copied from a file made before that was
+    /// recorded.
+    pub fn set_made_as(&self, id: i64, encoding: Option<ClipEncoding>) -> Result<()> {
+        let encoding = encoding.map(|e| serde_json::to_string(&e)).transpose()?;
+        self.conn.execute("UPDATE renders SET encoding = ?2 WHERE clip_id = ?1", params![id, encoding])?;
+        Ok(())
     }
 
     /// Deletes snippet `id`: a change to the clip whose bar it's in, if it's
@@ -3052,7 +3082,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -3092,12 +3122,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -3124,12 +3154,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -3153,12 +3183,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -3176,12 +3206,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -3205,11 +3235,11 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }
@@ -3230,11 +3260,11 @@ mod tests {
         // Back to version 36: the column 37 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 36;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 36;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
         let info = VodInfo {
             platform: "twitch".into(),
@@ -3267,11 +3297,11 @@ mod tests {
         // Back to version 39: the column 40 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; PRAGMA user_version = 39;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 39;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
         let page = "https://www.dailymotion.com/quill";
         let info = VodInfo {
@@ -3492,6 +3522,26 @@ mod tests {
         assert!(!db.set_mark_text(b.id, None).unwrap(), "gone");
         db.delete_vod(vod).unwrap();
         assert!(db.marks(vod).unwrap().is_empty());
+    }
+
+    /// What a clip's file was made with is kept with it (`set_made_as`),
+    /// for the page to make it again when that changes; unknown till then.
+    #[test]
+    fn a_clip_keeps_what_its_file_was_made_with() {
+        use crate::settings::{ClipCodec, ClipQuality};
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap();
+        assert_eq!(clip.encoding, None);
+        let h265 = ClipEncoding { codec: ClipCodec::H265, quality: ClipQuality::High };
+        db.set_made_as(clip.id, Some(h265)).unwrap();
+        assert_eq!(db.clip(clip.id).unwrap().unwrap().encoding, Some(h265));
+        assert_eq!(db.made_as(clip.id).unwrap(), Some(h265));
+        db.set_made_as(clip.id, None).unwrap();
+        assert_eq!(db.clip(clip.id).unwrap().unwrap().encoding, None);
+        // As the page reads it.
+        let json = serde_json::to_value(Some(h265)).unwrap();
+        assert_eq!(json, serde_json::json!({ "codec": "h265", "quality": "high" }));
     }
 
     #[test]

@@ -434,7 +434,7 @@
             </button>
           {/each}
         </div>
-        <p class="muted hint">A clip made as the other file type is made again when next dragged out.</p>
+        <p class="muted hint">A clip made in another format or quality is made again when next dragged out.</p>
         {#if os === "linux"}
           <label class="toggle">
             <input
@@ -444,7 +444,7 @@
             />
             Ask about MOV when dropping on Resolve
           </label>
-          <p class="muted hint">Resolve can't open MP4 clips.</p>
+          <p class="muted hint">Resolve on Linux can't open MP4 clips.</p>
         {/if}
       </section>
     {:else if settingsWindow.section === "updates"}

@@ -36,6 +36,7 @@ import {
   events,
   thumbUrl,
   type Clip,
+  type ClipEncoding,
   type ClipFormat,
   type DragEnded,
   type Edit,
@@ -236,7 +237,7 @@ async function dragOut(
 }
 
 /** The format clip (or edit) `clip`'s file is in, by its extension. */
-const formatOf = (clip: { file_path: string | null }): ClipFormat =>
+const formatOf = (clip: { file_path?: string | null }): ClipFormat =>
   /\.(mov|wav)$/i.test(clip.file_path ?? "") ? "mov" : "mp4";
 
 /**
@@ -270,12 +271,32 @@ export async function dragEditOut(edit: Edit): Promise<void> {
   if (!began) stop?.();
 }
 
-/** Clip `clip` (of VOD `vodId`) to be in the format clips are made in now:
- *  as it is, or (made in the other) being made again; null if it can't be. */
+/** What a file in `format` was made with before codecs were a choice (as
+ *  crates/core `Settings::clip_encoding` reads settings from then). */
+const encodingBefore = (format: ClipFormat): ClipEncoding =>
+  format === "mov" ? { codec: "dnxhr", quality: "proxy" } : { codec: "h264", quality: "standard" };
+
+/** Whether made clip `clip`'s file is as clips are made now (`want`, the
+ *  settings): in its format and, with a picture, its codec and quality, as
+ *  recorded (`encoding`), else as a file of its format was made before that
+ *  was. Sound alone is the same in every codec of its format. */
+export function madeAsWanted(
+  clip: Pick<Clip, "file_path" | "encoding">,
+  want: { clip_format: ClipFormat; clip_codec?: ClipEncoding["codec"]; clip_quality?: ClipEncoding["quality"] },
+): boolean {
+  if (formatOf(clip) !== want.clip_format) return false;
+  if (/\.(m4a|wav)$/i.test(clip.file_path ?? "")) return true;
+  const made = clip.encoding ?? encodingBefore(want.clip_format);
+  const wanted = encodingBefore(want.clip_format);
+  return made.codec === (want.clip_codec ?? wanted.codec) && made.quality === (want.clip_quality ?? wanted.quality);
+}
+
+/** Clip `clip` (of VOD `vodId`) to be as clips are made now (format, codec
+ *  and quality: `madeAsWanted`): as it is, or being made again; null if it
+ *  can't be. */
 async function remade(clip: Clip, vodId: number): Promise<Clip | null> {
   await settings.load();
-  const want = settings.value?.clip_format ?? "mp4";
-  if (clip.status !== "ready" || formatOf(clip) === want) return clip;
+  if (clip.status !== "ready" || madeAsWanted(clip, settings.value ?? { clip_format: "mp4" })) return clip;
   if (clips.vodId === vodId) {
     await clips.move(clip.id, clip.start, clip.end);
     return { ...clip, status: "waiting", file_path: null };
@@ -283,8 +304,8 @@ async function remade(clip: Clip, vodId: number): Promise<Clip | null> {
   return api.setClipRange(clip.id, clip.start, clip.end).catch(() => null);
 }
 
-/** Clip `clip` (of VOD `vodId`), carried in a drag, made again in the
- *  format clips are made in now once it's made: one still being made when
+/** Clip `clip` (of VOD `vodId`), carried in a drag, made again as clips
+ *  are made now once it's made: one still being made when
  *  the drag ended (as it is now, not as it was then) is made in the format
  *  its making began in. */
 async function remadeOnceMade(clip: Clip, vodId: number): Promise<void> {
@@ -292,8 +313,8 @@ async function remadeOnceMade(clip: Clip, vodId: number): Promise<void> {
   if (made) await remade(made, vodId);
 }
 
-/** Clip `clip` (of VOD `vodId`) in the format clips are made in now, once
- *  made (again, if it was in the other), while `still()`. */
+/** Clip `clip` (of VOD `vodId`) as clips are made now, once made (again,
+ *  if it was otherwise), while `still()`. */
 async function inFormat(clip: Clip, vodId: number, still: () => boolean): Promise<Clip | null> {
   const want = await remade(clip, vodId);
   return want && (want === clip ? clip : clips.ready(clip.id, still, vodId));
@@ -310,18 +331,16 @@ export function stretchAt(time: number, duration: number): { start: number; end:
 
 /**
  * Makes the stretch `start`..`end` a clip (or gives the one made); in the
- * clip bar if `shown` (after clip `after`, else where a paste would go:
- * clips.svelte.ts `after`), else only made to be dragged out.
+ * clip bar if `shown`, else only made to be dragged out.
  */
-export function exportStretch(start: number, end: number, shown = true, after = clips.after): Promise<Clip | null> {
-  return clips.make(start, end, shown, after);
+export function exportStretch(start: number, end: number, shown = true): Promise<Clip | null> {
+  return clips.make(start, end, shown);
 }
 
 /** Makes each of `ranges` a clip in the clip bar (several stretches
- *  selected), in their order, as `exportStretch` makes one: after clip
- *  `after`, else where a paste would go (clips.svelte.ts `after`). */
-export function exportStretches(ranges: { start: number; end: number }[], after = clips.after): Promise<void> {
-  return clips.makeAll(ranges, after);
+ *  selected), in their order, as `exportStretch` makes one. */
+export function exportStretches(ranges: { start: number; end: number }[]): Promise<void> {
+  return clips.makeAll(ranges);
 }
 
 /** Where `start`..`end` is on screen: on the timeline if it's in view, else null. */
@@ -816,8 +835,8 @@ export function carry({
   home,
 }: Carry): Promise<void> {
   // A stretch of the VOD shown is made a clip through its clip bar; another's (an edit's piece) directly.
-  const make = async (shown: boolean, after = clips.after): Promise<Clip | null> => {
-    if (vod.id === clips.vodId) return exportStretch(start, end, shown, after);
+  const make = async (shown: boolean): Promise<Clip | null> => {
+    if (vod.id === clips.vodId) return exportStretch(start, end, shown);
     return api.addClip(vod.id, start, end, shown).catch((e) => {
       clips.error = String(e);
       return null;
@@ -847,10 +866,9 @@ export function carry({
       else if (edit !== null) into(edit);
       else if (timeline && edits.openId !== null) into(edits.openId, timeline.index);
       else if (bar && clips.doc?.kind === "edit")
-        edits.put(clips.doc.id, [{ kind: "range", vodId: vod.id, start, end, title }], true, undefined, clips.after);
+        edits.put(clips.doc.id, [{ kind: "range", vodId: vod.id, start, end, title }], true);
       else if (bar) {
-        const after = clips.after;
-        void (made ?? Promise.resolve([])).then(() => make(true, after));
+        void (made ?? Promise.resolve([])).then(() => make(true));
         return true;
       }
       return false;
@@ -987,22 +1005,20 @@ export function carrySet(set: CarrySet): Promise<void> {
       else if (target.timeline && edits.openId !== null) edits.put(edits.openId, items, false, target.timeline.index);
       else if (target.bar && clips.doc?.kind === "edit") {
         const id = clips.doc.id;
-        const after = clips.after;
         if (!made) {
-          edits.put(id, items, true, undefined, after);
+          edits.put(id, items, true);
           return false;
         }
         // The clips made ahead for a drag out are of the same stretches of
         // this edit: they go first, so the ones put on its clip bar are new.
         void made
           .then((list) => Promise.all(list.filter((c) => !c.shown).map((c) => api.deleteClip(c.id).catch(() => {}))))
-          .then(() => edits.put(id, items, true, undefined, after));
+          .then(() => edits.put(id, items, true));
         return true;
       } else if (target.bar) {
         // On a VOD's clip bar, the clips made for a drag out are the ones
         // kept: those made ahead waited for first, so they're not made twice.
-        const after = clips.after;
-        void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches, after));
+        void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches));
         return true;
       }
       return false;

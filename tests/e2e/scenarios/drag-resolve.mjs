@@ -13,7 +13,8 @@
 // MP4 video dragged onto Resolve: refused, the note asks of the edit, and
 // Switch to MOV renders it again as MOV, which then lands. Back to MP4, the pill
 // dropped on Resolve again: the note asks again; Don't ask again, ticked,
-// and Not now turn it off, and the MP4 then lands. Driven with the OS's pointer
+// and Not now turn it off, and the MP4 then lands. Last, as MP4 H.265, the
+// pill (H.264) dragged out is made again as H.265, and then lands so. Driven with the OS's pointer
 // (lib/os.mjs). Linux (X11) only: on Wayland the drop's app isn't named, and
 // macOS and Windows never ask.
 
@@ -23,7 +24,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } f
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs } from "../lib/data.mjs";
-import { noFinishedOnly, openFinishedOnly, setFormat, windowsOf } from "../lib/fileManager.mjs";
+import { noFinishedOnly, openFinishedOnly, probeVideo, setFormat, windowsOf } from "../lib/fileManager.mjs";
 import { videos } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -336,6 +337,34 @@ exec '${real}' "$@"
         throw new Error(`Resolve says "${mp4}", the page heard ${JSON.stringify(heard)}`);
       if (await noteUp()) throw new Error("the note asks once turned off");
       ctx.log("asked again of an MP4; Don't ask again and Not now turned it off, and Resolve then took the MP4");
+      taker.close();
+
+      // 5. MP4 H.265, the pill made as H.264: dragged out, it's made again
+      // (as a change of format makes it), and dragged once made, the other
+      // app takes it as H.265.
+      await setFormat(app, "MP4 H.265");
+      taker = await openFinishedOnly(app, ctx, path.join(work, "other-h265"));
+      await dropOn(taker);
+      const asH265 = await until(
+        "the pill made again as H.265",
+        async () => {
+          const c = (await app.invoke("list_clips", { vodId: vod.id })).find((c) => c.id === made.id);
+          if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
+          return c?.status === "ready" && c.encoding?.codec === "h265" && c;
+        },
+        MINUTE,
+      );
+      const h265From = taker.said().length;
+      heard = await dropOn(taker);
+      const h265 = await took(taker, h265From);
+      const given = h265.match(/ took 1 of 1: (.*\.mp4)$/)?.[1];
+      if (!given || heard.resolve)
+        throw new Error(`the other app says "${h265}", the page heard ${JSON.stringify(heard)}`);
+      const picture = probeVideo(asH265.file_path).codec;
+      if (picture !== "hevc") throw new Error(`the pill's file is ${picture} once made again as H.265`);
+      ctx.log(
+        `as MP4 H.265, the H.264 pill was made again on its drag, and the other app took ${path.basename(given)}`,
+      );
     } finally {
       taker?.close();
       putBack();

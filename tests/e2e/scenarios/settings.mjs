@@ -52,6 +52,8 @@ const RESOLVE = {
   section: "Encoding",
   key: "suggest_mov_for_resolve",
 };
+/** What's said under Resolve's switch. */
+const RESOLVE_HINT = "Resolve on Linux can't open MP4 clips.";
 const OFFER = {
   label: "Ask to use a VODscription when one is found",
   section: "Privacy",
@@ -137,6 +139,16 @@ export default {
       await switchIs(app, which, true, " at the start");
       await setSwitch(app, which, false);
       ctx.log(`"${which.label}" on at the start; turned off, and saved`);
+    }
+    // Resolve's hint says it's Linux's Resolve that can't (it's shown only there).
+    if (linux) {
+      const hint = await app.js(
+        `const l = [...document.querySelectorAll('[role="dialog"][aria-label="Settings"] label.toggle')]
+           .find((l) => l.textContent.trim() === arguments[0]);
+         return l?.nextElementSibling?.textContent.trim() ?? null`,
+        RESOLVE.label,
+      );
+      if (hint !== RESOLVE_HINT) throw new Error(`under "${RESOLVE.label}": ${JSON.stringify(hint)}`);
     }
     // Turning the offer off leaves looking VODscriptions up as it was.
     if ((await app.invoke("get_settings")).ask_for_annotations !== true)

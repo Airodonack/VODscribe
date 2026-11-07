@@ -1,8 +1,9 @@
 // Several things picked at once, as in a file manager (selection.svelte.ts,
 // pick.ts). On a transcribed file: cuts at 1, 2 and 3 s (B), then
 // Ctrl-click (⌘ on a Mac) on the stretch 2-3 s and then on 1-2 s: each shows
-// its number in that order, the playhead stays where it was, and C makes a
-// clip of each, in that order, as one change. An Alt-click (Option) on the
+// its number in that order, the playhead stays where it was, the clip bar,
+// with no clips yet, says what it's for, and C makes a clip of each, in that
+// order, as one change. An Alt-click (Option) on the
 // timeline picks the stretch there alone, Ctrl+Alt-click adds one, and the
 // playhead stays; a plain click elsewhere on the timeline lets go of it and
 // moves the playhead, while a stretch selected with I stays through one;
@@ -10,9 +11,7 @@
 // of it, and the stretch the drag grabs is lit as grabbed until let go. The clip bar has no row of its own about what's picked:
 // the keys and the drags are the same for several as for one. A plain click
 // on a pill picks it alone, one on another picks that instead, and one on
-// the pill picked alone lets it go. C with a pill picked puts the clip of
-// the stretch at the playhead after that pill, picked, as a paste would;
-// undone, it goes. A pill's play button plays the VOD from
+// the pill picked alone lets it go. A pill's play button plays the VOD from
 // the clip's start and picks nothing. One pill clicked and the other
 // Ctrl-clicked picks both: Delete takes both off the clip bar, and one undo
 // brings both back. A box dragged from empty space in the clip bar over both
@@ -54,12 +53,15 @@ import * as os from "../lib/os.mjs";
 const TOGGLE = `const mac = /Mac/.test(navigator.platform);
   const toggle = { ctrlKey: !mac, metaKey: mac };`;
 
+/** What the clip bar says while it has no clips (ClipStrip.svelte). */
+const EMPTY_BAR = "Drop clips here to make them";
+
 export default {
   name: "multi-select",
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "stretches-numbered":
-      "On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there).",
+      'On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there); it holds only the grey words "Drop clips here to make them".',
     "stretch-grabbed":
       "On the timeline the stretch from about 0:02 to 0:03 has a dashed outline over a light shade, and no other stretch is outlined or numbered; a small card with a picture and a waveform, saying its length, sits near it, carried.",
     "clips-picked":
@@ -196,6 +198,10 @@ export default {
       if (text) throw new Error(`the clip bar has a row "${text}" ${when}`);
     };
     await noRow("with two stretches picked");
+    // With no clips yet, the bar says what it's for.
+    const hint = () => app.js(`return document.querySelector(".clip-bar .drop")?.textContent.trim() ?? null`);
+    const said = await hint();
+    if (said !== EMPTY_BAR) throw new Error(`the empty clip bar says ${JSON.stringify(said)}, not "${EMPTY_BAR}"`);
     await ctx.checkpoint("stretches-numbered");
 
     // C: a clip of each, in the order picked.
@@ -213,6 +219,7 @@ export default {
     if (byId.join() !== "2-3,1-2") throw new Error(`the clips were made in the order ${byId.join(", ")}`);
     if (await app.js(`return !!document.querySelector(".scrubber .chosen")`))
       throw new Error("the stretches are still picked once clipped");
+    await until("the empty bar's hint gone", async () => (await hint()) === null, 10_000);
     ctx.log(`C made ${byId.join(", ")} in the order picked`);
 
     // An Alt-click (Option on a Mac) on the timeline, not dragged, picks the
@@ -338,38 +345,6 @@ export default {
     await plainClick(made[1].id);
     await until("a plain click on the pill picked alone let it go", async () => !(await chosen()).length, 10_000);
     ctx.log("a plain click picks a pill alone, another instead, and lets go of the one picked alone");
-
-    // C with the first pill picked (the playhead at 3 s): the clip of 3 s
-    // on goes after that pill, as a paste would, not last, and is picked;
-    // undone, it goes.
-    const barOrder = () =>
-      app.js(`return [...document.querySelectorAll(".clip-bar .chip[data-clip]")].map((c) => Number(c.dataset.clip))`);
-    await plainClick(made[0].id);
-    await pickedAlone(made[0].id, "a plain click picked the first pill alone");
-    await app.key("c");
-    const third = await until(
-      "a third clip, after the first pill",
-      async () => {
-        const order = await barOrder();
-        return order.length === 3 && order[0] === made[0].id && order[2] === made[1].id && order[1];
-      },
-      MINUTE,
-    ).catch(async (e) => {
-      throw new Error(
-        `${e.message}: the bar holds ${JSON.stringify(await barOrder())}, made ${made[0].id}, ${made[1].id}`,
-      );
-    });
-    await pickedAlone(third, "the clip C made picked");
-    await app.key("z", { cmd: true });
-    await until(
-      "the third clip undone",
-      async () => (await barOrder()).join() === `${made[0].id},${made[1].id}`,
-      10_000,
-    );
-    await until("nothing picked once it's gone", async () => !(await chosen()).length, 10_000).catch(async (e) => {
-      throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}`);
-    });
-    ctx.log("C with a pill picked put the clip after it, picked; undone, it went");
 
     // The play button on the 1-2 s pill (the playhead at 3 s, after the
     // cuts): the VOD plays from 1 s, and the pill isn't picked.

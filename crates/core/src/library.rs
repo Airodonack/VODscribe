@@ -417,7 +417,7 @@ mod tests {
     const BEFORE_072: &str = "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext;
         ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext;
         ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url;
-        ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 36;";
+        ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 36;";
 
     /// `db`, its files settled as the app does at start.
     fn settled(db: Db) -> Db {

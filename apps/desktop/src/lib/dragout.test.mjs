@@ -120,7 +120,7 @@ const fake = {
   /** What the last note's Switch to MOV does, once clips are MOV. @type {(() => void) | undefined} */
   remake: undefined,
   /** The format clips are made in. */
-  settings: { load: async () => {}, value: { clip_format: "mp4" } },
+  settings: { load: async () => {}, value: { clip_format: "mp4", clip_codec: "h264", clip_quality: "standard" } },
   /** Clips made again (`clips.move`): id, start and end. @type {number[][]} */
   moved: [],
   /** What the toasts said. @type {string[]} */
@@ -262,7 +262,7 @@ function reset() {
   fake.kept.length = 0;
   fake.resolve.length = 0;
   fake.remake = undefined;
-  fake.settings.value.clip_format = "mp4";
+  fake.settings.value = { clip_format: "mp4", clip_codec: "h264", clip_quality: "standard" };
   fake.moved.length = 0;
   fake.edits.rendered.length = 0;
   fake.toasts.length = 0;
@@ -586,6 +586,52 @@ test("one clip refused to Resolve while being cut, trimmed meanwhile: Switch mak
     fake.clips.make = make;
     fake.clips.ready = ready;
   }
+});
+
+/** Two clips made already, each with `encoding` recorded (none: made before that was), as `ext` files.
+ *  @param {{ codec: string; quality: string } | null} encoding */
+const madePair = (encoding, ext = "mp4") =>
+  pair().map((c) => ({ ...c, shown: true, status: "ready", file_path: `/${c.id}.${ext}`, encoding }));
+
+/** `list` carried out of the window by the pill, with clips made with `codec` and `quality`: those made again first.
+ *  @param {any[]} list @param {string} codec @param {string} quality */
+async function carriedOutAs(list, codec, quality) {
+  fake.settings.value = { ...fake.settings.value, clip_codec: codec, clip_quality: quality };
+  const done = carriedSet(true, async () => list);
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
+  await tick();
+  return fake.moved.map(([id]) => id);
+}
+
+test("a clip made as H.264 is made again on its next drag once clips are H.265, as a change of format makes it", async () => {
+  reset();
+  const h264 = { codec: "h264", quality: "standard" };
+  assert.deepEqual(await carriedOutAs(madePair(h264), "h265", "standard"), [3, 4]);
+  reset();
+  assert.deepEqual(await carriedOutAs(madePair(h264), "h264", "high"), [3, 4], "a change of quality too");
+  reset();
+  const prores = { codec: "prores", quality: "standard" };
+  fake.settings.value.clip_format = "mov";
+  assert.deepEqual(await carriedOutAs(madePair(prores, "mov"), "dnxhr", "standard"), [3, 4], "within MOV too");
+});
+
+test("a clip made as clips are made now isn't made again on its next drag", async () => {
+  reset();
+  assert.deepEqual(await carriedOutAs(madePair({ codec: "h265", quality: "high" }), "h265", "high"), []);
+  // Made before what with was recorded: as a file of its kind was made then.
+  reset();
+  assert.deepEqual(await carriedOutAs(madePair(null), "h264", "standard"), []);
+  reset();
+  assert.deepEqual(await carriedOutAs(madePair(null), "h265", "standard"), [3, 4]);
+  reset();
+  fake.settings.value.clip_format = "mov";
+  assert.deepEqual(await carriedOutAs(madePair(null, "mov"), "dnxhr", "proxy"), []);
+  // Sound alone is the same in every codec of its format.
+  reset();
+  assert.deepEqual(await carriedOutAs(madePair({ codec: "h264", quality: "standard" }, "m4a"), "h265", "high"), []);
 });
 
 test("an MP4 edit refused to Resolve: the note asks of the edit, and Switch to MOV renders it again", async () => {

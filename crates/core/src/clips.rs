@@ -113,6 +113,24 @@ pub fn extension(audio_only: bool, format: ClipFormat) -> &'static str {
     }
 }
 
+/// Whether `file`, a clip's or an edit's, was made as clips are made now
+/// (`now`): in its format and, with a picture, its codec and quality, as
+/// recorded (`made`), else as a file of its format was made before that was
+/// (`Settings::clip_encoding`). Sound alone is the same in every codec of its
+/// format. The page asks the same (dragout.ts `madeAsWanted`).
+pub fn made_as(file: &Path, made: Option<ClipEncoding>, now: ClipEncoding) -> bool {
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let format = if matches!(ext.as_str(), "mov" | "wav") { ClipFormat::Mov } else { ClipFormat::Mp4 };
+    if format != now.format() {
+        return false;
+    }
+    if matches!(ext.as_str(), "m4a" | "wav") {
+        return true;
+    }
+    let before = || crate::settings::Settings { clip_format: format, ..Default::default() }.clip_encoding();
+    made.unwrap_or_else(before) == now
+}
+
 /// ffmpeg's output options for `encoding`, after the streams are mapped: with
 /// a picture (`video`) or sound alone (AAC for MP4, PCM in a WAV for MOV).
 /// H.264 and H.265 have a keyframe a second, so editors seek them quickly;
@@ -324,6 +342,32 @@ pub fn thumbnail(ffmpeg: &Path, clip: &Path, out: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// A codec or quality changed in Settings makes a file made otherwise
+    /// out of date, as a change of format does; one made before what with
+    /// was recorded reads as its format's file was made then.
+    #[test]
+    fn a_file_is_made_as_asked_only_in_its_codec_and_quality() {
+        use super::made_as;
+        let e = |codec, quality| ClipEncoding { codec, quality };
+        let h264 = e(ClipCodec::H264, ClipQuality::Standard);
+        let mp4 = Path::new("/c/1.mp4");
+        assert!(made_as(mp4, Some(h264), h264));
+        assert!(!made_as(mp4, Some(h264), e(ClipCodec::H265, ClipQuality::Standard)));
+        assert!(!made_as(mp4, Some(h264), e(ClipCodec::H264, ClipQuality::High)));
+        assert!(!made_as(mp4, Some(h264), e(ClipCodec::Dnxhr, ClipQuality::Proxy)));
+        let mov = Path::new("/c/1.mov");
+        assert!(!made_as(
+            mov,
+            Some(e(ClipCodec::Prores, ClipQuality::Standard)),
+            e(ClipCodec::Dnxhr, ClipQuality::Standard)
+        ));
+        assert!(made_as(mp4, None, h264));
+        assert!(!made_as(mp4, None, e(ClipCodec::H265, ClipQuality::Standard)));
+        assert!(made_as(mov, None, e(ClipCodec::Dnxhr, ClipQuality::Proxy)));
+        assert!(made_as(Path::new("/c/1.m4a"), Some(h264), e(ClipCodec::H265, ClipQuality::High)));
+        assert!(!made_as(Path::new("/c/1.wav"), None, h264));
+    }
+
     use super::*;
 
     /// DNxHR LB, as MOV clips were made before quality was a choice.

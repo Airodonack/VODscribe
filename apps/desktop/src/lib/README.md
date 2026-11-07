@@ -101,7 +101,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `selection.svelte.ts`: several things picked at once.
 - `pick.ts`: the picking rule, as in a file manager.
 - `bulk.ts`: what's done with everything picked.
-- `where.ts`: where Ctrl+A selects, and where a paste or a new clip goes.
+- `where.ts`: where Ctrl+A selects and Ctrl+V pastes.
 - `copyPaste.ts`: Ctrl+C, Ctrl+X and Ctrl+V.
 - `clipboardText.ts`: the text a copy puts on the system's clipboard.
 - `undo.ts`: undo and redo.

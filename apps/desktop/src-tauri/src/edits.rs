@@ -94,13 +94,15 @@ pub(crate) fn missing(app: &AppHandle, db: &Db, pieces: &[EditPiece]) -> Vec<(i6
 pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     // A snippet whose file is of it as it is already (made for a change
-    // undone since, say) isn't made again.
+    // undone since, say), and made as clips are made now, isn't made again.
     {
         let db = state.db.lock().unwrap();
+        let now = Settings::load(&state.paths.settings()).clip_encoding();
         if db.is_snippet(id)? == Some(true)
             && let Some(edit) = db.edit(id)?
             && edit.current
-            && edit.file_path.as_deref().is_some_and(|p| Path::new(p).is_file())
+            && let Some(file) = edit.file_path.as_deref().map(Path::new).filter(|p| p.is_file())
+            && clips::made_as(file, db.made_as(id)?, now)
         {
             db.set_edit_render(id, ClipStatus::Ready, None, None, None)?;
             emit(app, &db, id);
@@ -166,6 +168,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         Ok(_) => {
             db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?;
             db.set_made_of(id, &made_of)?;
+            db.set_made_as(id, Some(encoding))?;
         }
         // Stopped, or deleted: as it was before, if it's still there.
         Err(e) if vodscribe_core::is_canceled(e) => db.set_edit_render(id, ClipStatus::Waiting, None, None, None)?,
@@ -386,8 +389,7 @@ pub(crate) async fn add_range_to_edit(
 /// Puts `items` (several things picked) in edit `edit_id`, in their order,
 /// as one change undo takes back whole: on its clip bar if `bar`, else on its
 /// timeline at `index` of its top level (or last). The clips made on the bar
-/// go after its clip `after`, if given (where.ts `insertionPoint`), else
-/// last, and are queued to be made.
+/// are queued to be made.
 #[tauri::command]
 pub(crate) async fn put_in_edit(
     app: AppHandle,
@@ -395,7 +397,6 @@ pub(crate) async fn put_in_edit(
     items: Vec<edits::Put>,
     bar: bool,
     index: Option<usize>,
-    after: Option<i64>,
 ) -> CmdResult<EditView> {
     let onto = if bar { edits::Onto::Bar } else { edits::Onto::Timeline(index) };
     let label = match (bar, items.len()) {
@@ -407,9 +408,6 @@ pub(crate) async fn put_in_edit(
     let mut made = Vec::new();
     let view = changing(&app, edit_id, label, |db| {
         made = db.put(edit_id, &items, onto)?;
-        if let Some(after) = after.filter(|_| bar && !made.is_empty()) {
-            db.place_after_on_bar(edit_id, &made, after)?;
-        }
         Ok(())
     })?;
     let state = app.state::<AppState>();

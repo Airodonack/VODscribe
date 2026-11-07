@@ -83,7 +83,7 @@ pub enum ClipQuality {
 }
 
 /// What clips and rendered edits are encoded as.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ClipEncoding {
     pub codec: ClipCodec,
     pub quality: ClipQuality,

@@ -176,6 +176,12 @@ export type ClipCodec = "h264" | "h265" | "dnxhr" | "prores";
 
 export type ClipQuality = "proxy" | "standard" | "high";
 
+/** A codec and quality together (crates/core `settings::ClipEncoding`). */
+export interface ClipEncoding {
+  codec: ClipCodec;
+  quality: ClipQuality;
+}
+
 /** What this computer's webview plays, best first (crates/core `playable::Playable`). */
 export interface Playable {
   video: ["av1" | "vp9" | "hevc" | "h264", "opus" | "aac" | "mp3" | "vorbis" | "flac"][];
@@ -380,6 +386,9 @@ export interface Clip {
   /** How long it plays (on an edit's clip bar it may hold several pieces;
    *  `start`..`end` are its first one's). */
   length?: number;
+  /** What its file was made with; null if it isn't made, or was made
+   *  before this was recorded (crates/core `Clip::encoding`). */
+  encoding?: ClipEncoding | null;
 }
 
 /** A video made of pieces of VODs (crates/core `edits::Edit`). */
@@ -677,11 +686,10 @@ export const api = {
   /** The clips on edit `id`'s clip bar. */
   editClips: (id: number) => invoke<Clip[]>("edit_clips", { id }),
   /** Makes `from`..`to` seconds of edit `editId`'s timeline a clip. */
-  addEditClip: (editId: number, from: number, to: number, shown = true, after: number | null = null) =>
-    invoke<Clip>("add_edit_clip", { editId, from, to, shown, after }),
-  /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change: after clip `after`, else last. */
-  addEditClips: (editId: number, ranges: [number, number][], after: number | null = null) =>
-    invoke<Clip[]>("add_edit_clips", { editId, ranges, after }),
+  addEditClip: (editId: number, from: number, to: number, shown = true) =>
+    invoke<Clip>("add_edit_clip", { editId, from, to, shown }),
+  /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change. */
+  addEditClips: (editId: number, ranges: [number, number][]) => invoke<Clip[]>("add_edit_clips", { editId, ranges }),
   listMarks: (vodId: number) => keptRead(vodId, "marks", () => invoke<Mark[]>("list_marks", { vodId })),
   /** Asks the file host again whether a VOD's annotations are published; `asked` is false when nothing was:
    *  the VOD can't have any (`can_have`: only Twitch's, YouTube's and Kick's can), or Settings turned asking off. */
@@ -779,8 +787,8 @@ export const api = {
   pasteItems: (target: Doc, bar: boolean, at: number | null, after: number | null, text: string) =>
     invoke<Pasted | null>("paste_items", { target, bar, at, after, text }),
   /** Puts `items` (several picked) in edit `editId`, in order, as one change: on its clip bar if `bar`, else on its timeline at `index` (or last). */
-  putInEdit: (editId: number, items: Put[], bar: boolean, index?: number, after: number | null = null) =>
-    invoke<EditView>("put_in_edit", { editId, items, bar, index, after }),
+  putInEdit: (editId: number, items: Put[], bar: boolean, index?: number) =>
+    invoke<EditView>("put_in_edit", { editId, items, bar, index }),
   addRangeToEdit: (editId: number, vodId: number, start: number, end: number, title?: string, index?: number) =>
     invoke<EditView>("add_range_to_edit", { editId, vodId, start, end, title, index }),
   /** Edit `id`'s picture (its first frame, or its VOD's thumbnail); empty if none. */
@@ -820,11 +828,10 @@ export const api = {
   deleteMark: (id: number) => marking(invoke<void>("delete_mark", { id })),
   /** Takes away a mark just added, as if never made (not undoable, nor its adding). */
   cancelMark: (id: number) => marking(invoke<void>("cancel_mark", { id })),
-  addClip: (vodId: number, start: number, end: number, shown = true, after: number | null = null) =>
-    invoke<Clip>("add_clip", { vodId, start, end, shown, after }),
-  /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change: after clip `after`, else last. */
-  addClips: (vodId: number, ranges: [number, number][], after: number | null = null) =>
-    invoke<Clip[]>("add_clips", { vodId, ranges, after }),
+  addClip: (vodId: number, start: number, end: number, shown = true) =>
+    invoke<Clip>("add_clip", { vodId, start, end, shown }),
+  /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change. */
+  addClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_clips", { vodId, ranges }),
   /** Puts clip `id` (one only dragged out) in the clip bar. */
   keepClip: (id: number) => invoke<Clip>("keep_clip", { id }),
   setClipRange: (id: number, start: number, end: number) => invoke<Clip>("set_clip_range", { id, start, end }),

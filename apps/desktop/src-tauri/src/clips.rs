@@ -494,9 +494,11 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         Ok(()) => {
             let recorded = db.set_clip_file(id, range.0, range.1, ClipStatus::Ready, Some(&path), None)?;
             // What it's made of, so a change that leaves that as it was (a
-            // chapter, which a cut file hasn't) doesn't make it again.
+            // chapter, which a cut file hasn't) doesn't make it again; and
+            // what with, so a change of codec or quality does (dragout.ts).
             if recorded {
                 db.set_made_now(id)?;
+                db.set_made_as(id, Some(encoding))?;
             }
             recorded
         }
@@ -552,8 +554,7 @@ pub(crate) async fn edit_clips(app: AppHandle, id: i64) -> CmdResult<Vec<Clip>> 
 
 /// Makes `from`..`to` seconds of edit `edit_id`'s timeline a clip, titled
 /// with what's said at its start; on the edit's clip bar unless `shown` is
-/// false (one only dragged out of the window), after its clip `after` if
-/// given (where.ts `insertionPoint`), else last.
+/// false (one only dragged out of the window).
 #[tauri::command]
 pub(crate) async fn add_edit_clip(
     app: AppHandle,
@@ -561,42 +562,29 @@ pub(crate) async fn add_edit_clip(
     from: f64,
     to: f64,
     shown: Option<bool>,
-    after: Option<i64>,
 ) -> CmdResult<Clip> {
-    let made = make_edit_clips(&app, edit_id, vec![(from, to)], shown.unwrap_or(true), after)?;
+    let made = make_edit_clips(&app, edit_id, vec![(from, to)], shown.unwrap_or(true))?;
     Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
 /// Makes each of `ranges` (`from`..`to` seconds of edit `edit_id`'s
 /// timeline) a clip on the edit's clip bar, in that order, as one change
-/// undo takes back whole (several stretches selected, clipped at once);
-/// after its clip `after` if given, else last.
+/// undo takes back whole (several stretches selected, clipped at once).
 #[tauri::command]
-pub(crate) async fn add_edit_clips(
-    app: AppHandle,
-    edit_id: i64,
-    ranges: Vec<(f64, f64)>,
-    after: Option<i64>,
-) -> CmdResult<Vec<Clip>> {
-    make_edit_clips(&app, edit_id, ranges, true, after)
+pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    make_edit_clips(&app, edit_id, ranges, true)
 }
 
 /// What `add_edit_clip` and `add_edit_clips` do: a clip of each range, each
 /// titled with what's said at its start, as one change (all of them, or none
 /// if one can't be made); then each is queued to be made. A range with a
 /// clip already (C pressed twice) gives that one, made again only if it failed.
-fn make_edit_clips(
-    app: &AppHandle,
-    edit_id: i64,
-    ranges: Vec<(f64, f64)>,
-    shown: bool,
-    after: Option<i64>,
-) -> CmdResult<Vec<Clip>> {
+fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
     let (made, queued) = {
         let db = state.db.lock().unwrap();
         let doc = Doc::Edit(edit_id);
-        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown, after).map_err(err)?;
+        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown).map_err(err)?;
         history::changed(app, &db, doc);
         made
     };
@@ -605,28 +593,23 @@ fn make_edit_clips(
 }
 
 /// What `make_edit_clips` does in the library, recorded in `history`: the
-/// clips, and those of them to be made. Those new on the bar go after its
-/// clip `after`, if given.
+/// clips, and those of them to be made.
 fn make_edit_clips_in(
     db: &Db,
     history: &history::History,
     edit_id: i64,
     ranges: Vec<(f64, f64)>,
     shown: bool,
-    after: Option<i64>,
 ) -> Result<(Vec<Clip>, Vec<i64>)> {
     let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
     history.change(db, Doc::Edit(edit_id), label, |db| {
-        let (mut made, mut queued, mut fresh) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut made, mut queued) = (Vec::new(), Vec::new());
         for (from, to) in ranges {
             let title = db.span_title(edit_id, from, to)?;
             let had = db.edit_clip_of(edit_id, from, to)?;
             let mut clip = db.add_edit_clip(edit_id, from, to, &title, shown)?;
             match had {
-                None => {
-                    queued.push(clip.id);
-                    fresh.push(clip.id);
-                }
+                None => queued.push(clip.id),
                 Some(had) if had.status == ClipStatus::Error => {
                     db.set_edit_render(clip.id, ClipStatus::Waiting, None, None, None)?;
                     clip = db.clip(clip.id)?.context("That clip is gone.")?;
@@ -635,9 +618,6 @@ fn make_edit_clips_in(
                 Some(_) => {}
             }
             made.push(clip);
-        }
-        if let Some(after) = after.filter(|_| shown && !fresh.is_empty()) {
-            db.place_after_on_bar(edit_id, &fresh, after)?;
         }
         Ok((made, queued))
     })
@@ -650,8 +630,7 @@ pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Cli
 
 /// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled
 /// with what's said in it; in the clip bar unless `shown` is false (one only
-/// dragged out of the window), after its clip `after` if given (where.ts
-/// `insertionPoint`), else last.
+/// dragged out of the window).
 #[tauri::command]
 pub(crate) async fn add_clip(
     app: AppHandle,
@@ -659,51 +638,36 @@ pub(crate) async fn add_clip(
     start: f64,
     end: f64,
     shown: Option<bool>,
-    after: Option<i64>,
 ) -> CmdResult<Clip> {
-    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true), after)?;
+    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true))?;
     Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
 /// Makes each of `ranges` (`start`..`end` seconds of VOD `vod_id`) a clip in
 /// its clip bar, in that order, as one change undo takes back whole (several
-/// stretches selected, clipped at once); after its clip `after` if given,
-/// else last.
+/// stretches selected, clipped at once).
 #[tauri::command]
-pub(crate) async fn add_clips(
-    app: AppHandle,
-    vod_id: i64,
-    ranges: Vec<(f64, f64)>,
-    after: Option<i64>,
-) -> CmdResult<Vec<Clip>> {
-    make_clips(&app, vod_id, ranges, true, after)
+pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    make_clips(&app, vod_id, ranges, true)
 }
 
 /// What `add_clip` and `add_clips` do: a clip of each range (its end kept
 /// within the VOD), each titled with what's said in it, as one change (all of
 /// them, or none if one can't be made); then each is queued to be made.
-fn make_clips(
-    app: &AppHandle,
-    vod_id: i64,
-    ranges: Vec<(f64, f64)>,
-    shown: bool,
-    after: Option<i64>,
-) -> CmdResult<Vec<Clip>> {
+fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
-    let made = make_clips_in(&state.db.lock().unwrap(), &state.history, vod_id, ranges, shown, after).map_err(err)?;
+    let made = make_clips_in(&state.db.lock().unwrap(), &state.history, vod_id, ranges, shown).map_err(err)?;
     state.clips.queue_made(&made.iter().map(|c| c.id).collect::<Vec<_>>(), shown);
     Ok(made)
 }
 
-/// What `make_clips` does in the library, recorded in `history`: on the
-/// bar after its clip `after`, if given.
+/// What `make_clips` does in the library, recorded in `history`.
 fn make_clips_in(
     db: &Db,
     history: &history::History,
     vod_id: i64,
     ranges: Vec<(f64, f64)>,
     shown: bool,
-    after: Option<i64>,
 ) -> Result<Vec<Clip>> {
     db.vod(vod_id)?.context("That VOD is gone.")?;
     let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
@@ -712,10 +676,6 @@ fn make_clips_in(
         for (start, end) in ranges {
             let words = db.words_between(vod_id, start, end)?;
             made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), shown)?);
-        }
-        if let Some(after) = after.filter(|_| shown && !made.is_empty()) {
-            let bar = db.vod_clip(vod_id)?.context("That VOD is gone.")?;
-            db.place_after_on_bar(bar, &made.iter().map(|c| c.id).collect::<Vec<_>>(), after)?;
         }
         Ok(made)
     })
@@ -1693,10 +1653,10 @@ mod tests {
     fn making_several_clips_is_all_or_none() {
         let (db, vod) = library();
         let history = history::History::default();
-        assert!(make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (-1.0, 3.0)], true, None).is_err());
+        assert!(make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (-1.0, 3.0)], true).is_err());
         assert!(db.clips(vod).unwrap().is_empty(), "none made");
         assert_eq!(history.steps(Doc::Vod(vod)), 0, "no step recorded");
-        let made = make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (3.0, 90.0)], true, None).unwrap();
+        let made = make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (3.0, 90.0)], true).unwrap();
         assert_eq!(made.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>(), [(1.0, 2.0), (3.0, 60.0)]);
         assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
 
@@ -1704,33 +1664,12 @@ mod tests {
         db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
         let doc = Doc::Edit(edit);
         let before = history.steps(doc);
-        assert!(make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (40.0, 50.0)], true, None).is_err());
+        assert!(make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (40.0, 50.0)], true).is_err());
         assert!(db.bar_clips(edit).unwrap().is_empty(), "none made on the edit's bar");
         assert_eq!(history.steps(doc), before, "no step recorded");
-        let (made, queued) = make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (3.0, 4.0)], true, None).unwrap();
+        let (made, queued) = make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (3.0, 4.0)], true).unwrap();
         assert_eq!(made.iter().map(|c| c.id).collect::<Vec<_>>(), queued);
         assert_eq!(history.steps(doc), before + 1);
-    }
-
-    /// The Clip key with a clip picked: the clips it makes go after that
-    /// one (where.ts `insertionPoint`), as a paste's do, not last.
-    #[test]
-    fn clips_made_after_a_clip_go_next_to_it() {
-        let (db, vod) = library();
-        let history = history::History::default();
-        let first = make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (3.0, 4.0)], true, None).unwrap();
-        make_clips_in(&db, &history, vod, vec![(5.0, 6.0), (7.0, 8.0)], true, Some(first[0].id)).unwrap();
-        let starts: Vec<f64> = db.clips(vod).unwrap().iter().map(|c| c.start).collect();
-        assert_eq!(starts, [1.0, 5.0, 7.0, 3.0]);
-
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
-        let (made, _) = make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (3.0, 4.0)], true, None).unwrap();
-        make_edit_clips_in(&db, &history, edit, vec![(5.0, 6.0)], true, Some(made[0].id)).unwrap();
-        // A stretch with a clip already stays where it is.
-        make_edit_clips_in(&db, &history, edit, vec![(3.0, 4.0)], true, Some(made[0].id)).unwrap();
-        let starts: Vec<f64> = db.bar_clips(edit).unwrap().iter().map(|c| c.start).collect();
-        assert_eq!(starts, [1.0, 5.0, 3.0]);
     }
 
     /// A drag's receiver asked for a clip's file (its name made beside it,

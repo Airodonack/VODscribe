@@ -325,6 +325,9 @@
     <span class="drop muted">Drop here to keep it as a clip</span>
   {:else if clips.carried && clips.overBar}
     <span class="drop muted">Let go to keep them as clips</span>
+  {:else if !clips.shown.length}
+    <!-- Shown with no clips yet (a stretch picked, say): what the bar is for. -->
+    <span class="drop muted">Drop clips here to make them</span>
   {/if}
 </div>
 

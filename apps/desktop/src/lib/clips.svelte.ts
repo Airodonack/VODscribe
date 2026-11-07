@@ -7,9 +7,7 @@
 import { SvelteMap } from "svelte/reactivity";
 import { api, docKey, events, type Clip, type Doc } from "./api";
 import { hideNote, noteHidden } from "./permission";
-import { snippets } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
-import { insertionPoint } from "./where";
 
 class Clips {
   /** Whose clip bar this is: a VOD's or an edit's. */
@@ -195,42 +193,14 @@ class Clips {
     );
   }
 
-  /** Where a clip made now goes on the bar, as a paste's would (where.ts
-   *  `insertionPoint`): after the last clip picked, else (null) last. */
-  get after(): number | null {
-    const point = insertionPoint(
-      "bar",
-      { stretch: null, picked: snippets.items, mark: null, playhead: 0 },
-      this.shown.map((c) => c.id),
-    );
-    return "after" in point ? point.after : null;
-  }
-
-  /** Clips `made` on the bar after its clip `after` (or there already): the
-   *  bar's order as it is now, and they're picked, as a paste's are, so the
-   *  next one goes after them. */
-  #placed(made: Clip[], after: number | null) {
-    if (after === null || !made.length || !this.doc) return;
-    this.reload(this.doc);
-    snippets.set(made.map((c) => ({ kind: "clip", id: c.id })));
-  }
-
   /**
    * Makes `start`..`end` of the document whose clip bar this is (a VOD's
    * time, or an edit's timeline) a clip, or gives the one made already
    * (putting it in the clip bar if `shown`; one that failed is made again).
-   * A new one goes on the bar after clip `after` (`after` above: where a
-   * paste would go), else last. Before the first downloaded from a site,
-   * the note on permission is answered first. Null if it's declined or fails.
+   * Before the first downloaded from a site, the note on permission is
+   * answered first. Null if it's declined or fails.
    */
-  async make(start: number, end: number, shown = true, after = this.after): Promise<Clip | null> {
-    const clip = await this.#makeOne(start, end, shown, after);
-    if (clip && shown) this.#placed([clip], after);
-    return clip;
-  }
-
-  /** `make`, but what it makes isn't picked. */
-  #makeOne(start: number, end: number, shown: boolean, after: number | null): Promise<Clip | null> {
+  make(start: number, end: number, shown = true): Promise<Clip | null> {
     const doc = this.doc;
     if (!doc) return Promise.resolve(null);
     // Asked twice before the first is answered (C pressed twice), it's made once.
@@ -238,7 +208,7 @@ class Clips {
     const making = this.#making.get(key);
     if (making) return making;
     const made = (
-      doc.kind === "edit" ? this.#makeOfEdit(doc.id, start, end, shown, after) : this.#make(start, end, shown, after)
+      doc.kind === "edit" ? this.#makeOfEdit(doc.id, start, end, shown) : this.#make(start, end, shown)
     ).finally(() => this.#making.delete(key));
     this.#making.set(key, made);
     return made;
@@ -247,16 +217,10 @@ class Clips {
   /** `make` on an edit's clip bar: the app gives the clip of that stretch
    *  made already, and makes one that failed again (crates/core edits.rs
    *  `add_edit_clip`), as `#make` does on a VOD's. */
-  async #makeOfEdit(
-    editId: number,
-    from: number,
-    to: number,
-    shown: boolean,
-    after: number | null,
-  ): Promise<Clip | null> {
+  async #makeOfEdit(editId: number, from: number, to: number, shown: boolean): Promise<Clip | null> {
     try {
       const since = this.#serial;
-      const clip = await api.addEditClip(editId, from, to, shown, after);
+      const clip = await api.addEditClip(editId, from, to, shown);
       this.#answer(clip, since);
       this.error = null;
       return clip;
@@ -266,7 +230,7 @@ class Clips {
     }
   }
 
-  async #make(start: number, end: number, shown: boolean, after: number | null): Promise<Clip | null> {
+  async #make(start: number, end: number, shown: boolean): Promise<Clip | null> {
     const vodId = this.vodId;
     const made = this.find(start, end);
     // One that failed is tried again.
@@ -288,7 +252,7 @@ class Clips {
     }
     try {
       const since = this.#serial;
-      const clip = await api.addClip(vodId, start, end, shown, after);
+      const clip = await api.addClip(vodId, start, end, shown);
       this.#answer(clip, since);
       this.error = null;
       return clip;
@@ -301,21 +265,16 @@ class Clips {
   /**
    * Makes each of `ranges` a clip in the clip bar, in their order, as `make`
    * makes one (the note on permission first, once): those not made yet as
-   * one change, so undo takes them all back, after clip `after` as `make`
-   * puts one; any made already as `make` gives them. On an edit's clip bar,
-   * of its timeline.
+   * one change, so undo takes them all back; any made already as `make`
+   * gives them. On an edit's clip bar, of its timeline.
    */
-  async makeAll(ranges: { start: number; end: number }[], after = this.after): Promise<void> {
-    if (this.doc?.kind === "edit") return this.#makeAllOfEdit(this.doc.id, ranges, after);
+  async makeAll(ranges: { start: number; end: number }[]): Promise<void> {
+    if (this.doc?.kind === "edit") return this.#makeAllOfEdit(this.doc.id, ranges);
     const vodId = this.vodId;
     if (vodId === null || this.asking) return;
     const fresh = ranges.filter((r) => !this.find(r.start, r.end));
-    const had: Clip[] = [];
-    for (const r of ranges) {
-      const clip = this.find(r.start, r.end) && (await this.#makeOne(r.start, r.end, true, after));
-      if (clip) had.push(clip);
-    }
-    if (!fresh.length) return this.#placed(had, after);
+    for (const r of ranges) if (this.find(r.start, r.end)) await this.make(r.start, r.end);
+    if (!fresh.length) return;
     if (this.#fromSite && !noteHidden()) {
       const download = await new Promise<boolean>((answer) => (this.asking = answer));
       this.asking = null;
@@ -326,10 +285,8 @@ class Clips {
       const made = await api.addClips(
         vodId,
         fresh.map((r) => [r.start, r.end]),
-        after,
       );
       for (const clip of made) this.#answer(clip, since);
-      this.#placed([...had, ...made], after);
       this.error = null;
     } catch (e) {
       this.error = String(e);
@@ -338,16 +295,14 @@ class Clips {
 
   /** `makeAll` on an edit's clip bar, as one change: a stretch with a clip
    *  already gives that one (crates/core edits.rs `add_edit_clip`). */
-  async #makeAllOfEdit(editId: number, ranges: { start: number; end: number }[], after: number | null): Promise<void> {
+  async #makeAllOfEdit(editId: number, ranges: { start: number; end: number }[]): Promise<void> {
     try {
       const since = this.#serial;
       const made = await api.addEditClips(
         editId,
         ranges.map((r) => [r.start, r.end]),
-        after,
       );
       for (const clip of made) this.#answer(clip, since);
-      this.#placed(made, after);
       this.error = null;
     } catch (e) {
       this.error = String(e);

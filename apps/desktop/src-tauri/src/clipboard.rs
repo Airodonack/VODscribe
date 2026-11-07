@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager};
 use vodscribe_core::clipboard::{Copied, CopiedKind, Paste};
 use vodscribe_core::db::{Clip, ClipStatus, Db};
 use vodscribe_core::edits::{self, ItemState, Put};
+use vodscribe_core::settings::ClipEncoding;
 
 use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err};
@@ -42,6 +43,8 @@ pub(crate) struct CopiedFile {
     pub(crate) thumb: Option<PathBuf>,
     /// The clip's items when it was copied: the file is of these.
     pub(crate) items: Vec<ItemState>,
+    /// What the file was made with, if that's known.
+    pub(crate) encoding: Option<ClipEncoding>,
     /// The file as it was then: one changed or replaced since isn't copied.
     size: u64,
     modified: Option<SystemTime>,
@@ -112,6 +115,7 @@ fn held(app: &AppHandle, db: &Db, item: &Put) -> Result<Held> {
                 path,
                 thumb,
                 items: copied.state.items.clone(),
+                encoding: c.encoding,
                 size: meta.len(),
                 modified: meta.modified().ok(),
             })
@@ -260,6 +264,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         return Ok(db.clip(id)?.is_none());
     }
     db.set_made_now(id)?;
+    db.set_made_as(id, file.encoding)?;
     if let Some(thumb) = &file.thumb
         && let Err(e) = std::fs::copy(thumb, crate::clips::thumb_path(app, id))
     {

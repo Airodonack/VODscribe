@@ -1199,7 +1199,7 @@ impl Db {
 
     /// Moves clips `ids` (in their order) of listed clip `bar`'s clip bar to
     /// just after its clip `after`; where they are if `after` isn't there.
-    /// Part of a change (`change`), as making them is.
+    /// Part of a change (`change`), as the paste is.
     pub fn place_after_on_bar(&self, bar: i64, ids: &[i64], after: i64) -> Result<()> {
         let mut order: Vec<i64> =
             self.bar_clips(bar)?.into_iter().map(|c| c.id).filter(|id| !ids.contains(id)).collect();
