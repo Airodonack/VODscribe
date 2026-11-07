@@ -139,7 +139,7 @@ It prints one summary in `run.mjs`'s words, with a line per shard and per failur
 
 `run.mjs` writes `results.json` to `E2E_OUT`, each scenario passed, failed, skipped or flaky and why, with its `timings` and, on Linux, `memory`. It ends with a summary: how many passed, a line per scenario, the ledger's size, and the wall time. A failure leaves `<scenario>.txt`, the page dump from `lib/dump.mjs`, and `<scenario>.png`; checkpoints go in `checkpoints/`. Every run also writes `perf.json`: each scenario's timed steps, the app's memory at its end, and what the run was on.
 
-`distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named like `debian-13-weston-dark`, with the whole log in `run.log`. Two runs of the same cell from one checkout wipe each other. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`.
+`distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named like `debian-13-weston-dark`, with the whole log in `run.log`. Two runs of the same cell from one checkout wipe each other. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`, also with the whole log in `run.log`.
 
 ## Judging the pictures
 

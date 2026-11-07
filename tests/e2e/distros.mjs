@@ -120,7 +120,15 @@ const DNF = (image) => ({
   image,
   kind: "rpm",
   pm: "dnf",
-  install: `dnf install -y -q /pkg/app.rpm webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth openbox xdotool dbus-daemon procps-ng file $EXTRA >/dev/null`,
+  // Workstation as installed first: GStreamer's openh264 plugin over the
+  // noopenh264 stub, both from Fedora's own repository (Cisco's, enabled in
+  // the image, would bring the real library at once). The app's rpm then
+  // swaps the stub for Cisco's openh264 by its `(openh264 if noopenh264)`,
+  // and "h264:" says what came of it.
+  install:
+    `dnf install -y -q --disablerepo=fedora-cisco-openh264 noopenh264 gstreamer1-plugin-openh264 >/dev/null && ` +
+    `dnf install -y -q /pkg/app.rpm webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth openbox xdotool dbus-daemon procps-ng file $EXTRA >/dev/null && ` +
+    `echo "h264: $(rpm -q openh264 noopenh264 gstreamer1-plugin-openh264 | tr '\\n' ' ')"`,
 });
 // Arch: the libraries the .deb's binaries link, from Arch, and the .deb unpacked over /.
 const PACMAN = (image) => ({

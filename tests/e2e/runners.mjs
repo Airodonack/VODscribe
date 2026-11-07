@@ -258,9 +258,12 @@ async function windows() {
   for (let lost = 0; ;) {
     await sleep(15_000);
     // The tests go on in the task if the connection drops: keep asking.
-    let text;
+    // "log:" first once run.cmd has made run.log (node started), even while it's empty.
+    let text, logged;
     try {
-      text = ps(`if (Test-Path '${dir}\\out\\run.log') { Get-Content -Raw '${dir}\\out\\run.log' }`);
+      const said = ps(`if (Test-Path '${dir}\\out\\run.log') { 'log:' + (Get-Content -Raw '${dir}\\out\\run.log') }`);
+      logged = said.startsWith("log:");
+      text = logged ? said.slice(4) : "";
       lost = 0;
     } catch (e) {
       if (++lost > 40) throw e;
@@ -271,8 +274,14 @@ async function windows() {
     for (const l of lines.slice(shown)) console.log(`  ${l}`);
     shown = lines.length;
     if (ps(`Test-Path '${dir}\\out\\exit.txt'`) === "True") break;
-    if (!text && Date.now() - begun > 60_000)
-      throw new Error("the scheduled task hasn't started the tests in a minute");
+    // A minute is plenty for the task and desktop.ps1 to get node going. But
+    // run.log's first line comes only once the first scenario's app is up,
+    // and the first start of a freshly installed app can be slow (win-11's
+    // took 112 s, 2026-11-06), so that gets five.
+    if (!logged && Date.now() - begun > 60_000)
+      throw new Error("the scheduled task hasn't started the tests in a minute (is desktop.ps1 behind a window?)");
+    if (!text.trim() && Date.now() - begun > 300_000)
+      throw new Error("the tests have printed nothing in five minutes: the first scenario's app didn't start");
   }
   scp("-r", `${runner.host}:${runner.dir}/out/*`, out);
   // Nothing left to start on its own.
@@ -350,12 +359,14 @@ async function mac() {
       `export PATH="$HOME/.local/node/bin:$PATH" E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT='${runner.dir}/out'` +
         `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}` +
         `${process.env.E2E_SCREEN ? ` E2E_SCREEN='${process.env.E2E_SCREEN}'` : ""}; ` +
-        `caffeinate -u -t 1; cd '${runner.dir}' && rm -rf out && node tests/e2e/run.mjs '${target}' ${args}`,
+        `caffeinate -u -t 1; cd '${runner.dir}' && rm -rf out && node tests/e2e/run.mjs '${target}' ${args} 2>&1`,
     ],
     { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1 << 28 },
   );
   for (const l of run.stdout.split("\n").filter((l) => SHOWN.test(l))) console.log(`  ${l}`);
   spawnSync("scp", ["-q", ...shared, "-r", `${runner.host}:${runner.dir}/out/*`, out], { stdio: "inherit" });
+  // The whole log, as Windows keeps it: a scenario's own lines, which SHOWN leaves out.
+  writeFileSync(path.join(out, "run.log"), run.stdout);
   return run.status;
 }
 
