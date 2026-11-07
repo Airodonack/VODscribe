@@ -378,6 +378,22 @@ export default {
     // The heads of the cast: the name and the disc open their streamer card
     // (Unknown's, no one's, neither); the disc their picture once it has
     // loaded, or their initial when there's none (Ada's), never empty.
+    const marloweHead = { name: "Marlowe (Vance)", opens: true, disc: true, picture: "shown", initial: false };
+    const adaHead = { name: "Ada", opens: true, disc: true, picture: "none", initial: true };
+    const want = [
+      marloweHead,
+      adaHead,
+      { name: "Unknown", opens: false, disc: false, picture: "no img", initial: true },
+      marloweHead,
+      adaHead,
+    ];
+    // In the order wanted: the driver hands objects back with their keys in any order.
+    const headOf = (h) => ({ name: h.name, opens: h.opens, disc: h.disc, picture: h.picture, initial: h.initial });
+    // Until every head is as wanted, each picture settled: a slow web view draws
+    // the five heads while a picture is still on its way, so one look can catch
+    // it loading (Ada's 404) or loaded and not yet shown (Marlowe's). The last
+    // look is what's compared when they never get there.
+    let seen = [];
     const heads = await until(
       "the cast's pictures",
       async () => {
@@ -389,22 +405,13 @@ export default {
             picture: img ? (!img.complete ? "loading" : img.naturalWidth > 0 && img.classList.contains("loaded") ? "shown" : "none") : "no img",
             initial: getComputedStyle(h.querySelector(".avatar")).color !== "rgba(0, 0, 0, 0)" };
         })`);
-        return got.length === 5 && got;
+        seen = got;
+        return got.length === 5 && got.every((h, i) => JSON.stringify(headOf(h)) === JSON.stringify(want[i])) && got;
       },
       MINUTE,
-    ).catch(() => []);
-    const marloweHead = { name: "Marlowe (Vance)", opens: true, disc: true, picture: "shown", initial: false };
-    const adaHead = { name: "Ada", opens: true, disc: true, picture: "none", initial: true };
-    const want = [
-      marloweHead,
-      adaHead,
-      { name: "Unknown", opens: false, disc: false, picture: "no img", initial: true },
-      marloweHead,
-      adaHead,
-    ];
+    ).catch(() => seen);
     for (const [i, h] of heads.entries()) {
-      // In the order wanted: the driver hands objects back with their keys in any order.
-      const got = { name: h.name, opens: h.opens, disc: h.disc, picture: h.picture, initial: h.initial };
+      const got = headOf(h);
       if (JSON.stringify(got) !== JSON.stringify(want[i])) wrong.push(`head ${i + 1}: ${JSON.stringify(got)}`);
     }
     if (!heads.length) wrong.push("the heads' pictures never settled");
@@ -487,8 +494,16 @@ export default {
 
     // Pictures turned off: each disc is its initial (Unknown's the outline),
     // in the transcript and in Cast, and the image server isn't asked.
-    const quiet = serveFiles(pictures);
+    // The image server's requests are counted from once the page has let go
+    // of every picture: a head's picture coming into view just before the
+    // switch is still asked for, with pictures on.
     await setPictures(app, false);
+    await until(
+      "no picture in the page",
+      async () => app.js(`return !document.querySelector(".avatar img")`),
+      10_000,
+    ).catch(() => {});
+    const quiet = serveFiles(pictures);
     const discs = (where) =>
       app.js(
         `return [...document.querySelectorAll(arguments[0])].map((d) =>
