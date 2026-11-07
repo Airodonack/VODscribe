@@ -15,7 +15,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { sessionGone, stopWebDriver, webdriver } from "./drivers.mjs";
+import { bridge, sessionGone, stopWebDriver, webdriver } from "./drivers.mjs";
 
 test("a session WebKitWebDriver no longer has is gone", () => {
   // As CI's run got it, every poll after the app's web process died.
@@ -234,4 +234,21 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
     assert.equal(running(pid), false, "the dead driver's app still runs");
     await two.close();
   });
+});
+
+test("an app that never listens on its test hook is stopped, not left running", async () => {
+  // A stand-in that starts and never listens, as the Mac's app did once when
+  // the host was thrashing (round072b): left up, it took every later start.
+  const dir = mkdtempSync(path.join(tmpdir(), "vodscribe-bridge-"));
+  const app = path.join(dir, "app");
+  const pidFile = path.join(dir, "pid");
+  writeFileSync(app, `#!/bin/sh\necho $$ > '${pidFile}'\nexec sleep 600\n`);
+  chmodSync(app, 0o755);
+  try {
+    await assert.rejects(bridge(app, { listenMs: 1500 }), /the app's test hook/);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
