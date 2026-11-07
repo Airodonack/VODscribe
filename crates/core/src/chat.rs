@@ -2020,11 +2020,19 @@ mod tests {
             fetch_youtube(&info, &yt_dlp, &work.join("chat-7"), &mut store, &AtomicBool::new(false), &mut |f| {
                 progress.push((f, begun.elapsed()))
             });
+        let ended = begun.elapsed();
         assert!(fetched.unwrap());
         assert_eq!(store.messages.len(), 3);
         let fractions: Vec<f64> = progress.iter().map(|p| p.0).collect();
         assert_eq!(fractions, [0.25, 0.5, 0.75]);
-        assert!(progress[0].1 < std::time::Duration::from_millis(400), "the first line read before yt-dlp is done");
+        // The first line is written 1.2 s before the rename. Measured from the
+        // end, not the start: a script just written may take most of a second
+        // to start on macOS.
+        let before_the_end = ended - progress[0].1;
+        assert!(
+            before_the_end > std::time::Duration::from_millis(600),
+            "the first line read {before_the_end:?} before yt-dlp was done"
+        );
         assert_eq!(fs::read_dir(&*work).unwrap().count(), 0, "no files left");
     }
 

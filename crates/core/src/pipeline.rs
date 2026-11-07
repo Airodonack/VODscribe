@@ -1216,14 +1216,15 @@ mod tests {
         // One batch to 16 s, a line and two words held back; then it's stopped.
         let first = batch(16.0, &[("New", 9.0), ("first", 9.3), ("line.", 9.6), ("And", 14.0), ("more", 14.5)]);
         let spec = fake_worker(&dir, &[first], 30);
-        let cancel = Arc::new(AtomicBool::new(false));
-        let flag = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            flag.store(true, Ordering::Relaxed);
-        });
+        // Stopped once that batch is in, not after a fixed wait: a script just
+        // written may take most of a second to start on macOS.
+        let cancel = AtomicBool::new(false);
         let audio = Audio { path: "audio".into(), offset: 0.0 };
-        let stopped = run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &cancel, &mut |_, _| {});
+        let stopped = run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &cancel, &mut |_, done| {
+            if done > 0.0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        });
         assert!(stopped.is_err());
         let args = fs::read_to_string(dir.join("args")).unwrap();
         assert!(args.contains("--exit-on-stdin-close"), "{args}");

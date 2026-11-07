@@ -537,6 +537,21 @@ pub fn shown(path: impl AsRef<Path>) -> String {
 mod tests {
     use super::*;
 
+    /// Whether the launcher's child writes into `dir` within a few seconds.
+    /// Not a fixed wait: macOS checks a program the first time it runs, and
+    /// on the Mac runner a script just written took about 750 ms to start.
+    #[cfg(unix)]
+    fn writes(dir: &Path) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::fs::read_dir(dir).unwrap().count() == 0 {
+            if std::time::Instant::now() > until {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        true
+    }
+
     /// What quitting stops: a tracked launcher and its child, and nothing
     /// that isn't tracked.
     #[cfg(unix)]
@@ -557,12 +572,11 @@ mod tests {
         let mut child = command(&script).arg(&tracked_out).spawn().unwrap();
         let guard = track(&child);
         let mut other = command(&script).arg(&other_out).spawn().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(writes(&tracked_out) && writes(&other_out), "they were writing");
         let id = child.id();
         stop_in(&TRACKED, |tracked| tracked == id, false);
         let _ = child.wait();
         let written = std::fs::read_dir(&tracked_out).unwrap().count();
-        assert!(written > 0, "it was writing");
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(std::fs::read_dir(&tracked_out).unwrap().count(), written, "it and its child stopped");
         let before = std::fs::read_dir(&other_out).unwrap().count();
@@ -632,10 +646,9 @@ mod tests {
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let mut child = command(&script).arg(&out).spawn().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(writes(&out), "the child was writing");
         kill_tree(&mut child);
         let written = std::fs::read_dir(&out).unwrap().count();
-        assert!(written > 0, "the child was writing");
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(std::fs::read_dir(&out).unwrap().count(), written, "nothing written once stopped");
     }
