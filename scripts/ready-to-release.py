@@ -280,7 +280,8 @@ Before tagging, check what can't be:
 
 Then, to publish (a signed, annotated tag: the repo signs tags with the
 same key as commits; a bare `git tag` would make an unsigned one):
-  git tag -s v{version} -m "Version {version}" && git tag -v v{version} && git push origin v{version}
+  git tag -s v{version} -m "Version {version}" {sha[:12]} && git tag -v v{version} && git push origin v{version}
+(the tag names the version commit, so it lands there from any checkout)
 
 The tag's run is the full lane: every build, every system's end-to-end
 shards, then the publish job, which checks the release once it's up
