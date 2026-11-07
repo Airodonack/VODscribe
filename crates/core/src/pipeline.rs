@@ -289,9 +289,10 @@ pub fn fill_channels(db: &Db, paths: &Paths, vods: &[Vod]) {
 }
 
 /// A site's VOD's "Refresh details" (its row's menu): asks VOD `vod_id`'s
-/// site about it again, one look-up (`fetch::probe`; for Kick, Kick's own
-/// answer, `kick::resolve`), and keeps what the site now names of its
-/// channel, its login and page (`Db::refresh_channel`).
+/// site about it again and keeps what the site now names of its channel,
+/// its login and page (`Db::refresh_channel`). The site's own API answers
+/// first (`channel_by_api`), in under a second; failing that, or for a site
+/// with none, yt-dlp does (`fetch::probe`), which takes seconds.
 /// Nothing else changes: not its title, length or anything the library has
 /// of it besides. The look-up's info JSON goes to a file of its own
 /// (`Paths::temp_probe`), removed after, so a download or transcription
@@ -313,27 +314,67 @@ pub fn refresh_details(
     if vod.source_path.is_some() || vod.info.platform == crate::local::PLATFORM {
         bail!("A file on this computer has no site to ask.");
     }
-    let info = if crate::kick::parse_vod_url(&vod.info.url).is_some() {
-        // yt-dlp can't read Kick's VOD links yet, so `fetch::probe` asks it,
-        // fails, then asks Kick and has yt-dlp read the stream: seconds of
-        // work for a channel that Kick's answer names already.
-        crate::kick::resolve(&vod.info.url)?.0
-    } else {
-        fs::create_dir_all(paths.work())?;
-        let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
-        let probe = paths.temp_probe(nanos);
-        let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
-        let _ = fs::remove_file(&probe);
-        probed?
+    let channel = match channel_by_api(&vod.info, cancel) {
+        Some(Ok(channel)) => channel,
+        // yt-dlp can't read Kick's VOD links yet: `fetch::probe` would ask
+        // it, fail, then ask Kick again.
+        Some(Err(e)) if vod.info.platform == "kick" => return Err(e),
+        // The site's answer is the same either way, slower: the video gone
+        // says so in yt-dlp's words.
+        fast => {
+            if let Some(Err(e)) = fast
+                && cfg!(debug_assertions)
+            {
+                eprintln!("refresh {} {} by its API: {e:#}", vod.info.platform, vod.info.platform_id);
+            }
+            fs::create_dir_all(paths.work())?;
+            let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let probe = paths.temp_probe(nanos);
+            let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
+            let _ = fs::remove_file(&probe);
+            let info = probed?;
+            if (info.platform.as_str(), info.platform_id.as_str())
+                != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
+            {
+                bail!("The site answered with another video, so nothing changed.");
+            }
+            (info.channel_login, info.channel_url)
+        }
     };
-    if (info.platform.as_str(), info.platform_id.as_str())
-        != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
-    {
-        bail!("The site answered with another video, so nothing changed.");
-    }
     let db = db.lock().unwrap();
-    db.refresh_channel(vod_id, info.channel_login.as_deref(), info.channel_url.as_deref())?;
+    db.refresh_channel(vod_id, channel.0.as_deref(), channel.1.as_deref())?;
     db.vod(vod_id)?.ok_or_else(gone)
+}
+
+/// VOD `vod`'s channel, its login and page, from its site's own API, which
+/// answers in under a second where yt-dlp takes seconds; each checks it
+/// answered for this video. None for a site or a video it can't be asked
+/// about, so yt-dlp is. Each gives what yt-dlp would of the channel, or
+/// fails, so a refresh keeps the same either way:
+/// - Kick (`kick::resolve`): the login, its slug, and no page. Its failure
+///   is the refresh's: yt-dlp can't read Kick's VOD links yet.
+/// - Twitch, a VOD (`twitch::vod_channel`): the login, and no page, as
+///   yt-dlp names none for a Twitch VOD. Not a clip: yt-dlp names whoever
+///   clipped it, which isn't kept.
+/// - YouTube (`youtube::channel`, oEmbed): the handle and its page. A
+///   channel with no plain handle fails, and yt-dlp is asked.
+fn channel_by_api(vod: &fetch::VodInfo, cancel: &AtomicBool) -> Option<Result<(Option<String>, Option<String>)>> {
+    let id = vod.platform_id.as_str();
+    match vod.platform.as_str() {
+        "kick" if crate::kick::parse_vod_url(&vod.url).is_some() => {
+            Some(crate::kick::resolve(&vod.url).and_then(|(info, _)| {
+                anyhow::ensure!(info.platform_id == id, "The site answered with another video, so nothing changed.");
+                Ok((info.channel_login, info.channel_url))
+            }))
+        }
+        "twitch" if !crate::twitch::is_clip(id) => {
+            Some(crate::twitch::vod_channel(id, cancel).map(|login| (Some(login), None)))
+        }
+        "youtube" if crate::youtube::is_video_id(id) => {
+            Some(crate::youtube::channel(id, cancel).map(|(handle, page)| (Some(handle), Some(page))))
+        }
+        _ => None,
+    }
 }
 
 /// Removes VOD `vod_id`'s kept video, and any part of one, from `Paths::media`.

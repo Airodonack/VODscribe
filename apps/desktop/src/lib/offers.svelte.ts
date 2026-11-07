@@ -14,6 +14,7 @@
 // The gift button and the row menu's checks always offer, so whoever asks
 // sees what they'd get.
 
+import { SvelteSet } from "svelte/reactivity";
 import { api, type AnnotationsOffer, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
 import { foundVodscription } from "./asks";
@@ -122,8 +123,13 @@ class Offers {
     }
   }
 
+  /** The VODs their row's menu is asking the file host about (`check`): their rows say so. */
+  checking = new SvelteSet<number>();
+
   /** Asks the file host again about `vod` (its row's menu), and offers what's found. */
   async check(vod: Vod) {
+    if (this.checking.has(vod.id)) return;
+    this.checking.add(vod.id);
     try {
       const { asked, can_have, offer } = await api.checkAnnotations(vod.id);
       if (!can_have) toast.show("VODscription is only for Twitch, YouTube and Kick VODs.");
@@ -132,6 +138,8 @@ class Offers {
       else await this.offer(vod, false);
     } catch (e) {
       toast.show(String(e));
+    } finally {
+      this.checking.delete(vod.id);
     }
   }
 

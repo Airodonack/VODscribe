@@ -4,7 +4,9 @@
 //! activity back for the page, where its pictures come from, and the
 //! streamer cards its cast opens.
 
+use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -101,17 +103,43 @@ fn look_up(app: &AppHandle, vod_id: i64, platform: &str, platform_id: &str) -> a
     Ok(found)
 }
 
+/// The VODs the file host is being asked about after an add or a refresh
+/// (`look_up_added`, `look_up_refreshed`), each held until its answer is
+/// in. A second ask meanwhile (Refresh details pressed again while the file
+/// host is slow) starts none: its answer would offer the VODscription again,
+/// after the first one's offer had been answered.
+static ASKING: Mutex<BTreeSet<i64>> = Mutex::new(BTreeSet::new());
+
+/// One VOD's ask after an add or a refresh, held in `ASKING` until it ends.
+struct Asking(i64);
+
+impl Asking {
+    /// None when one for VOD `vod_id` is under way already.
+    fn claim(vod_id: i64) -> Option<Self> {
+        // Lazily: a guard made and dropped here would take the lock held now.
+        ASKING.lock().unwrap().insert(vod_id).then(|| Self(vod_id))
+    }
+}
+
+impl Drop for Asking {
+    fn drop(&mut self) {
+        ASKING.lock().unwrap().remove(&self.0);
+    }
+}
+
 /// For a VOD just added from a site: asks the file host about its
 /// annotations, on a thread of its own so adding never waits, unless the
-/// user turned that off. Published, the page offers them
-/// (`annotations-found`).
+/// user turned that off or it's being asked already (`ASKING`). Published,
+/// the page offers them (`annotations-found`).
 pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
     if !annotations::can_be_published(&vod.info.platform) {
         return;
     }
+    let Some(asking) = Asking::claim(vod.id) else { return };
     let (app, id) = (app.clone(), vod.id);
     let (platform, platform_id) = (vod.info.platform.clone(), vod.info.platform_id.clone());
     std::thread::spawn(move || {
+        let _asking = asking;
         if !may_ask(&app) {
             return;
         }
@@ -132,16 +160,19 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
 /// For a VOD whose details were refreshed (`vods::refresh_details`): asks
 /// the file host about its annotations again, as `look_up_added` does for
 /// one just added, on a thread of its own so the refresh doesn't wait,
-/// unless the user turned that off (nothing is asked then). Published, and
-/// not the ones it has already, the page offers them (`annotations-found`),
-/// as after an add. A failure to ask is kept quiet.
+/// unless the user turned that off (nothing is asked then), or one is being
+/// asked already (`ASKING`), whose answer stands for this one. Published,
+/// and not the ones it has already, the page offers them
+/// (`annotations-found`), as after an add. A failure to ask is kept quiet.
 pub(crate) fn look_up_refreshed(app: &AppHandle, vod: &Vod) {
     if !annotations::can_be_published(&vod.info.platform) {
         return;
     }
+    let Some(asking) = Asking::claim(vod.id) else { return };
     let (app, id) = (app.clone(), vod.id);
     let (platform, platform_id) = (vod.info.platform.clone(), vod.info.platform_id.clone());
     std::thread::spawn(move || {
+        let _asking = asking;
         if !may_ask(&app) {
             return;
         }
@@ -300,4 +331,22 @@ pub(crate) async fn streamer_index(app: AppHandle) -> CmdResult<Option<serde_jso
         .await
         .map_err(err)?
         .map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One ask per VOD at a time: a second claim meanwhile gets none and
+    /// leaves the first's alone; once it ends, the next is claimed.
+    #[test]
+    fn one_ask_per_vod_at_a_time() {
+        let first = Asking::claim(-7).expect("the first claim");
+        assert!(Asking::claim(-7).is_none(), "a second claim while the first is held");
+        assert!(ASKING.lock().unwrap().contains(&-7), "the second claim left the first's");
+        let other = Asking::claim(-8).expect("another VOD's");
+        drop(first);
+        assert!(Asking::claim(-7).is_some(), "claimed again once the first ended");
+        drop(other);
+    }
 }

@@ -41,6 +41,7 @@ pub mod tools;
 pub mod transcript;
 pub mod twitch;
 pub mod word_emotes;
+pub mod youtube;
 
 use std::path::{Path, PathBuf};
 

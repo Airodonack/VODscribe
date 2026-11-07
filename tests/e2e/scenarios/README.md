@@ -55,6 +55,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `readd-erasing.mjs`: a VOD removed and added again while it's being erased.
 - `readd-stuck.mjs`: a VOD removed and added again while its work won't stop.
 - `recovery.mjs`: a library that won't open starts the recovery screen.
+- `refresh-offer.mjs`: a slow file host asked again by two refreshes offers once; Check for a VODscription shows it's asking.
 - `reload.mjs`: a page reload brings back what was open.
 - `remembered.mjs`: the small choices the page remembers outlast a restart.
 - `remove.mjs`: removing a VOD asks first.
