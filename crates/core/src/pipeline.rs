@@ -289,8 +289,9 @@ pub fn fill_channels(db: &Db, paths: &Paths, vods: &[Vod]) {
 }
 
 /// A site's VOD's "Refresh details" (its row's menu): asks VOD `vod_id`'s
-/// site about it again, one look-up (`fetch::probe`), and keeps what the
-/// site now names of its channel, its login and page (`Db::refresh_channel`).
+/// site about it again, one look-up (`fetch::probe`; for Kick, Kick's own
+/// answer, `kick::resolve`), and keeps what the site now names of its
+/// channel, its login and page (`Db::refresh_channel`).
 /// Nothing else changes: not its title, length or anything the library has
 /// of it besides. The look-up's info JSON goes to a file of its own
 /// (`Paths::temp_probe`), removed after, so a download or transcription
@@ -312,12 +313,19 @@ pub fn refresh_details(
     if vod.source_path.is_some() || vod.info.platform == crate::local::PLATFORM {
         bail!("A file on this computer has no site to ask.");
     }
-    fs::create_dir_all(paths.work())?;
-    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let probe = paths.temp_probe(nanos);
-    let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
-    let _ = fs::remove_file(&probe);
-    let info = probed?;
+    let info = if crate::kick::parse_vod_url(&vod.info.url).is_some() {
+        // yt-dlp can't read Kick's VOD links yet, so `fetch::probe` asks it,
+        // fails, then asks Kick and has yt-dlp read the stream: seconds of
+        // work for a channel that Kick's answer names already.
+        crate::kick::resolve(&vod.info.url)?.0
+    } else {
+        fs::create_dir_all(paths.work())?;
+        let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
+        let probe = paths.temp_probe(nanos);
+        let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
+        let _ = fs::remove_file(&probe);
+        probed?
+    };
     if (info.platform.as_str(), info.platform_id.as_str())
         != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
     {

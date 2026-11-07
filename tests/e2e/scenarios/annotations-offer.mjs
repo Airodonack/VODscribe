@@ -1,14 +1,15 @@
 // Annotations published for a VOD from a site (lib/fileHost.mjs serves
 // fixtures/annotations-minute.json as that VOD's): adding the VOD asks the
-// file host about it, once, and the app offers them: "A VODscription is
-// available for this VOD", Use, Not now, "No, and don't ask again".
+// file host about it, once, and the app offers them in a dialog titled
+// "VODscription found": "A VODscription is available for this VOD", a
+// "Don't ask again" box, Not now and Use.
 // Use fetches the file and imports it: the transcript reads as the file's,
 // under its speakers' names, with its chapters, and the
 // library row has the gift button. The Timeline panel's Marks toggles hide
 // the imported chapters and highlights, or the user's own (here, as the
 // transcript's chapter dividers), and stay as left after a restart. The gift button,
 // with the file unchanged, says the VOD has the latest already and offers
-// Replace anyway (no "No, and don't ask again"); replaced, the import's marks are
+// Replace anyway (no "Don't ask again"); replaced, the import's marks are
 // brought anew and a chapter of the user's own stays. The gift button asks the
 // file host first: with the file published anew it offers the newer ones; with asking
 // turned off it asks nothing and says its answer is from the last check.
@@ -29,11 +30,12 @@ const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const ID = "xe2eoffer";
 const FILE = `/annotations/youtube/${ID}.json`;
 
-/** The offer's words and buttons, or null while there's none. */
+/** The offer's words, its boxes and buttons, or null while there's none. */
 const offer = (app) =>
   app.js(
     `const d = document.querySelector(arguments[0]);
     return d && { text: d.querySelector(".offer")?.textContent.replace(/\\s+/g, " ").trim() ?? "",
+      boxes: [...d.querySelectorAll(".offer label:has(input[type=checkbox])")].map((l) => l.textContent.trim()),
       buttons: [...d.querySelectorAll(".offer button")].map((b) => b.textContent.trim()) }`,
     OFFER,
   );
@@ -84,9 +86,9 @@ export default {
   name: "annotations-offer",
   expects: {
     "offer-after-add":
-      'A small dialog titled "VODscription" over the app: the VOD\'s title in bold, "A VODscription is available for this VOD: a transcript, chapters and highlights.", a line in small gray print, and a row of buttons at the right: "No, and don\'t ask again", "Not now" and a highlighted "Use".',
+      'A small dialog titled "VODscription found" over the app: the VOD\'s title in bold, "A VODscription is available for this VOD: a transcript, chapters and highlights.", a line in small gray print, an unticked box "Don\'t ask again", and a row of buttons at the right: "Not now" and a highlighted "Use".',
     "offer-gift":
-      'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "VODscription" says the VOD has the latest VODscription already, with "Not now" and a highlighted "Replace anyway", and no "No, and don\'t ask again".',
+      'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "VODscription found" says the VOD has the latest VODscription already, with "Not now" and a highlighted "Replace anyway", and no "Don\'t ask again" box.',
   },
   async run(app, ctx) {
     const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${ID}"`);
@@ -105,7 +107,9 @@ export default {
         const wrong = [];
         if (!offered.text.includes("A VODscription is available for this VOD: a transcript, chapters and highlights."))
           wrong.push(`the offer says "${offered.text}"`);
-        if (offered.buttons.join(", ") !== "No, and don't ask again, Not now, Use")
+        if (offered.boxes.join(", ") !== "Don't ask again")
+          wrong.push(`the offer's boxes: ${offered.boxes.join(", ")}`);
+        if (offered.buttons.join(", ") !== "Not now, Use")
           wrong.push(`the offer's buttons: ${offered.buttons.join(", ")}`);
         // The filter the app asks for at its start (none published here) aside.
         const asked = host.requests.filter(notFilter).map((r) => `${r.method} ${r.path}`);
@@ -158,8 +162,8 @@ export default {
         await ctx.checkpoint("offer-gift");
         if (!again.text.includes("This VOD has the latest VODscription already."))
           wrong.push(`the gift button's offer says "${again.text}"`);
-        if (again.buttons.join(", ") !== "Not now, Replace anyway")
-          wrong.push(`the gift button's offer's buttons: ${again.buttons.join(", ")}`);
+        if (again.buttons.join(", ") !== "Not now, Replace anyway" || again.boxes.length)
+          wrong.push(`the gift button's offer's boxes and buttons: ${[...again.boxes, ...again.buttons].join(", ")}`);
         const fetched = host.requests.filter((r) => r.method === "GET").length;
         await app.clickText("Replace anyway");
         await until(

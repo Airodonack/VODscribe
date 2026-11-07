@@ -19,9 +19,10 @@
 // channel's page as the site named it, with no picture. And a YouTube VOD
 // added before the library kept its channel's login and page: its card has
 // no link to the channel until its row's Refresh details asks the site
-// again; while the site says the video's gone, that says so and changes
-// nothing; then it has the channel's page, and the card and VODscription
-// published since show, the index asked for again past the session's.
+// again, its row saying "Refreshing details…" meanwhile; while the site
+// says the video's gone, that says so, naming the VOD, and changes nothing;
+// then it has the channel's page, and the card and VODscription published
+// since show, the index asked for again past the session's.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -84,6 +85,20 @@ const READ = `
     top: Math.round(box.top),
     bottom: Math.round(box.bottom),
   };`;
+
+/** Watches VOD `id`'s row for "Refreshing details…" from now on (`sawRefreshing`):
+ *  it may say so for less time than a look from here takes. */
+const watchRefreshing = (app, id) =>
+  app.js(
+    `const says = () => document.querySelector('.vod[data-key="' + arguments[0] + '"] .status-area')?.textContent.includes("Refreshing details…");
+     window.__refreshingSeen = false;
+     const seen = new MutationObserver(() => {
+       if (says()) { window.__refreshingSeen = true; seen.disconnect(); }
+     });
+     seen.observe(document.body, { childList: true, subtree: true, characterData: true });`,
+    String(id),
+  );
+const sawRefreshing = (app) => app.js(`return window.__refreshingSeen === true`);
 
 export default {
   name: "streamer-card",
@@ -343,6 +358,7 @@ export default {
           const channelOf = (vod) => JSON.stringify([vod?.channel_login ?? null, vod?.channel_url ?? null]);
           siteSaysGone(true);
           const asked = since.requests.filter(notFilter).length;
+          await watchRefreshing(app, older.id);
           await app.rowMenu(older.id, "Refresh details");
           const failed = await until(
             "Refresh details to fail",
@@ -354,9 +370,10 @@ export default {
           ).catch(async () => `(${await app.toastSays()})`);
           if (
             failed !==
-            "Couldn't refresh the details. That video isn't available. It may have been deleted or made private."
+            `Couldn't refresh the details of “${older.title}”. That video isn't available. It may have been deleted or made private.`
           )
             wrong.push(`Refresh details, the video gone, says "${failed}"`);
+          if (!(await sawRefreshing(app))) wrong.push(`the row never said "Refreshing details…"`);
           if (channelOf(await vodNow()) !== "[null,null]")
             wrong.push(`a failed refresh kept the channel ${channelOf(await vodNow())}`);
           const after = since.requests.filter(notFilter).slice(asked);
@@ -375,7 +392,7 @@ export default {
             },
             MINUTE,
           ).catch(async () => `(${await app.toastSays()})`);
-          if (said !== "Details refreshed") wrong.push(`Refresh details says "${said}"`);
+          if (said !== `Refreshed the details of “${older.title}”.`) wrong.push(`Refresh details says "${said}"`);
           const refreshed = await vodNow();
           if (channelOf(refreshed) !== JSON.stringify(["@marlowe", "https://www.youtube.com/@marlowe"]))
             wrong.push(`refreshed, the VOD's channel is ${channelOf(refreshed)}`);

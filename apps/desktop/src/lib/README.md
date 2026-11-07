@@ -31,7 +31,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `ChannelDisc.svelte`: the streamer's picture beside the channel's name.
 - `adder.svelte.ts`: adds pasted links and dropped or picked files, one after another.
 - `actions.ts`: what can be done with a VOD or an edit, wherever it shows.
-- `refresh.ts`: a site's VOD's Refresh details, which asks its site and the file host again.
+- `refresh.svelte.ts`: a site's VOD's Refresh details, which asks its site and the file host again.
 - `removal.svelte.ts`: removing a VOD.
 - `reorder.svelte.ts`: drag to reorder a list, with Alt+↑ and Alt+↓.
 - `readAhead.ts`: reads a VOD before it's opened, so it opens at once.

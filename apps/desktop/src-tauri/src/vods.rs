@@ -133,7 +133,8 @@ impl Drop for Refreshing<'_> {
 /// A site's VOD's "Refresh details" (its row's menu): what its site names
 /// of its channel now (`pipeline::refresh_details`; only that, for now),
 /// then the file host asked again about its VODscription, as when it was
-/// added (`annotations::look_up_refreshed`). The page asks again for its
+/// added (`annotations::look_up_refreshed`), which the answer doesn't wait
+/// for: an offer comes when it's found. The page asks again for its
 /// streamer card itself (streamers.ts `CardCache.fresh`). It runs beside a
 /// download or transcription of the VOD without touching either, and a
 /// failure changes nothing. None when one for the VOD is under way

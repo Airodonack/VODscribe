@@ -17,7 +17,7 @@ import { toast } from "./toasts.svelte";
 export interface Offered {
   vod: Vod;
   offer: AnnotationsOffer;
-  /** Offered because it was just added: "No, and don't ask again" is one of the answers. */
+  /** Offered because it was just added: it has a "Don't ask again" box. */
   afterAdd: boolean;
   /** Why the file host wasn't asked just now (asking is off, or it failed), when the
    *  offer goes by the last check: the dialog says so. Null when it was asked. */
@@ -32,8 +32,6 @@ class Offers {
   /** The file host being asked, for the gift button. */
   asking = $state(false);
   error = $state<string | null>(null);
-  /** "No, and don't ask again" was picked: the dialog says where that's undone, then closes. */
-  stopped = $state(false);
 
   /** Offers `vod`'s annotations, as last found, unless something else is
    *  offered already, or it was just added and the offer is turned off
@@ -47,7 +45,6 @@ class Offers {
 
   #show(offered: Offered) {
     this.error = null;
-    this.stopped = false;
     this.shown = offered;
   }
 
@@ -105,9 +102,11 @@ class Offers {
     }
   }
 
-  async use() {
+  /** Use, and with `hide` ("Don't ask again" ticked) stop offering after an add. */
+  async use(hide = false) {
     const shown = this.shown;
     if (!shown || this.busy) return;
+    if (hide && shown.afterAdd) void this.#stop();
     this.busy = true;
     this.error = null;
     try {
@@ -124,17 +123,17 @@ class Offers {
     }
   }
 
-  /** "No, and don't ask again": VODs added from now on aren't offered theirs.
+  /** "Don't ask again", answered: VODs added from now on aren't offered theirs.
    *  The app still looks them up (`ask_for_annotations`), for the gift button. */
-  async stop() {
+  async #stop() {
     await settings.update({ ask_to_use_vodscription: false });
-    this.stopped = true;
   }
 
-  /** Closes it; one being fetched carries on, and says when it's done. */
-  close() {
+  /** Closes it (Not now), and with `hide` ("Don't ask again" ticked) stops
+   *  offering after an add; one being fetched carries on, and says when it's done. */
+  close(hide = false) {
+    if (hide && this.shown?.afterAdd) void this.#stop();
     this.shown = null;
-    this.stopped = false;
     this.error = null;
   }
 }

@@ -131,27 +131,35 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
 
 /// For a VOD whose details were refreshed (`vods::refresh_details`): asks
 /// the file host about its annotations again, as `look_up_added` does for
-/// one just added, unless the user turned that off (nothing is asked then).
-/// Published, and not the ones it has already, the page offers them
-/// (`annotations-found`), as after an add. A failure to ask is kept quiet.
+/// one just added, on a thread of its own so the refresh doesn't wait,
+/// unless the user turned that off (nothing is asked then). Published, and
+/// not the ones it has already, the page offers them (`annotations-found`),
+/// as after an add. A failure to ask is kept quiet.
 pub(crate) fn look_up_refreshed(app: &AppHandle, vod: &Vod) {
-    if !annotations::can_be_published(&vod.info.platform) || !may_ask(app) {
+    if !annotations::can_be_published(&vod.info.platform) {
         return;
     }
-    match look_up(app, vod.id, &vod.info.platform, &vod.info.platform_id) {
-        Ok(Found::Available { .. }) => {
-            let offer = app.state::<AppState>().db.lock().unwrap().annotations_offer(vod.id);
-            if offer.is_ok_and(|offer| !offer.up_to_date) {
-                crate::page::emit(app, "annotations-found", vod.id);
+    let (app, id) = (app.clone(), vod.id);
+    let (platform, platform_id) = (vod.info.platform.clone(), vod.info.platform_id.clone());
+    std::thread::spawn(move || {
+        if !may_ask(&app) {
+            return;
+        }
+        match look_up(&app, id, &platform, &platform_id) {
+            Ok(Found::Available { .. }) => {
+                let offer = app.state::<AppState>().db.lock().unwrap().annotations_offer(id);
+                if offer.is_ok_and(|offer| !offer.up_to_date) {
+                    crate::page::emit(&app, "annotations-found", id);
+                }
+            }
+            Ok(Found::None) => {}
+            Err(e) => {
+                if cfg!(debug_assertions) {
+                    eprintln!("annotations for {platform} {platform_id}: {e:#}");
+                }
             }
         }
-        Ok(Found::None) => {}
-        Err(e) => {
-            if cfg!(debug_assertions) {
-                eprintln!("annotations for {} {}: {e:#}", vod.info.platform, vod.info.platform_id);
-            }
-        }
-    }
+    });
 }
 
 #[derive(Serialize)]

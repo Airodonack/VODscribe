@@ -39,7 +39,7 @@
   import Menu, { type MenuItem } from "./Menu.svelte";
   import { actionsFor } from "./actions";
   import { offers } from "./offers.svelte";
-  import { refreshDetails } from "./refresh";
+  import { refreshDetails } from "./refresh.svelte";
   import { pressToDrag, type Pressed } from "./pressToDrag";
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
@@ -62,7 +62,7 @@
 
   // A row's menu, opened by a right click on it (or the menu key): what can
   // be done with its VOD or edit (actions.ts), and for a VOD from a site,
-  // asking its site about it again (refresh.ts) and asking for its
+  // asking its site about it again (refresh.svelte.ts) and asking for its
   // annotations. Add to edit… there asks which edit, beside the row.
   let menuOpen = $state(false);
   let menuFor = $state<{ row: LibraryRow; el: HTMLElement } | null>(null);

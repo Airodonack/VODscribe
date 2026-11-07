@@ -1,8 +1,9 @@
 // Asking the file host about the VODs added from sites (lib/fileHost.mjs),
 // and the settings that stop the offer and the asking. A VOD it has nothing
 // for: asked once, then nothing offered and no gift button. One it has
-// something for: offered, and "No, and don't ask again" turns the offer's
-// switch off, and only it, the dialog then saying where it's turned back on.
+// something for: offered, and its "Don't ask again" box, ticked, says where
+// it's turned back on; answered Not now, it turns the offer's switch off,
+// and only it.
 // The next VOD published is still asked about, and not offered; its gift
 // button offers it. With asking off in Settings › Privacy, a VOD added is
 // never asked about, and its menu's "Check for a VODscription" says asking is
@@ -37,7 +38,7 @@ export default {
   name: "annotations-lookup",
   expects: {
     "offer-stopped":
-      'A small dialog titled "VODscription" says VODscribe won\'t ask about the VODs you add any more, and in gray that it can be turned back on in Settings › Privacy, with "Open Settings" and a highlighted "OK".',
+      'A small dialog titled "VODscription found" offers the VOD\'s VODscription; its box "Don\'t ask again" is ticked, with a gray line under it saying it can be turned back on in Settings › Privacy, then "Not now" and a highlighted "Use".',
     "lookup-setting":
       'Settings at Privacy: under the paragraphs about privacy, an unticked box "Enable VODscription annotations for VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else, then an unticked box "Ask to use a VODscription when one is found" with its own gray line.',
   },
@@ -68,10 +69,16 @@ export default {
         if (asked.join() !== "HEAD /annotations/youtube/xe2enone.json")
           wrong.push(`for the VOD with none, the file host was asked: ${asked.join(", ")}`);
 
-        // Published: offered; "No, and don't ask again" turns the offer off, and only it.
+        // Published: offered; its "Don't ask again", ticked, says where it's
+        // undone, and answered, turns the offer off, and only it.
         await addSiteVod(app, "xe2eask");
         await until("the offer", () => offerShown(app), MINUTE);
-        await app.clickText("No, and don't ask again");
+        await app.js(
+          `const box = [...document.querySelectorAll(arguments[0] + " .offer label")].find((l) => l.textContent.trim() === "Don't ask again")?.querySelector("input[type=checkbox]");
+           if (!box) throw new Error("no Don't ask again box");
+           box.click();`,
+          OFFER,
+        );
         const said = await until(
           "where it's turned back on",
           () =>
@@ -83,12 +90,21 @@ export default {
           10_000,
         );
         await ctx.checkpoint("offer-stopped");
-        if (!said.includes("won't ask about the VODs you add any more"))
-          wrong.push(`after "No, and don't ask again": "${said}"`);
-        const stopped = await app.invoke("get_settings");
-        if (stopped.ask_to_use_vodscription !== false) wrong.push("No, and don't ask again left the offer on");
-        if (stopped.ask_for_annotations !== true) wrong.push("No, and don't ask again turned asking the file host off");
-        await app.clickText("OK");
+        if (!said.includes("You can turn it back on in Settings › Privacy."))
+          wrong.push(`with "Don't ask again" ticked: "${said}"`);
+        if ((await app.invoke("get_settings")).ask_to_use_vodscription !== true)
+          wrong.push("ticking Don't ask again turned the offer off before it was answered");
+        await app.clickText("Not now");
+        const stopped = await until(
+          "the offer turned off",
+          async () => {
+            const now = await app.invoke("get_settings");
+            return now.ask_to_use_vodscription === false && now;
+          },
+          10_000,
+        ).catch(() => app.invoke("get_settings"));
+        if (stopped.ask_to_use_vodscription !== false) wrong.push("Don't ask again, then Not now, left the offer on");
+        if (stopped.ask_for_annotations !== true) wrong.push("Don't ask again turned asking the file host off");
         await until("the dialog closed", async () => !(await offerShown(app)), 10_000);
 
         // The offer off: the next VOD published is still asked about, its gift
@@ -109,7 +125,7 @@ export default {
         await until("the dialog closed", async () => !(await offerShown(app)), 10_000);
 
         // Asking turned off in Settings › Privacy.
-        if (!(await settingTicked(app))) wrong.push("Settings shows asking off after No, and don't ask again");
+        if (!(await settingTicked(app))) wrong.push("Settings shows asking off after Don't ask again");
         await app.js(
           `const label = [...document.querySelectorAll('[role="dialog"][aria-label="Settings"] label')].find((l) => l.textContent.trim() === arguments[0]);
            label.querySelector("input").click();`,

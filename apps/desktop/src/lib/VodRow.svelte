@@ -18,6 +18,7 @@
   import Spinner from "./Spinner.svelte";
   import { covered as coveredBy, requestDetail, statusLabel } from "./stretches";
   import { inEdits as inEditsOf, removing as removals } from "./removal.svelte";
+  import { refreshing } from "./refresh.svelte";
   import Thumb from "./Thumb.svelte";
   import { transcribe } from "./bulk";
   import { offers } from "./offers.svelte";
@@ -194,6 +195,8 @@
   // (its text is erased, not just dropped); the row says so meanwhile, and
   // goes when it's done (removal.svelte.ts).
   const removing = $derived(removals.has(vod.id));
+  // Refresh details asks its site, which takes seconds (refresh.svelte.ts).
+  const refreshingDetails = $derived(refreshing.has(vod.id));
   // Removing it asks as removing several picked does (actions.ts): a VOD that
   // edits use, whether its video goes too, the stretches they use kept first.
   async function remove() {
@@ -229,6 +232,13 @@
     <span class="status">
       <Spinner label="Removing" />
       Removing…
+    </span>
+  </div>
+{:else if refreshingDetails}
+  <div class="status-area">
+    <span class="status">
+      <Spinner label="Refreshing details" />
+      Refreshing details…
     </span>
   </div>
 {:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}

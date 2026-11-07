@@ -11,28 +11,33 @@
 // session's cache (streamers.ts `CardCache.fresh`), so one published since
 // shows. It runs beside a download or transcription of the VOD; a second
 // press while one runs does nothing, and a failure says so and changes nothing.
+// Asking the site takes seconds (yt-dlp), so the row says "Refreshing
+// details…" meanwhile (VodRow.svelte), as it does while a VOD is removed, and
+// what's said after names the VOD. The file host's answers aren't waited
+// for: an offer, or the card, comes when it's in.
 
+import { SvelteSet } from "svelte/reactivity";
 import { api, type Vod } from "./api";
 import { cards, channelCard } from "./streamers.svelte";
 import { toast } from "./toasts.svelte";
 
-/** The VODs whose details are being refreshed. */
-const underWay = new Set<number>();
+/** The VODs whose details are being refreshed: their rows say so. */
+export const refreshing = new SvelteSet<number>();
 
 /** Refreshes `vod`'s details, and says how that went. */
 export async function refreshDetails(vod: Vod) {
-  if (underWay.has(vod.id)) return;
-  underWay.add(vod.id);
+  if (refreshing.has(vod.id)) return;
+  refreshing.add(vod.id);
   try {
     const fresh = await api.refreshDetails(vod.id);
     // One for it was under way already, which says how it went.
     if (!fresh) return;
     const { member, account } = channelCard(fresh);
-    await cards.fresh(member, account);
-    toast.show("Details refreshed");
+    void cards.fresh(member, account);
+    toast.show(`Refreshed the details of “${fresh.title}”.`);
   } catch (e) {
-    toast.error(`Couldn't refresh the details. ${e}`);
+    toast.error(`Couldn't refresh the details of “${vod.title}”. ${e}`);
   } finally {
-    underWay.delete(vod.id);
+    refreshing.delete(vod.id);
   }
 }
