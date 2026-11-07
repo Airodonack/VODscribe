@@ -25,10 +25,12 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Fixes:
   - Twitch and YouTube play on Linux. A fresh Ubuntu or Fedora lacks the decoder their video needs, so it didn't play or stayed black; the package now brings it in.
   - Twitch keeps a mute before Play. A mute set on the bar before Play was lost, and the video played with sound.
+  - Held menus shade the hovered item. With the speed button pressed and held, the speed under the pointer wasn't shaded as a hovered one is.
   - YouTube shows captions once. With CC on, YouTube's own captions in its player are turned off, as ours show under it.
   - Every Twitch channel shows its picture. A VOD you add from a channel whose name differs from its login, such as a Korean one, gets the streamer's picture too.
   - A Mac drop keeps your files. A file you saved under the clip's name while the clip was being made is no longer deleted or written over; VODscribe says a file of that name is already there.
   - Progress keeps moving during clip drags. On Linux, transcriptions, downloads and clips no longer freeze while an app waits for a clip you dragged out.
+  - A clip has one way back. In the editor, a clip of a VOD showed both Back to the VOD and a link to the same VOD; one pill does it now.
   - Clip links to videos click again. In the editor, when a clip's row of links to its videos scrolls sideways, a click on a link's lower half did nothing on some Linux systems.
   - Undo keeps the clip bar's order. A clip pasted in the middle of the clip bar came back last when redone, and so did one deleted from there when undone.
   - Edit timeline frames load while playing. The small frames on an edit's timeline, of videos not yet seen, waited until you paused.

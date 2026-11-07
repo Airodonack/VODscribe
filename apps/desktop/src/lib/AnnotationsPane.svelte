@@ -443,7 +443,7 @@
                             <button
                               type="button"
                               class="chip"
-                              title="{p.label}'s card"
+                              title={p.short === p.label ? undefined : p.label}
                               onclick={(e) =>
                                 showCard(e, {
                                   member,

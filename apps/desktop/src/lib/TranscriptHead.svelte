@@ -186,7 +186,7 @@
               <CastDisc {name} {color} {member} onopen={open} size={20} />
               <span class="who">
                 {#if open}
-                  <button type="button" class="name" title="{name}'s card" onclick={open}>{name}</button>
+                  <button type="button" class="name" onclick={open}>{name}</button>
                 {:else}
                   <strong>{name}</strong>
                 {/if}

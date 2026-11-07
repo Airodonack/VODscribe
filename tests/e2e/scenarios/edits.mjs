@@ -53,7 +53,7 @@ export default {
     "edit-clip-bar":
       "An edit is open (its name at the top, with Render): under its player and timeline, on one row, a dashed link to the VOD its pieces come from, then one clip pill showing its length, a few words of its line, and small play, folder and × icons, none of it cut off.",
     "edit-clip-open":
-      "A clip is open in the editor: at the top, the edit's name in grey, a › and the clip's name, on one line, with no Render button; under its player and timeline, on one row, a grey pill with a dashed border reading ‹ Back to the edit's name · clip bar, then a dashed link to the VOD it comes from.",
+      "A clip is open in the editor: at the top, the edit's name in grey, a › and the clip's name, on one line, with no Render button; under its player and timeline, on one row, two tinted pills with dashed coloured borders: ‹ Back to the edit's name · clip bar, then a link to the VOD it comes from.",
     "edit-view":
       "An edit named Landing edit is open: its name at the top with a film icon, Render (E) and a bin at the right; a black picture with a caption, one piece in the lane over its waveform, a bar with Split, Remove, Clip and Piece 1 of 1, a dashed link eagle-has-landed · 1 piece, and a one-line transcript; its library row, Edit · 1 piece · 0:02, is the selected one.",
     "edit-chat":

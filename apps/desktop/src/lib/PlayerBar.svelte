@@ -220,6 +220,7 @@
           <button
             data-speed={s}
             class:current={s === rate}
+            class:pointed={speedHold.pointed?.dataset.speed === String(s)}
             aria-pressed={s === rate}
             onclick={() => {
               player?.rate?.set(s);
@@ -392,7 +393,8 @@
     grid-column: 2;
   }
 
-  .speeds button:hover {
+  .speeds button:hover,
+  .speeds button.pointed {
     background: var(--surface-2);
   }
 

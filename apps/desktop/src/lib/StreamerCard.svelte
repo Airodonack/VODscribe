@@ -61,7 +61,7 @@
   bind:open={openCard.open}
   anchor={openCard.anchor}
   at={openCard.at}
-  label={view ? `${view.name}'s card` : "Streamer card"}
+  label={view?.name ?? "Streamer"}
   width={260}
 >
   {#if view && of}

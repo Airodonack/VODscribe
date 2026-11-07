@@ -459,8 +459,8 @@ export default {
 
     // The cast, from the transcript's header: each with the disc their lines
     // have (its initial, in their colour), then who they are, their name
-    // opening their card; at 0:35, Marlowe's leads first to Vance's own VOD
-    // 15 s in.
+    // opening their card, with no tooltip; at 0:35, Marlowe's leads first to
+    // Vance's own VOD 15 s in.
     await app.click(".cast-toggle");
     const cast = await until(
       "the cast list",
@@ -470,7 +470,8 @@ export default {
             const disc = li.querySelector(".avatar");
             return (disc ? disc.textContent.trim() + " " + getComputedStyle(disc).backgroundColor + ": " : "no disc: ") +
               li.querySelector(".who").textContent.replace(/\\s+/g, " ").trim() +
-              (li.querySelector(".who button.name") ? " (opens)" : "");
+              (li.querySelector(".who button.name") ? " (opens)" : "") +
+              (li.querySelector("[title]") ? " (with a tooltip: " + li.querySelector("[title]").title + ")" : "");
           }) : false`),
       10_000,
     ).catch(() => []);
@@ -739,7 +740,8 @@ export default {
     // Opened, the first highlight names who's in it on chips under its why,
     // outside the row's button: each by the cast's own name for them
     // (Marlowe, not "Marlowe (Vance)" nor the file's "Mar"), Jules as
-    // written. One in the cast opens their card, reached from the keyboard;
+    // written; the tooltip has the whole name only where the chip's is
+    // shorter. One in the cast opens their card, reached from the keyboard;
     // Jules, not in it, opens none. No chip's name is cut short. A click on a
     // chip leaves the row open and the player where it was, and Marlowe's
     // card leads first to Vance's own VOD at the highlight's start, 5 s in.
@@ -763,8 +765,8 @@ export default {
       10_000,
     ).catch(() => []);
     const peopleWant = [
-      { tag: "BUTTON", text: "Marlowe", title: "Marlowe (Vance)'s card", focusable: true },
-      { tag: "BUTTON", text: "Ada", title: "Ada's card", focusable: true },
+      { tag: "BUTTON", text: "Marlowe", title: "Marlowe (Vance)", focusable: true },
+      { tag: "BUTTON", text: "Ada", title: "", focusable: true },
       { tag: "SPAN", text: "Jules", title: "", focusable: false },
     ];
     for (const [i, w] of peopleWant.entries()) {
@@ -1345,11 +1347,14 @@ export default {
        return { view: Math.round(scroller.getBoundingClientRect().bottom - viewTop()),
          headings: Math.round(speaker.bottom - chapter.top), line: Math.round(box('#transcript .line > button.row[data-time="0.5"]').height) };`,
     );
-    if (room.view < room.headings + room.line)
+    if (room.view < room.headings + room.line) {
       ctx.log(
         `the transcript's view is ${room.view} px under its header, short of its headings' ${room.headings} px and a line's ${room.line}: the pinned headings not tried`,
       );
-    else {
+      // The pictures' host stopped here too: left answering, it would answer
+      // the scenarios after this one, which expect nobody to.
+      picturesBack.stop();
+    } else {
       // Marlowe's 13th line at the top: his heading is above, and pinned.
       await app.js(`${PINS} await put('#transcript .line button.row[data-time="6"]', 0);`);
       const atRest = await app.js(`${PINS} return pins();`);

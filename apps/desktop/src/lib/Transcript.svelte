@@ -1227,7 +1227,6 @@
         class="speaker channel"
         class:unknown={!color}
         style:color
-        title="{label}'s card"
         tabindex={pinnedCopy ? -1 : undefined}
         onclick={open}>{label}</button
       >

@@ -11,9 +11,11 @@
 // second's name neither, so Marlowe's card is found through the index by
 // their Twitch account, and it has no NoPixel section. Each card shows only
 // what's there: no empty heading or list, nothing drawn with no height, the
-// same gap between what is there. With the file host not answering
-// (offline), Pell's card is the name the VOD gives, "Pell", and once it
-// answers, the card's own, "Pell Harrow". Escape closes a card. A VOD
+// same gap between what is there. A card is named for the person, and the
+// names and pictures that open one have no tooltip: the name is there to
+// read. With the file host not answering (offline), Pell's card is the
+// name the VOD gives, "Pell", and once it answers, the card's own, "Pell
+// Harrow". Escape closes a card. A VOD
 // added from YouTube (the yt-dlp stand-in's, lib/siteVod.mjs) and one from
 // Dailymotion, with no annotations: the channel's card links to the
 // channel's page as the site named it, with no picture. And a YouTube VOD
@@ -249,7 +251,24 @@ export default {
     // The VOD's channel over the player: Vance's card, NoPixel and all.
     await app.click(".info .meta .channel");
     check("the channel's card", await settledCard("the channel"), vance);
+    // Named as the person is, not as our "card": the dialog, and no tooltip
+    // on a name or picture, the name being there to read.
+    const dialog = await app.js(
+      `return document.querySelector('[role="dialog"]:has(.card)')?.getAttribute("aria-label")`,
+    );
+    if (dialog !== "Vance") wrong.push(`the card's dialog is named "${dialog}"`);
     await close();
+    const openers = await app.js(
+      `return [...document.querySelectorAll(".info .meta .channel, #transcript .group-head .speaker, #transcript .group-head .avatar")]
+         .map((el) => ({
+           text: [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim(),
+           title: el.getAttribute("title"),
+         }))`,
+    );
+    const titled = openers.filter((o) => o.title !== null);
+    if (!openers.length || titled.length) wrong.push(`names and pictures with tooltips: ${JSON.stringify(titled)}`);
+    const channel = openers[0];
+    if (channel?.text !== named.channel) wrong.push(`the channel over the player reads "${channel?.text}"`);
 
     // The VOD whose annotations name no card: Marlowe's by their account, through
     // the index, and no NoPixel section, the VOD naming no context.

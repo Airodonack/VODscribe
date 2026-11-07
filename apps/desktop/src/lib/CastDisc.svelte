@@ -96,7 +96,6 @@
     class:waiting={pictureOnly && !loaded}
     style:background={color}
     style:--size="{size}px"
-    title="{name}'s card"
     tabindex="-1"
     aria-hidden="true"
     onclick={onopen}>{@render face()}</button

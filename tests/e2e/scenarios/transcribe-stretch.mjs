@@ -9,7 +9,8 @@
 // captions, and a search with no match says what it didn't look through.
 // The bar has no Transcribe button: the captions button, right-clicked,
 // opens the Transcribe menu, whose first entry reads Transcribe VOD, then
-// Transcribe selection with a stretch selected, then Transcribe the rest;
+// Transcribe selection with a stretch selected (by I and O, or picked
+// between two cuts), then Transcribe the rest;
 // hovered, an entry lights up what it would do, the first and one of how
 // much from the playhead alike; held, the button opens the menu too.
 // Picked, the first entry does the rest, and once all is transcribed it
@@ -47,6 +48,8 @@ export default {
       "A ten-minute file, not transcribed: a small menu is open above the greyed captions (CC) button under the timeline, its first entry Transcribe VOD; the whole timeline, from 0:00 to the end, is outlined and lit; there is no Transcribe button in the bar; the transcript says Not transcribed yet. with Transcribe the whole VOD and Transcribe from here links.",
     "transcribe-lit-the-selection":
       "The same file with a short stretch picked near the start of the timeline: a small menu is open above the captions (CC) button, its first entry Transcribe selection; only that stretch is outlined and lit on the timeline.",
+    "transcribe-lit-the-stretch-picked":
+      "The same file with two cuts near the start of the timeline and the short stretch between them picked: a small menu is open above the captions (CC) button, its first entry Transcribe selection; only that stretch is outlined and lit on the timeline.",
     "transcribe-lit-all-of-it-again":
       "The same file, now transcribed (a list of lines from 0:00 Swippin', uh …): a small menu is open above the captions (CC) button, its first entry Transcribe again…; the whole timeline, from 0:00 to the end, is outlined and lit again.",
   },
@@ -258,6 +261,44 @@ export default {
       },
       10_000,
     );
+    // A stretch picked between two cuts (B at 3 s and 8 s, then a Ctrl-click
+    // between them, ⌘ on a Mac) is a selection too; the cuts then go again.
+    const cutAt = async (s) => {
+      await app.toStart();
+      for (let i = 0; i < s; i++) await app.key("ArrowRight", { shift: true });
+      await until(`the player at ${s} s`, async () => (await app.shownTime()) === s, 10_000);
+      await app.key("b");
+    };
+    const cutCount = async () => (await app.invoke("list_marks", { vodId: vod.id })).length;
+    for (const s of [3, 8]) {
+      await cutAt(s);
+      await until("the cut, selected", () => app.js(`return !!document.querySelector(".cut.selected")`), 10_000);
+      await app.key("Escape");
+      await until("the cut let go", () => app.js(`return !document.querySelector(".cut.selected")`), 10_000);
+    }
+    await until("two cuts", async () => (await cutCount()) === 2, 10_000);
+    await app.js(
+      `const mac = /Mac/.test(navigator.platform);
+       const bar = document.querySelector(".scrubber");
+       const box = bar.getBoundingClientRect();
+       const x = box.left + ((5.5 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+       const at = { bubbles: true, cancelable: true, clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: 1, isPrimary: true, pointerId: 1, ctrlKey: !mac, metaKey: mac };
+       bar.dispatchEvent(new PointerEvent("pointerdown", at));
+       window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`,
+    );
+    await until("the stretch picked", () => app.js(`return !!document.querySelector(".scrubber .chosen")`), 10_000);
+    await litWhileHovered("the stretch picked", "Transcribe selection", [[3, 8]]);
+    await until(
+      "the stretch let go",
+      async () => {
+        if (!(await app.js(`return !!document.querySelector(".scrubber .chosen")`))) return true;
+        await app.key("Escape");
+        return false;
+      },
+      10_000,
+    );
+    for (const s of [8, 3]) await cutAt(s);
+    await until("the cuts gone", async () => (await cutCount()) === 0, 10_000);
     await app.js(
       `document.querySelector(arguments[0]).dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 1, isPrimary: true }))`,
       CAPTIONS,
@@ -274,7 +315,7 @@ export default {
     if (stillNone.length)
       throw new Error(`the menu, its entries hovered or held, asked for ${JSON.stringify(stillNone)}`);
     ctx.log(
-      `the captions button's menu: Transcribe VOD, 0-${length} s lit; 5 min from ${start} s lit; Transcribe selection, ${selected.join("-")} s lit; held, "${held}", let go elsewhere, closed`,
+      `the captions button's menu: Transcribe VOD, 0-${length} s lit; 5 min from ${start} s lit; Transcribe selection, ${selected.join("-")} s lit, and for the stretch picked between cuts, 3-8 s; held, "${held}", let go elsewhere, closed`,
     );
 
     /** Asks for `start`..`end` and waits till it's done: no request left. */

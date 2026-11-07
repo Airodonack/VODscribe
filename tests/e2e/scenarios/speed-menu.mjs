@@ -4,6 +4,8 @@
 // speed. Held and let go away from the menu, it closes with the speed as it
 // was. The captions button right-clicked, with a stretch selected, opens the
 // Transcribe menu, Transcribe selection first, and keeps the selection.
+// Held, either menu shades the item under the pointer as a hovered one, and
+// the Transcribe menu's lights up on the timeline what it would do.
 // Linux (X11) only, so far.
 
 import { until } from "../lib/app.mjs";
@@ -48,6 +50,15 @@ export default {
       await os.gesture(steps);
       await until("the release seen", () => app.js(`return window.__released.includes(arguments[0])`, button), 5_000);
     };
+    /** The background of `over`, the menu item pointed at, and of `beside`, another of `menu`'s. */
+    const pointedShade = (menu, over, beside) =>
+      app.js(
+        `const [a, b] = [arguments[1], arguments[2]].map((s) => document.querySelector(arguments[0] + " " + s));
+         return { over: getComputedStyle(a).backgroundColor, beside: getComputedStyle(b).backgroundColor };`,
+        menu,
+        over,
+        beside,
+      );
     await speedIs("1×");
     const at = await os.rectOf(app, BUTTON);
     const [x, y] = [at.x + Math.round(at.w / 2), at.y + Math.round(at.h / 2)];
@@ -78,12 +89,16 @@ export default {
       const side = menu.y + menu.h <= at.y ? "above" : menu.y >= at.y + at.h ? "below" : null;
       if (!side) throw new Error(`the menu (${JSON.stringify(menu)}) covers the button (${JSON.stringify(at)})`);
       ctx.log(`the menu opened ${side} the button`);
+      // Over 1.5×, still held: lit as a hovered item is, 2× beside it not.
       const item = await os.rectOf(app, `${MENU} [data-speed="1.5"]`);
       await os.gesture([
         ["move", item.x + Math.round(item.w / 2), item.y + Math.round(item.h / 2)],
         ["wait", 150],
-        ["up"],
       ]);
+      const shade = await pointedShade(MENU, '[data-speed="1.5"]', '[data-speed="2"]');
+      if (shade.over === shade.beside)
+        throw new Error(`held over 1.5×, it's shaded as 2× beside it is: ${JSON.stringify(shade)}`);
+      await os.gesture([["up"]]);
     } finally {
       // Never leave the button held for the scenarios after.
       await os.gesture([["up"]]).catch(() => {});
@@ -174,5 +189,40 @@ export default {
     ctx.log(
       `the captions button right-clicked: the Transcribe menu opened (${choices.join(", ")}), "${lead}" first; Escape closed it`,
     );
+
+    // Held, the captions button opens the menu too; over Transcribe
+    // selection, still held, the entry is shaded as a hovered one and the
+    // selection lights up on the timeline; let go over the time, away from
+    // the menu, it closes with nothing asked.
+    const lit = () => app.js(`return document.querySelectorAll(".scrubber .lit:not(.used):not(.removing)").length`);
+    await os.gesture([
+      ["down", tx, ty],
+      ["wait", 700],
+    ]);
+    try {
+      await until("the Transcribe menu, held open", fromOpen, 5_000);
+      const entry = await os.rectOf(app, `${FROM} [data-choice="lead"]`);
+      await os.gesture([
+        ["move", entry.x + Math.round(entry.w / 2), entry.y + Math.round(entry.h / 2)],
+        ["wait", 150],
+      ]);
+      const shade = await pointedShade(FROM, '[data-choice="lead"]', '[data-choice="end"]');
+      const litNow = await lit();
+      if (shade.over === shade.beside || litNow !== 1)
+        throw new Error(
+          `held over Transcribe selection, it's shaded ${JSON.stringify(shade)}, ${litNow} stretches lit on the timeline`,
+        );
+      const away = await os.rectOf(app, "button.time");
+      await os.gesture([
+        ["move", away.x + Math.round(away.w / 2), away.y + Math.round(away.h / 2)],
+        ["wait", 150],
+      ]);
+    } finally {
+      await os.gesture([["up"]]).catch(() => {});
+    }
+    await until("the Transcribe menu closed", async () => !(await fromOpen()), 5_000);
+    const asked = (await app.invoke("transcript_stretches", { vodId: vod.id })).filter((s) => s.status !== "done");
+    if (asked.length) throw new Error(`held and let go away from the menu, it asked for ${JSON.stringify(asked)}`);
+    ctx.log("the captions button held: Transcribe selection shaded and lit while pointed at; let go away, closed");
   },
 };

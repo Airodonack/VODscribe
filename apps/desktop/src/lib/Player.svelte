@@ -407,9 +407,10 @@
 
   // Transcribe: T, or the first entry of the captions button's menu, which
   // that button right-clicked, or pressed and held, opens (hold.svelte.ts):
-  // the selection; else the whole VOD, or what of it isn't transcribed yet
-  // (stretches.ts `transcribeRest`), or all of it again once all of it is,
-  // after asking (as the library row's Transcribe again: it replaces it all).
+  // the selection, or the stretches picked between cuts; else the whole VOD,
+  // or what of it isn't transcribed yet (stretches.ts `transcribeRest`), or
+  // all of it again once all of it is, after asking (as the library row's
+  // Transcribe again: it replaces it all).
   // The menu's other entries are how much from the playhead
   // (TranscribeFrom.svelte). Hovering an entry lights up on the timeline what
   // it would transcribe, as hovering Clip does. The bar had a Transcribe
@@ -447,13 +448,21 @@
       (e) => console.error("stretches", e),
     );
   }
-  const transcribes = $derived.by(() => {
+  // What's selected to transcribe: the selection (I and O), else the
+  // stretches picked between cuts (bulk.ts), each asked for in turn.
+  const chosenRanges = $derived.by(() => {
     if (cuts.selection) return [cuts.selection];
+    return chosenSegments().map((s) => ({ start: s.start, end: s.end }));
+  });
+  const transcribes = $derived.by(() => {
+    if (chosenRanges.length) return chosenRanges;
     if (vod.transcribed !== "all") return untranscribed;
     return duration ? [{ start: 0, end: duration }] : [];
   });
+  // The entry under the pointer while the button's held: lit as one hovered is.
+  const heldOver = $derived(transcribeHold.pointed?.dataset.choice ?? null);
   const transcribeLit = $derived.by(() => {
-    const key = transcribeHold.open ? transcribeHover : null;
+    const key = transcribeHold.open ? (heldOver ?? transcribeHover) : null;
     if (key === null) return [];
     if (key === "lead") return transcribes;
     const choice = transcribeChoices(transcribeFrom, vod.duration).find((c) => c.key === key);
@@ -471,7 +480,7 @@
     return transcribeLit;
   });
   const transcribeLead = $derived(
-    cuts.selection
+    chosenRanges.length
       ? {
           label: "Transcribe selection",
           title: "Transcribe the selection, replacing any lines there",
@@ -484,9 +493,10 @@
   );
   async function transcribe() {
     transcribeError = null;
-    const picked = cuts.selection;
+    // As it is now: picking may change while the requests go.
+    const ranges = chosenRanges;
     try {
-      if (picked) await api.transcribeStretch(vod.id, picked.start, picked.end);
+      if (ranges.length) for (const r of ranges) await api.transcribeStretch(vod.id, r.start, r.end);
       // The rest: of a VOD with none transcribed, all of it, unless that's
       // asked for already (pressed again while it waits).
       else if (vod.transcribed !== "all") await transcribeRest(vod, api);
@@ -651,7 +661,6 @@
         {#if vod.channel}<span class="sep">·</span><button
             type="button"
             class="channel"
-            title="{vod.channel}'s card"
             onclick={(e) => showCard(e, channelCard(vod))}><ChannelDisc {vod} size={16} />{vod.channel}</button
           >{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
@@ -775,6 +784,7 @@
     from={transcribeFrom}
     above
     lead={{ ...transcribeLead, key: labelOf("transcribe.here"), run: transcribe }}
+    pointed={heldOver}
     onhover={(key) => (transcribeHover = key)}
     onerror={(e) => (transcribeError = e)}
   />

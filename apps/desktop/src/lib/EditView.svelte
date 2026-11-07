@@ -1046,7 +1046,8 @@
 {/snippet}
 
 {#snippet sourceLinks()}
-  {#each sources as source (source.vodId)}
+  <!-- A clip of a VOD's clip bar has its way back to that VOD (editBelow) in place of a link to it. -->
+  {#each sources.filter((s) => !(bar?.kind === "vod" && s.vodId === bar.id)) as source (source.vodId)}
     <button
       class="source"
       onclick={() => {
@@ -1075,7 +1076,7 @@
   {#if snippet}
     <div class="sources" aria-label="Where it comes from">
       {#if bar}
-        <button class="back" onclick={backToBar} title="Back to “{bar.title}”, this clip picked on its clip bar">
+        <button class="source back" onclick={backToBar} title="Back to “{bar.title}”, this clip picked on its clip bar">
           <span class="arrow" aria-hidden="true">‹</span>
           <span class="name">Back to {bar.title}</span>
           <span class="what muted">· clip bar</span>
@@ -1298,23 +1299,11 @@
     border-style: solid;
   }
 
-  /* Back to the clip bar a clip open here is on: grey as a clip's pill
-     (ClipStrip.svelte's .chip), dashed as a control rather than a link. */
+  /* Back to the clip bar a clip open here is on: a link back as the others
+     are, and the only one to its VOD, the clip picked there. */
   .back {
-    flex: none;
-    display: flex;
-    align-items: center;
     gap: 4px;
     max-width: 320px;
-    height: 28px;
-    padding: 0 10px;
-    border: 1px dashed var(--border);
-    border-radius: 14px;
-    background: var(--surface-2);
-    color: var(--text);
-    font-size: 12px;
-    overflow: hidden;
-    cursor: pointer;
   }
 
   .back .arrow {
@@ -1332,10 +1321,6 @@
 
   .back .what {
     flex: none;
-  }
-
-  .back:hover {
-    border-style: solid;
   }
 
   .make :global(svg) {

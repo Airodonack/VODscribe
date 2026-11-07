@@ -21,6 +21,7 @@
     from,
     above = false,
     lead,
+    pointed = null,
     onhover,
     onerror,
   }: {
@@ -34,6 +35,8 @@
     above?: boolean;
     /** An entry before the choices, its key shown (the player bar's: the selection, or the VOD). */
     lead?: { label: string; title: string; key?: string; run: () => void };
+    /** The entry under the pointer while the button is held (hold.svelte.ts `pointed`), shaded as hovered. */
+    pointed?: string | null;
     /** The entry pointed at: "lead", a choice's key, or null for none. */
     onhover?: (key: string | null) => void;
     /** The request was refused (the VOD gone, say): why. */
@@ -73,6 +76,7 @@
     <div class="choices lead">
       <button
         data-choice="lead"
+        class:pointed={pointed === "lead"}
         title={lead.title}
         onclick={() => {
           open = false;
@@ -91,6 +95,7 @@
       <button
         data-choice={choice.key}
         class:current={choice.key === last}
+        class:pointed={pointed === choice.key}
         onclick={() => pick(choice)}
         onmouseenter={() => onhover?.(choice.key)}
         onmouseleave={() => onhover?.(null)}
@@ -132,7 +137,8 @@
     grid-column: 2;
   }
 
-  .choices button:hover {
+  .choices button:hover,
+  .choices button.pointed {
     background: var(--surface-2);
   }
 
