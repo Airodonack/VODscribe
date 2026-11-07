@@ -1,14 +1,14 @@
 #!/bin/bash
 # The desktop app on Servo: `tauri dev` or `tauri build` with the `servo`
-# feature instead of the system web view, inside Servo's Nix shell.
+# feature instead of the system web view, inside a Nix shell with Servo's
+# build environment.
 #
 #   [VODSCRIBE_SERVO_DIR=<folder>] pnpm tauri:servo dev|build [tauri args]
 #
 # Cargo takes the Servo runtime and the Servo fork from GitHub, at the
-# revisions Cargo.lock pins, and the Nix shell comes from that Servo
-# revision: its shell.nix and the files it reads, fetched once into
-# $XDG_CACHE_HOME/vodscribe/servo-shell/<rev>. The app then runs on the
-# system's GStreamer.
+# revisions Cargo.lock pins, and the shell is this repository's flake
+# (flake.nix), which the script enters unless it runs in it already. The app
+# then runs on the flake's GStreamer 1.28.8 with the patched mselib.
 #
 # VODSCRIBE_SERVO_DIR names local checkouts to build from instead: servo/ (the
 # fork, whose shell.nix is used), tauri-servo/tauri-runtime-servo/ and
@@ -26,6 +26,7 @@ case $cmd in
   *) echo "usage: pnpm tauri:servo dev|build [tauri args]" >&2; exit 2 ;;
 esac
 shift
+args0=("$cmd" "$@")
 root=$(cd "$(dirname "$0")/.." && pwd)
 desktop=$root/apps/desktop
 export NIX_PATH=nixpkgs=flake:nixpkgs
@@ -56,19 +57,8 @@ if [ -n "${VODSCRIBE_SERVO_DIR:-}" ]; then
   lock_copy=$(mktemp)
   cp "$root/Cargo.lock" "$lock_copy"
   trap 'cp "$lock_copy" "$root/Cargo.lock"; rm -f "$lock_copy"' EXIT
-else
-  rev=$(sed -n 's|^source = "git+https://github.com/Airodonack/servo?rev=[0-9a-f]*#\([0-9a-f]*\)"$|\1|p' "$root/Cargo.lock" | head -n 1)
-  [ -n "$rev" ] || { echo "no Airodonack/servo revision in Cargo.lock" >&2; exit 1; }
-  shell_dir=${XDG_CACHE_HOME:-$HOME/.cache}/vodscribe/servo-shell/$rev
-  if [ ! -f "$shell_dir/shell.nix" ]; then
-    mkdir -p "$(dirname "$shell_dir")"
-    fetch=$(mktemp -d "$shell_dir.XXXXXX")
-    git -C "$fetch" init -q
-    git -C "$fetch" sparse-checkout set --no-cone /shell.nix /rust-toolchain.toml /support/crown/
-    git -C "$fetch" fetch -q --depth 1 --filter=blob:none https://github.com/Airodonack/servo "$rev"
-    git -C "$fetch" checkout -q FETCH_HEAD
-    mv "$fetch" "$shell_dir"
-  fi
+elif [ "${VODSCRIBE_SERVO_SHELL:-}" != flake ]; then
+  exec nix --extra-experimental-features "nix-command flakes" develop "$root" -c bash "$0" "${args0[@]}"
 fi
 
 # Inside the shell: Servo's build environment as its mach sets it (the
@@ -77,10 +67,7 @@ fi
 # release profile the Servo runtime builds with, then GStreamer and X11 for
 # the app that `tauri dev` starts.
 args=$(printf '%q ' "$cmd" --features servo "${extra[@]}" "$@" -- "${cargo_args[@]}")
-# Started from the folder of Servo's shell.nix, which keeps its Rust
-# toolchains there (.rustup), not in this repository.
-cd "$shell_dir"
-nix-shell shell.nix --run "
+run="
   set -e
   export PKG_CONFIG_PATH_FOR_TARGET=\${PKG_CONFIG_PATH_FOR_TARGET:-}:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig
   export CC=clang CXX=clang++ SERVO_STYLE_THREAD_STACK_SIZE_KB=8192 RUSTFLAGS=
@@ -92,3 +79,11 @@ nix-shell shell.nix --run "
   unset WAYLAND_DISPLAY
   cd $(printf '%q' "$desktop")
   pnpm tauri $args"
+if [ -n "${VODSCRIBE_SERVO_DIR:-}" ]; then
+  # Started from the folder of Servo's shell.nix, which keeps its Rust
+  # toolchains there (.rustup), not in this repository.
+  cd "$shell_dir"
+  nix-shell shell.nix --run "$run"
+else
+  bash -c "$run"
+fi
