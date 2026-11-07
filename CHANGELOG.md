@@ -21,7 +21,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Notes all say Don't ask again. The note before downloading and the Resolve note match their Ask switches in Settings.
 - Clip settings have their own section. Settings › Encoding has the clip format and quality; Storage keeps the downloaded and fetched videos.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
-- Support answers common problems. The support page answers why Twitch or YouTube may not play on Linux, and how DaVinci Resolve on Linux takes clips.
+- Support answers common problems. The support page says how to search, why Twitch or YouTube may not play on Linux, and how DaVinci Resolve on Linux takes clips.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
 - Fixes:
   - Twitch and YouTube play on Linux. A fresh Ubuntu or Fedora lacks the decoder their video needs, so it didn't play or stayed black; the package now brings it in.

@@ -13,11 +13,15 @@
   const FAQ = [
     {
       q: "Twitch or YouTube don't play on Linux",
-      a: "They need a video decoder that some systems leave out, and VODscribe's package brings it in. If it was skipped: on Ubuntu or Debian, install <code>gstreamer1.0-libav</code>. On Fedora, VODscribe needs <code>openh264</code> from Cisco's repository; if the install says nothing provides it, turn that repository on with <code>sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1</code> and install again.",
+      a: "<p>They need a video decoder that some systems leave out, and VODscribe's package brings it in. If it was skipped: on Ubuntu or Debian, install <code>gstreamer1.0-libav</code>. On Fedora, VODscribe needs <code>openh264</code> from Cisco's repository; if the install says nothing provides it, turn that repository on with <code>sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1</code> and install again.</p>",
     },
     {
       q: "DaVinci Resolve on Linux won't take my clips",
-      a: "Resolve on Linux can't open MP4, the format VODscribe makes clips in by default. Drop one on Resolve and VODscribe offers to switch to MOV; or pick MOV DNxHR in Settings › Encoding. Then drag the clip again.",
+      a: "<p>Resolve on Linux can't open MP4, the format VODscribe makes clips in by default. Drop one on Resolve and VODscribe offers to switch to MOV; or pick MOV DNxHR in Settings › Encoding. Then drag the clip again.</p>",
+    },
+    {
+      q: "How do I search?",
+      a: '<p>Type what was said. The search box also takes:</p><div class="table"><table><tbody><tr><td><code>big win</code></td><td>those words in order, close together</td></tr><tr><td><code>&quot;big win&quot;</code></td><td>exactly that phrase, whole words only</td></tr><tr><td><code>-word</code> or <code>-&quot;a phrase&quot;</code></td><td>leaves out matches with it nearby</td></tr><tr><td><code>a OR b</code></td><td>either one</td></tr><tr><td><code>a AND b</code></td><td>both; AND binds tighter than OR</td></tr><tr><td><code>(a OR b) c</code></td><td>brackets group</td></tr><tr><td><code>from:name</code></td><td>said or written by them; from:a,b for either</td></tr><tr><td><code>in:chat</code> or <code>in:audio</code></td><td>only chat, or only what&#39;s said</td></tr><tr><td><code>within:20s</code></td><td>how close a match&#39;s words must be: 2m, 1h; at most an hour</td></tr><tr><td><code>after:1:20:00</code> or <code>before:2h</code></td><td>only that part of the VOD</td></tr></tbody></table></div><p>Filters apply to the whole search: <code>from:x "a" OR "b"</code> is a or b, both from x. Who, where and how close can also be picked beside the search box.</p>',
     },
   ];
 </script>
@@ -37,7 +41,7 @@
   {#each FAQ as item (item.q)}
     <details>
       <summary>{item.q}</summary>
-      <p class="muted">{@html item.a}</p>
+      <div class="muted answer">{@html item.a}</div>
     </details>
   {/each}
 
@@ -72,7 +76,25 @@
     font-weight: 600;
   }
 
-  details p {
+  .answer :global(p) {
     margin: 8px 0 0;
+  }
+
+  .answer :global(.table) {
+    margin-top: 8px;
+    overflow-x: auto;
+  }
+
+  .answer :global(table) {
+    border-collapse: collapse;
+  }
+
+  .answer :global(td) {
+    padding: 4px 12px 4px 0;
+    vertical-align: top;
+  }
+
+  .answer :global(td:first-child) {
+    white-space: nowrap;
   }
 </style>
