@@ -3,10 +3,10 @@
 //!
 //! Call these from your `NSDraggingDestination`, on the main thread: [`paths`]
 //! and [`items`] (or [`offer`]) in `draggingEntered:` to decide whether to
-//! take the drag, again in `performDragOperation:`, then [`fetch`] there with
-//! the items you take. Your view must be registered for
-//! `NSFilePromiseReceiver.readableDraggedTypes` (as well as file URLs) to be
-//! asked about promises at all.
+//! take the drag (with [`promises_preferred`] when it offers both), again in
+//! `performDragOperation:`, then [`fetch`] there with the items you take.
+//! Your view must be registered for `NSFilePromiseReceiver.readableDraggedTypes`
+//! (as well as file URLs) to be asked about promises at all.
 //!
 //! The paths are the pasteboard's file URLs. The items are its
 //! `NSFilePromiseReceiver`s, one each. A promise has no name until it's
@@ -35,6 +35,7 @@ use objc2_foundation::{
     NSString, NSURL,
 };
 
+use crate::choice::{Offered, promises_taken};
 use crate::folder::FolderSink;
 use crate::{Destination, Error, Fetch, Item, Job, Offer, Shared, Sink, To};
 
@@ -46,6 +47,8 @@ const CHUNK: usize = 1 << 20;
 const SUGGESTED_NAME: &str = "com.apple.pasteboard.promised-suggested-file-name";
 /// The type an NSFilePromiseProvider's item carries, one per promise.
 const PROMISE_ITEM: &str = "com.apple.NSFilePromiseItemMetaData";
+/// The pasteboard type a promise's item says its file's type (a UTI) in.
+const PROMISED_TYPE: &str = "com.apple.pasteboard.promised-file-content-type";
 
 /// The files `info` offers as paths (its file URLs), or None if it offers
 /// none. Some and empty is a drag that has file URLs but none to read yet (a
@@ -81,6 +84,40 @@ pub fn items(info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<Item> {
             index,
         })
         .collect()
+}
+
+/// Whether `info`'s promises are the files to take rather than its file
+/// URLs: when it has promises and a file URL is missing beside one, or is
+/// of another type than the promised file, so a stand-in for it (Photos
+/// offers a video as a JPEG of a frame, and a promise of the movie). A file
+/// URL of the promised type is taken as the file: nothing is copied.
+#[allow(deprecated)] // (NSWorkspace's type calls: UTType, their successor, is Swift's and newer.)
+pub fn promises_preferred(info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
+    let Some(items) = info.draggingPasteboard().pasteboardItems() else { return false };
+    let (promise, promised) = (NSString::from_str(PROMISE_ITEM), NSString::from_str(PROMISED_TYPE));
+    // SAFETY: a static AppKit string.
+    let url = unsafe { NSPasteboardTypeFileURL };
+    let workspace = NSWorkspace::sharedWorkspace();
+    // Each item's (file URL's type, whether a promise, the promised type).
+    let read: Vec<_> = items
+        .iter()
+        .map(|item| {
+            let file = item.stringForType(url).and_then(|u| NSURL::URLWithString(&u)?.to_file_path());
+            let file = file.and_then(|f| workspace.typeOfFile_error(&NSString::from_str(f.to_str()?)).ok());
+            let promise = item.types().containsObject(&promise);
+            let promised = item.stringForType(&promised).filter(|_| promise);
+            (file.map(|t| t.to_string()), promise, promised.map(|t| t.to_string()))
+        })
+        .collect();
+    let offered: Vec<_> = read
+        .iter()
+        .map(|(file, promise, promised)| Offered {
+            file: file.as_deref(),
+            promise: *promise,
+            promised: promised.as_deref(),
+        })
+        .collect();
+    promises_taken(&offered, |a, b| workspace.type_conformsToType(&NSString::from_str(a), &NSString::from_str(b)))
 }
 
 /// Both [`paths`] (empty with none) and [`items`].

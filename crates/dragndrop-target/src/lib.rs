@@ -48,13 +48,17 @@
 //! yours), and a [`Fetch`] whose items each end once, through the folder's
 //! callback or the sink's [`Sink::finish`]. A drag may offer both paths and
 //! items, usually the same files twice; the paths are better (nothing to
-//! copy).
+//! copy), unless they stand in for files of another type, as Photos' JPEG of
+//! a video's frame beside its promise of the movie ([`macos`] says which
+//! with `promises_preferred`).
 
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod choice;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod descriptor;
 mod folder;

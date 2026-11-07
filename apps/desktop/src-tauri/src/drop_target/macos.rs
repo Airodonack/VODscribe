@@ -5,12 +5,15 @@
 //! arrives there as no paths, and nothing happens.
 //!
 //! So the class's four dragging methods are hooked, each calling wry's own
-//! for every drag but one: a drag from another app that offers no file URLs
-//! but promises files the target takes. That one is taken here: told to the
-//! target as it goes, and once let go each promise is received through
-//! `dragndrop_target::macos::fetch` into what the target gives for it (the
-//! source writes the file in its own time; the fetches are kept here until
-//! they end). The view is also registered for the promises' types.
+//! for every drag but one: a drag from another app that promises files the
+//! target takes, with no file URLs or with file URLs that stand in for the
+//! promised files (Photos offers a video as a JPEG of a frame beside its
+//! promise of the movie, and wry would give the page the JPEG). That one is
+//! taken here: told to the target as it goes, and once let go each promise
+//! is received through `dragndrop_target::macos::fetch` into what the target
+//! gives for it (the source writes the file in its own time; the fetches are
+//! kept here until they end). The view is also registered for the promises'
+//! types.
 //!
 //! Hooked, not subclassed: the class is wry's, made when the window is, and
 //! its methods are swapped once for ours, which keep wry's to call. Other
@@ -22,7 +25,7 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
-use dragndrop_target::macos::{fetch, formats, items, paths};
+use dragndrop_target::macos::{fetch, formats, items, paths, promises_preferred};
 use dragndrop_target::{Fetch, Item};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Method, ProtocolObject, Sel};
@@ -150,11 +153,15 @@ impl Taking {
     }
 
     /// The promises of `info` the target takes, if it's one to take here:
-    /// from another app, with no file URLs.
+    /// from another app, with promises better than its file URLs (none, or
+    /// stand-ins of another type: Photos' JPEG of a video's frame).
     fn promises(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> Option<Vec<Item>> {
         (self.trace)(&format!("a drag over the window offers {}", formats(info).join(", ")));
-        if info.draggingSource().is_some() || paths(info).is_some_and(|p| !p.is_empty()) {
+        if info.draggingSource().is_some() || !promises_preferred(info) {
             return None;
+        }
+        if paths(info).is_some_and(|p| !p.is_empty()) {
+            (self.trace)("its file URLs are of other types than its promises: taking the promises");
         }
         let taken: Vec<Item> = items(info).into_iter().filter(|f| self.target.takes(f.name())).collect();
         if taken.is_empty() { None } else { Some(taken) }
