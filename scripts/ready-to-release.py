@@ -35,7 +35,8 @@ read against it. Either way it names the scenarios tests/e2e/durations.json
 has no time for yet, for the pre-release round to refresh.
 
 Once the tag's run has published, main fast-forwards to the version commit,
-the site branch moves to it, and main goes on as the next version.
+the site branch moves to it, main goes on as the next version, and the
+release branches are deleted.
 """
 
 import json
@@ -211,6 +212,13 @@ def git_problems(root: Path, version: str) -> list[str]:
     return problems
 
 
+def release_branches(version: str) -> list[str]:
+    """`version`'s release branches on origin: release/X.Y.Z and each
+    release/X.Y.Z-N cut after it, the one being released among them."""
+    heads = run("git", "ls-remote", "--heads", "origin", f"release/{version}", f"release/{version}-*")
+    return sorted(line.split("refs/heads/", 1)[1] for line in heads.splitlines()) or [f"release/{version}"]
+
+
 def next_dev(version: str) -> str:
     """The version main carries after `version` is released: 0.4.0 -> 0.4.1+dev."""
     major, minor, patch = (int(n) for n in version.split("+")[0].split(".")[:3])
@@ -299,7 +307,12 @@ Once it's out:
       git push origin HEAD:refs/heads/site
   - main goes on as the next version, in development, in a commit of its
     own: Cargo.toml (and Cargo.lock, by cargo check) to {next_dev(version)}, and
-    an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md""")
+    an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md
+  - the release branches go, local and on the remote: the one released (the
+    tag keeps its commit) and any superseded before it, once main has their
+    fixes
+      git push origin --delete {" ".join(release_branches(version))}
+      git branch -D {" ".join(release_branches(version))}""")
 
 
 if __name__ == "__main__":
