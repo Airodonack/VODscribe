@@ -22,7 +22,8 @@
 //   time stands still.
 //
 // The runner's app data is emptied before each scenario: runners are for
-// testing only. E2E_NETWORK=1 here is passed on (scenarios that reach the sites).
+// testing only. E2E_NETWORK=1 here is passed on (scenarios that reach the sites),
+// and on the Mac, E2E_SCREEN (lib/screen.mjs).
 // run.mjs's options pass through as they are: --shard splits the suite
 // between runners; --parallel is Linux's only, so 1 here (the app's data
 // folder on Windows and macOS can't be moved per worker).
@@ -347,7 +348,8 @@ async function mac() {
       ...shared,
       runner.host,
       `export PATH="$HOME/.local/node/bin:$PATH" E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT='${runner.dir}/out'` +
-        `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}; ` +
+        `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}` +
+        `${process.env.E2E_SCREEN ? ` E2E_SCREEN='${process.env.E2E_SCREEN}'` : ""}; ` +
         `caffeinate -u -t 1; cd '${runner.dir}' && rm -rf out && node tests/e2e/run.mjs '${target}' ${args}`,
     ],
     { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1 << 28 },

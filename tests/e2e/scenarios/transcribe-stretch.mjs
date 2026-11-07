@@ -76,10 +76,16 @@ export default {
 
     // What the page shows: the transcript, its rows for parts not
     // transcribed (whitespace made single), its header, the captions button.
+    // The transcript lays out only the rows within 1000 px of its view
+    // (Transcript.svelte `AROUND`), so the row after 0:00–4:00's 46 lines
+    // isn't there on a short screen until it's scrolled to: the rows are
+    // looked for scrolled to the end, where what's left to transcribe is.
     const panel = () => app.js(`return document.querySelector("#transcript")?.innerText ?? ""`);
     const gapRows = () =>
       app.js(
-        `return [...document.querySelectorAll("#transcript .row.gap")].map((r) => r.textContent.replace(/\\s+/g, " ").trim())`,
+        `const view = document.querySelector("#transcript")?.closest(".body");
+         if (view) view.scrollTop = view.scrollHeight;
+         return [...document.querySelectorAll("#transcript .row.gap")].map((r) => r.textContent.replace(/\\s+/g, " ").trim())`,
       );
     const head = () =>
       app.js(`return document.querySelector(".head .status")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
