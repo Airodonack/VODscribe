@@ -33,7 +33,7 @@
     },
     {
       q: "Can I use the clips in my editor?",
-      a: "Yes. Drag a clip or a picked stretch out of the window into your editor or a folder, or use Show in folder on the clip. Clips are MP4 (H.264 and AAC), which nearly every editor reads; Settings › Storage can make them MOV (DNxHR), which scrubs more smoothly and DaVinci Resolve needs on Linux.",
+      a: "Yes. Drag a clip or a picked stretch out of the window into your editor or a folder, or use Show in folder on the clip. Clips are MP4 (H.264 and AAC), which nearly every editor reads; Settings › Encoding can make them MOV (DNxHR), which scrubs more smoothly and DaVinci Resolve needs on Linux.",
     },
     {
       q: "Does it show the chat?",

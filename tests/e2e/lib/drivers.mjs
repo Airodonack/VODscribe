@@ -351,7 +351,7 @@ export async function webdriver(app) {
 /** How much of the app's stderr the bridge keeps (characters, the last). */
 const STDERR_KEPT = 64 * 1024;
 
-export async function bridge(app) {
+export async function bridge(app, { listenMs = MINUTE } = {}) {
   const port = await freePort();
   const token = randomBytes(24).toString("hex");
   const base = `http://127.0.0.1:${port}`;
@@ -386,9 +386,15 @@ export async function bridge(app) {
       await post("/run", { script: "return 1", wait_ms: 1 });
       return true;
     },
-    MINUTE,
-  ).catch((e) => {
-    throw new Error(exited !== null ? `the app exited (${exited}) before it listened` : e.message);
+    listenMs,
+  ).catch(async (e) => {
+    if (exited !== null) throw new Error(`the app exited (${exited}) before it listened`);
+    // Nothing will close an app that never listened: left running, it holds
+    // the data folder and, the app being single-instance, takes every later
+    // start (each then "exits (0) before it listened").
+    child.kill("SIGKILL");
+    await waitFor("the app killed", async () => exited !== null, 20_000).catch(() => {});
+    throw e;
   });
   const driver = {
     run: async (body, args = [], waitMs = 30_000) => {

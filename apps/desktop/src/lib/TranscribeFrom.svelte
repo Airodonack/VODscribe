@@ -1,8 +1,9 @@
 <script lang="ts">
   // Transcribing a stretch of a VOD from a moment, chosen from a menu: the
-  // player bar's Transcribe right-clicked, or pressed and held (from the
+  // player bar's captions button right-clicked, or pressed and held (from the
   // playhead; let go over a choice, hold.svelte.ts, picks it), and the transcript's "Transcribe
-  // from here" (from a line, or the start of a gap).
+  // from here" (from a line, or the start of a gap). The captions button's
+  // menu has a first entry of its own (`lead`): what T does.
   // The choice is asked for at once (`transcribe_stretch`), after the requests
   // already made, and kept for next time, ticked.
 
@@ -19,6 +20,9 @@
     vod,
     from,
     above = false,
+    lead,
+    pointed = null,
+    onhover,
     onerror,
   }: {
     open: boolean;
@@ -29,6 +33,12 @@
     from: number;
     /** Above the button, as from the player's bar. */
     above?: boolean;
+    /** An entry before the choices, its key shown (the player bar's: the selection, or the VOD). */
+    lead?: { label: string; title: string; key?: string; run: () => void };
+    /** The entry under the pointer while the button is held (hold.svelte.ts `pointed`), shaded as hovered. */
+    pointed?: string | null;
+    /** The entry pointed at: "lead", a choice's key, or null for none. */
+    onhover?: (key: string | null) => void;
     /** The request was refused (the VOD gone, say): why. */
     onerror?: (message: string) => void;
   } = $props();
@@ -54,11 +64,42 @@
   }
 </script>
 
-<Popover bind:open {anchor} label="Transcribe from {formatTime(from)}" width={220} padding={4} {above}>
+<Popover
+  bind:open
+  {anchor}
+  label={lead ? "Transcribe" : `Transcribe from ${formatTime(from)}`}
+  width={220}
+  padding={4}
+  {above}
+>
+  {#if lead}
+    <div class="choices lead">
+      <button
+        data-choice="lead"
+        class:pointed={pointed === "lead"}
+        title={lead.title}
+        onclick={() => {
+          open = false;
+          lead.run();
+        }}
+        onmouseenter={() => onhover?.("lead")}
+        onmouseleave={() => onhover?.(null)}
+      >
+        <span>{lead.label}</span>{#if lead.key}<kbd class="range">{lead.key}</kbd>{/if}
+      </button>
+    </div>
+  {/if}
   <p class="muted head">From {formatTime(from)} for:</p>
   <div class="choices">
     {#each choices as choice (choice.key)}
-      <button data-choice={choice.key} class:current={choice.key === last} onclick={() => pick(choice)}>
+      <button
+        data-choice={choice.key}
+        class:current={choice.key === last}
+        class:pointed={pointed === choice.key}
+        onclick={() => pick(choice)}
+        onmouseenter={() => onhover?.(choice.key)}
+        onmouseleave={() => onhover?.(null)}
+      >
         {#if choice.key === last}<Icon name="check" size={12} />{/if}<span>{choice.label}</span><span
           class="muted range">{describe(choice)}</span
         >
@@ -96,8 +137,19 @@
     grid-column: 2;
   }
 
-  .choices button:hover {
+  .choices button:hover,
+  .choices button.pointed {
     background: var(--surface-2);
+  }
+
+  /* The first entry, set off from the choices from here under it. */
+  .lead {
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .lead kbd {
+    font-size: 10px;
   }
 
   .choices .current {

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chat::{ChatMessage, ChatPart, Kind};
 use crate::fetch::VodInfo;
+use crate::settings::ClipEncoding;
 use crate::stretches::Transcribed;
 use crate::time::{Flicks, Rate};
 use crate::transcript::{Segment, Word};
@@ -80,8 +81,13 @@ pub struct Vod {
     /// with the `thumbnail` command). `None` until fetched; `""` if the VOD has no
     /// usable image, so it isn't tried again.
     pub thumb: Option<String>,
-    /// For a file on this computer, its path. It's read in place, never changed.
+    /// For a file on this computer, its path. It's read in place, never
+    /// changed: the user's own file where it is, or the app's copy of one
+    /// received from another app's drop (`received`).
     pub source_path: Option<String>,
+    /// Its file is the app's own copy, received from another app's drop
+    /// (`Paths::source_received`), deleted with it.
+    pub received: bool,
     /// A video (or audio) kept to play here, from a site other than YouTube,
     /// Twitch and Kick (`Paths::media`); the app plays it like a local file.
     pub media: bool,
@@ -290,6 +296,10 @@ pub struct SearchResults {
 
 pub struct Db {
     pub(crate) conn: Connection,
+    /// Where the library's files are (`Paths`): every path the library
+    /// gives is built from these, a row's id and what it records of the
+    /// file (its extension); none is stored.
+    pub(crate) files: crate::Paths,
 }
 
 const SCHEMA: &str = r#"
@@ -766,6 +776,49 @@ WHERE kind = 'message' AND vod_id IN (SELECT id FROM kept) AND EXISTS (
       AND abs(o.time - kept.start - chat.time) < 0.000001);
 DROP TABLE kept;";
 
+/// Version 37: the channel's login or handle as the site gave it
+/// (`channel_login`, `VodInfo::channel_login`), beside its display name
+/// (`channel`), which can differ. Null for a VOD added before: unknown.
+const MIGRATE_V37: &str = "
+ALTER TABLE vods ADD COLUMN channel_login TEXT;";
+
+/// Version 38: the contexts an import names (`contexts`: annotations.rs
+/// `Annotations::contexts`, as a JSON array), on the VOD's annotations row,
+/// which say which sections of a streamer card show. Null for an import from
+/// before: none known.
+/// Version 40: the channel's page as the site gave it (`channel_url`,
+/// `VodInfo::channel_url`), for a site whose channels' addresses can't be
+/// built from a login. Kept on the row because the info it comes from is
+/// removed with the VOD's work files once it's transcribed. Null for a VOD
+/// added before, filled from its info where that is still kept
+/// (`pipeline::fill_channels`).
+const MIGRATE_V40: &str = "
+ALTER TABLE vods ADD COLUMN channel_url TEXT;";
+
+const MIGRATE_V38: &str = "
+ALTER TABLE vod_annotations ADD COLUMN contexts TEXT;";
+
+/// Version 41: the codec and quality a clip's (or edit's) file was made
+/// with (`Clip::encoding`, as JSON), so a change of either in Settings makes
+/// it again as a change of format does. Null for a file made before: known
+/// only by its extension.
+const MIGRATE_V41: &str = "
+ALTER TABLE renders ADD COLUMN encoding TEXT;";
+
+/// Version 39: no path to a file of the library's own is read from the
+/// library; each is built from its kind and its row's id (`Paths`), and the
+/// row keeps what can't be derived: the extension, which says too that the
+/// file is there. Only a VOD's file on this computer, outside the library,
+/// keeps its path (`source_path`). The old columns still get the full path
+/// written beside the extension, for 0.7.1 opened on this library, and
+/// `library::settle` moves what they record that isn't where it's built.
+const MIGRATE_BUILT_PATHS: &str = "
+ALTER TABLE vods ADD COLUMN video_ext TEXT;
+ALTER TABLE vods ADD COLUMN audio_ext TEXT;
+ALTER TABLE vods ADD COLUMN received_ext TEXT;
+ALTER TABLE stretches ADD COLUMN audio_ext TEXT;
+ALTER TABLE renders ADD COLUMN file_ext TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -787,26 +840,37 @@ END;";
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 /// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, started_at, added_at,
-     note, thumb, source_path, media_path, chat, chat_error, annotations, annotations_version, annotations_imported,
+    "id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published, started_at, added_at,
+     note, thumb, source_path, video_ext, received_ext, chat, chat_error, annotations, annotations_version, annotations_imported,
      EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
      EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
      (SELECT json_group_array(json_array(s.id, s.vod_id, s.start, s.end, s.status, s.progress, s.reached, s.error, s.model))
       FROM stretches s WHERE s.vod_id = vods.id) AS stretches";
 
-pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
+pub(crate) fn vod_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Vod> {
+    let id: i64 = r.get("id")?;
+    let video = ext_of(r.get("video_ext")?);
+    let received = ext_of(r.get("received_ext")?);
+    let source_path = match &received {
+        Some(ext) => Some(files.source_received(id, ext).to_string_lossy().into_owned()),
+        None => r.get("source_path")?,
+    };
+    // What plays here, by its file type.
+    let played = source_path.clone().or_else(|| video.as_ref().map(|ext| format!("video.{ext}")));
     let duration: Option<f64> = r.get("duration")?;
     let stretches = crate::stretches::from_json(&r.get::<_, String>("stretches")?)
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, e.into()))?;
     let shown = crate::stretches::summarize(&stretches, duration, r.get("has_segments")?);
     Ok(Vod {
-        id: r.get("id")?,
+        id,
         info: VodInfo {
             platform: r.get("platform")?,
             platform_id: r.get("platform_id")?,
             url: r.get("url")?,
             title: r.get("title")?,
             channel: r.get("channel")?,
+            channel_login: r.get("channel_login")?,
+            channel_url: r.get("channel_url")?,
             duration,
             thumbnail: r.get("thumbnail")?,
             published: r.get("published")?,
@@ -821,12 +885,10 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         added_at: r.get("added_at")?,
         note: r.get("note")?,
         thumb: r.get("thumb")?,
-        source_path: r.get("source_path")?,
-        media: r.get::<_, Option<String>>("media_path")?.is_some(),
-        audio_only: [r.get::<_, Option<String>>("source_path")?, r.get("media_path")?]
-            .into_iter()
-            .flatten()
-            .next()
+        source_path,
+        received: received.is_some(),
+        media: video.is_some(),
+        audio_only: played
             .and_then(|p| crate::local::media_type(Path::new(&p)))
             .is_some_and(|mime| mime.starts_with("audio/")),
         outdated: shown.outdated,
@@ -897,6 +959,9 @@ pub struct Clip {
     /// How long it plays: on an edit's clip bar, where it may hold several
     /// pieces (`start`..`end` are its first one's); else `end - start`.
     pub length: f64,
+    /// What its file was made with (`set_made_as`); None if it isn't made, or
+    /// was made before this was recorded.
+    pub encoding: Option<ClipEncoding>,
 }
 
 /// Whose clip bar a clip is on.
@@ -1025,8 +1090,8 @@ pub struct MarkState {
 
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
-    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown, c.revision,
-     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)";
+    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
 /// one (a clip pasted or dropped at its start): a group has no stretch to read.
@@ -1040,20 +1105,22 @@ pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (
        SELECT id FROM walk WHERE vod_id IS NOT NULL ORDER BY path LIMIT 1)
      JOIN renders r ON r.clip_id = c.id";
 
-pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
+pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Clip> {
+    let id = r.get(0)?;
     let mut clip = Clip {
-        id: r.get(0)?,
+        id,
         vod_id: r.get(1)?,
         start: Flicks(r.get(2)?).seconds(),
         end: Flicks(r.get::<_, Option<i64>>(3)?.unwrap_or(0)).seconds(),
         title: r.get(4)?,
         status: ClipStatus::parse(&r.get::<_, String>(5)?),
-        file_path: r.get(6)?,
+        file_path: clip_file_of(files, id, r.get(6)?, r.get(12)?),
         error: r.get(7)?,
         shown: r.get(8)?,
         revision: r.get(9)?,
         bar: ClipBar::of(r.get(10)?, r.get(11)?),
         length: 0.0,
+        encoding: r.get::<_, Option<String>>(13)?.and_then(|e| serde_json::from_str(&e).ok()),
     };
     clip.length = clip.end - clip.start;
     Ok(clip)
@@ -1174,24 +1241,96 @@ fn struck_to_flicks(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Between the parts of a long job on the library (a removed VOD's chat
+/// erased a thousand messages at a time), lets a thread waiting for the
+/// library's lock take it. A yield doesn't: the lock isn't fair, and the
+/// job takes it back before the waiting thread has woken, so a quit or a
+/// command could wait out the whole job (an erasure held the quit for over
+/// three seconds, 2026-11-05). A millisecond is that thread's time to wake.
+pub fn give_way() {
+    std::thread::sleep(std::time::Duration::from_millis(1));
+}
+
+/// An extension column (`video_ext`, `file_ext`…) as the library reads it:
+/// only one the app could have written, 1 to 10 ASCII letters and digits,
+/// in lower case. Anything else (a separator, a `..`, from a library someone
+/// else made) is read as none, the file unknown, so no path it builds can
+/// leave the library's folders, and nothing is deleted for it.
+pub(crate) fn ext_of(ext: Option<String>) -> Option<String> {
+    ext.filter(|e| (1..=10).contains(&e.len()) && e.bytes().all(|b| b.is_ascii_alphanumeric()))
+        .map(|e| e.to_ascii_lowercase())
+}
+
+/// Clip `id`'s file as its render row has it: built from its extension
+/// (`file_ext`). A row `library::settle` left as 0.7.1 wrote it, with only
+/// the full path (`file_path`): the file in 0.7.1's clip folder
+/// (`Paths::old_clips`) where it couldn't be linked in, else where its
+/// extension would build it, so a file gone reads as gone (and the clip
+/// comes off its bar, `forget_gone_clips`) rather than as none at all.
+pub(crate) fn clip_file_of(files: &crate::Paths, id: i64, ext: Option<String>, old: Option<String>) -> Option<String> {
+    if let Some(ext) = ext_of(ext) {
+        return Some(shown(&files.clip_file(id, &ext)));
+    }
+    let old = old?;
+    if files.old_clips.as_deref().is_some_and(|dir| crate::library::named_inside(Path::new(&old), dir)) {
+        return Some(old);
+    }
+    let ext = ext_of(Path::new(&old).extension().and_then(|e| e.to_str()).map(str::to_owned))?;
+    Some(shown(&files.clip_file(id, &ext)))
+}
+
+/// The extension of `file`, which must be `built(ext)`: where the library
+/// keeps a file of its kind (`Paths`). Writers give the path they wrote,
+/// built there; any other is refused, so no row can mean a file elsewhere.
+pub(crate) fn built_ext(file: &str, built: impl Fn(&str) -> PathBuf) -> Result<String> {
+    let path = Path::new(file);
+    let ext = path.extension().and_then(|e| e.to_str()).with_context(|| format!("{file} has no extension"))?;
+    let at = built(ext);
+    anyhow::ensure!(at == path, "{file} isn't where the library keeps it ({})", at.display());
+    Ok(ext.to_owned())
+}
+
+/// `path` as the library gives paths: a string, as the page and the
+/// players take them.
+pub(crate) fn shown(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
 pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
 impl Db {
+    /// Opens (making or upgrading it) the library at `path`, its files in
+    /// the folder it's in.
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_inner(path).with_context(|| format!("open the library at {}", crate::tools::shown(path)))
+        let files = crate::Paths::new(path.parent().unwrap_or(Path::new("")));
+        Self::open_with(path, files)
+    }
+
+    /// Opens (making or upgrading it) the library `paths` lays out.
+    pub fn open_in(paths: &crate::Paths) -> Result<Self> {
+        Self::open_with(&paths.db(), paths.clone())
+    }
+
+    fn open_with(path: &Path, files: crate::Paths) -> Result<Self> {
+        // Files recorded where they were before 0.7.2 are moved by the app
+        // once, as it starts (`library::settle`), not at every open: a job's
+        // own connection opened mid-session would move a file under another
+        // job that has its path.
+        Self::open_inner(path, files).with_context(|| format!("open the library at {}", crate::tools::shown(path)))
     }
 
     /// A second connection to the library at `path`, for reading only, opened
     /// after `open` (which makes and upgrades it). The library is in WAL mode,
     /// so reads here never wait for writes on the other connection (chat being
     /// saved, a VOD being deleted), and the other way around.
-    pub fn open_reader(path: &Path) -> Result<Self> {
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .with_context(|| format!("open the library at {} for reading", crate::tools::shown(path)))?;
+    pub fn open_reader(paths: &crate::Paths) -> Result<Self> {
+        let path = paths.db();
+        let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open the library at {} for reading", crate::tools::shown(&path)))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        Ok(Self { conn })
+        Ok(Self { conn, files: paths.clone() })
     }
 
     /// Takes the library's write lock and keeps it: nothing more is written,
@@ -1202,7 +1341,7 @@ impl Db {
         Ok(())
     }
 
-    fn open_inner(path: &Path) -> Result<Self> {
+    fn open_inner(path: &Path, files: crate::Paths) -> Result<Self> {
         let mut conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // Transactions take the write lock when they begin, waiting (as above)
@@ -1251,6 +1390,11 @@ impl Db {
             MIGRATE_V34,
             MIGRATE_V35,
             MIGRATE_V36,
+            MIGRATE_V37,
+            MIGRATE_V38,
+            MIGRATE_BUILT_PATHS,
+            MIGRATE_V40,
+            MIGRATE_V41,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1271,7 +1415,7 @@ impl Db {
             eprintln!("{}: library format {version} is newer than this version knows", path.display());
         }
         tidy_copies(path, COPIES_KEPT_FOR);
-        Ok(Self { conn })
+        Ok(Self { conn, files })
     }
 
     /// Inserts a VOD, or returns the existing row if it was already added.
@@ -1294,11 +1438,11 @@ impl Db {
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
         let id = self.atomically(|db| {
             db.conn.execute(
-                "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, started_at, status, added_at)
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published, started_at, status, added_at)
                  VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10)",
+                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'queued', ?12)",
                 params![
-                    info.platform, info.platform_id, info.url, info.title, info.channel,
+                    info.platform, info.platform_id, info.url, info.title, info.channel, info.channel_login, info.channel_url,
                     info.duration, info.thumbnail, info.published, info.started_at, now()
                 ],
             )?;
@@ -1312,12 +1456,12 @@ impl Db {
     /// The VOD of `platform`'s `platform_id` in the library, listed or not.
     pub fn find_vod(&self, platform: &str, platform_id: &str) -> Result<Option<Vod>> {
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE platform = ?1 AND platform_id = ?2");
-        Ok(self.conn.query_row(&sql, params![platform, platform_id], vod_from_row).optional()?)
+        Ok(self.conn.query_row(&sql, params![platform, platform_id], |r| vod_from_row(r, &self.files)).optional()?)
     }
 
     pub fn vod(&self, id: i64) -> Result<Option<Vod>> {
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE id = ?1");
-        Ok(self.conn.query_row(&sql, [id], vod_from_row).optional()?)
+        Ok(self.conn.query_row(&sql, [id], |r| vod_from_row(r, &self.files)).optional()?)
     }
 
     /// Every VOD, as a source: those in the library's list, in its order,
@@ -1328,7 +1472,7 @@ impl Db {
              ORDER BY o.position IS NULL, o.position, id DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
+        Ok(stmt.query_map([], |r| vod_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The VODs in the library's list, in its order.
@@ -1337,7 +1481,7 @@ impl Db {
             "SELECT {VOD_COLUMNS} FROM vods JOIN vod_order o ON o.vod_id = vods.id ORDER BY o.position, id DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
+        Ok(stmt.query_map([], |r| vod_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Adds a clip of VOD `vod_id` from `start` to `end` seconds, after its
@@ -1362,7 +1506,11 @@ impl Db {
 
     pub fn clip(&self, id: i64) -> Result<Option<Clip>> {
         let sql = format!("SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN} WHERE c.id = ?1");
-        self.conn.query_row(&sql, [id], clip_from_row).optional()?.map(|c| self.measured(c)).transpose()
+        self.conn
+            .query_row(&sql, [id], |r| clip_from_row(r, &self.files))
+            .optional()?
+            .map(|c| self.measured(c))
+            .transpose()
     }
 
     /// `clip` with its length: its pieces' played stretches, for one on an
@@ -1384,7 +1532,7 @@ impl Db {
              WHERE c.bar_of = (SELECT id FROM clips WHERE whole_of = ?1) ORDER BY c.bar_position, c.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        Ok(stmt.query_map([vod_id], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
+        Ok(stmt.query_map([vod_id], |r| clip_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The clips on listed clip `id`'s clip bar (an edit's), in their order.
@@ -1392,7 +1540,8 @@ impl Db {
         let sql =
             format!("SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN} WHERE c.bar_of = ?1 ORDER BY c.bar_position, c.id");
         let mut stmt = self.conn.prepare(&sql)?;
-        let clips: Vec<Clip> = stmt.query_map([id], clip_from_row)?.collect::<rusqlite::Result<_>>()?;
+        let clips: Vec<Clip> =
+            stmt.query_map([id], |r| clip_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?;
         clips.into_iter().map(|c| self.measured(c)).collect()
     }
 
@@ -1403,7 +1552,7 @@ impl Db {
              WHERE c.bar_of IS NOT NULL AND r.status IN ('waiting', 'cutting') ORDER BY c.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        Ok(stmt.query_map([], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
+        Ok(stmt.query_map([], |r| clip_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Moves clip `id` to `start`..`end` seconds of its VOD (`vod_span`); its
@@ -1452,12 +1601,19 @@ impl Db {
         Ok(out.unwrap_or(false))
     }
 
-    /// Forgets the clips not in the clip bar (made only to be dragged out),
-    /// leaving their files; gives their ids.
-    pub fn forget_hidden_clips(&self) -> Result<Vec<i64>> {
-        let mut stmt = self.conn.prepare("DELETE FROM clips WHERE bar_of IS NOT NULL AND shown = 0 RETURNING id")?;
-        let ids = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(ids)
+    /// Forgets the clips not in the clip bar (made only to be dragged out);
+    /// gives each one's id, its file and whether that was handed out to
+    /// another app, for the caller to delete what's the app's.
+    pub fn forget_hidden_clips(&self) -> Result<Vec<(i64, Option<String>, bool)>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM clips WHERE bar_of IS NOT NULL AND shown = 0")?;
+        let ids: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let mut gone = Vec::new();
+        for id in ids {
+            let file = self.clip(id)?.and_then(|c| c.file_path);
+            gone.push((id, file, self.clip_handed_out(id)?));
+        }
+        self.conn.execute("DELETE FROM clips WHERE bar_of IS NOT NULL AND shown = 0", [])?;
+        Ok(gone)
     }
 
     pub fn rename_clip(&self, id: i64, title: &str) -> Result<()> {
@@ -1478,14 +1634,32 @@ impl Db {
         file: Option<&str>,
         error: Option<&str>,
     ) -> Result<bool> {
+        let ext = file.map(|f| built_ext(f, |ext| self.files.clip_file(id, ext))).transpose()?;
         let n = self.conn.execute(
-            "UPDATE renders SET status = ?4, file_path = coalesce(?5, file_path), error = ?6
+            "UPDATE renders SET status = ?4, file_ext = coalesce(?5, file_ext), file_path = coalesce(?7, file_path), error = ?6
              WHERE clip_id = ?1 AND EXISTS (
                  SELECT 1 FROM items WHERE clip_id = ?1 AND parent IS NULL AND start = ?2 AND end = ?3
                  ORDER BY position, id LIMIT 1)",
-            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), file, error],
+            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), ext, error, file],
         )?;
         Ok(n > 0)
+    }
+
+    /// What clip `id`'s file (or edit `id`'s video) was made with, if that's
+    /// recorded (`set_made_as`).
+    pub fn made_as(&self, id: i64) -> Result<Option<ClipEncoding>> {
+        let made: Option<Option<String>> =
+            self.conn.query_row("SELECT encoding FROM renders WHERE clip_id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(made.flatten().and_then(|e| serde_json::from_str(&e).ok()))
+    }
+
+    /// Records that clip `id`'s file (or edit `id`'s video) was made with
+    /// `encoding`: None for one copied from a file made before that was
+    /// recorded.
+    pub fn set_made_as(&self, id: i64, encoding: Option<ClipEncoding>) -> Result<()> {
+        let encoding = encoding.map(|e| serde_json::to_string(&e)).transpose()?;
+        self.conn.execute("UPDATE renders SET encoding = ?2 WHERE clip_id = ?1", params![id, encoding])?;
+        Ok(())
     }
 
     /// Deletes snippet `id`: a change to the clip whose bar it's in, if it's
@@ -1701,32 +1875,102 @@ impl Db {
     /// The file VOD `id` plays from here, if any: its file on this computer,
     /// or else the video kept for it.
     pub fn playable_path(&self, id: i64) -> Result<Option<String>> {
-        let sql = "SELECT coalesce(source_path, media_path) FROM vods WHERE id = ?1";
-        Ok(self.conn.query_row(sql, [id], |r| r.get(0)).optional()?.flatten())
+        let sql = "SELECT source_path, received_ext, video_ext FROM vods WHERE id = ?1";
+        let row: Option<(Option<String>, Option<String>, Option<String>)> =
+            self.conn.query_row(sql, [id], |r| Ok((r.get(0)?, ext_of(r.get(1)?), ext_of(r.get(2)?)))).optional()?;
+        let Some((source, received, video)) = row else { return Ok(None) };
+        let path = match (received, source, video) {
+            (Some(ext), _, _) => Some(shown(&self.files.source_received(id, &ext))),
+            (None, Some(source), _) => Some(source),
+            (None, None, video) => video.map(|ext| shown(&self.files.source_video(id, &ext))),
+        };
+        Ok(path)
     }
 
     /// VOD `id`'s kept video (see `Vod::media`).
     pub fn media_path(&self, id: i64) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT media_path FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+        let ext: Option<String> =
+            self.conn.query_row("SELECT video_ext FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
+        Ok(ext_of(ext).map(|ext| shown(&self.files.source_video(id, &ext))))
     }
 
+    /// Records VOD `id`'s kept video, at `path` (`Paths::source_video`), or
+    /// that it has none.
     pub fn set_media_path(&self, id: i64, path: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![id, path])?;
+        let ext = path.map(|p| built_ext(p, |ext| self.files.source_video(id, ext))).transpose()?;
+        // The full path too, for 0.7.1 opening this library (`library`).
+        self.conn.execute("UPDATE vods SET video_ext = ?2, media_path = ?3 WHERE id = ?1", params![id, ext, path])?;
         Ok(())
     }
 
+    /// VOD `id`'s whole audio: downloaded to transcribe it, or else the file
+    /// it plays from (its own, or its kept video), which holds it.
     pub fn audio_path(&self, id: i64) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT audio_path FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+        let ext: Option<String> =
+            self.conn.query_row("SELECT audio_ext FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
+        match ext_of(ext) {
+            Some(ext) => Ok(Some(shown(&self.files.source_audio(id, &ext)))),
+            None => self.playable_path(id),
+        }
     }
 
+    /// Records where VOD `id`'s file on this computer is: outside the
+    /// library, the only path it keeps.
     pub fn set_source_path(&self, id: i64, path: &str) -> Result<()> {
-        self.conn.execute("UPDATE vods SET source_path = ?2 WHERE id = ?1", params![id, path])?;
+        self.conn.execute("UPDATE vods SET source_path = ?2, received_ext = NULL WHERE id = ?1", params![id, path])?;
         Ok(())
     }
 
-    pub fn set_audio_path(&self, id: i64, path: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE vods SET audio_path = ?2 WHERE id = ?1", params![id, path])?;
+    /// Adds file `info`, just received from another app's drop at `info.url`
+    /// (in `Paths::received`), as a new VOD, never one already there: the
+    /// name it arrived under is free again once it's renamed for its VOD
+    /// (`set_received`), and the next drop may be given it. So its identity
+    /// is "received:<id>", which no file's path is, and its url the path
+    /// it's kept at (`Paths::source_received`); till it's moved there it
+    /// plays where it arrived (`source_path`).
+    pub fn add_received(&self, info: &VodInfo) -> Result<Vod> {
+        let arrived = info.url.clone();
+        // Under an identity no row keeps past this transaction, so none is found.
+        let info = VodInfo { platform_id: format!("received:{arrived}"), ..info.clone() };
+        self.atomically(|db| {
+            let (vod, _) = db.add_vod(&info)?;
+            let ext = Path::new(&arrived).extension().map(|e| e.to_string_lossy().into_owned());
+            let url = ext.map_or_else(|| arrived.clone(), |ext| shown(&db.files.source_received(vod.id, &ext)));
+            db.conn.execute(
+                "UPDATE vods SET platform_id = ?2, url = ?3, source_path = ?4, received_ext = NULL WHERE id = ?1",
+                params![vod.id, format!("received:{}", vod.id), url, arrived],
+            )?;
+            Ok(db.vod(vod.id)?.expect("just added"))
+        })
+    }
+
+    /// Records that VOD `id`'s file is the app's own copy, received from
+    /// another app's drop, at `path` (`Paths::source_received`).
+    pub fn set_received(&self, id: i64, path: &str) -> Result<()> {
+        let ext = built_ext(path, |ext| self.files.source_received(id, ext))?;
+        let sql = "UPDATE vods SET source_path = ?3, received_ext = ?2 WHERE id = ?1";
+        self.conn.execute(sql, params![id, ext, path])?;
         Ok(())
+    }
+
+    /// Records VOD `id`'s whole audio at `path`: downloaded
+    /// (`Paths::source_audio`), or its own file or kept video, which are
+    /// known already and so not recorded (`audio_path` gives them); or that
+    /// it has none downloaded.
+    pub fn set_audio_path(&self, id: i64, path: Option<&str>) -> Result<()> {
+        let own = match path {
+            Some(p) => self.playable_path(id)?.as_deref() == Some(p),
+            None => false,
+        };
+        let path = path.filter(|_| !own);
+        let ext = path.map(|p| built_ext(p, |ext| self.files.source_audio(id, ext))).transpose()?;
+        self.conn.execute("UPDATE vods SET audio_ext = ?2, audio_path = ?3 WHERE id = ?1", params![id, ext, path])?;
+        Ok(())
+    }
+
+    /// Where the library's files are.
+    pub fn files(&self) -> &crate::Paths {
+        &self.files
     }
 
     /// How far transcription got: the end of the last indexed segment.
@@ -1940,6 +2184,27 @@ impl Db {
             params![vod_id, serde_json::to_string(positions)?],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// VOD `vod_id`'s channel's login and page, where the library has none
+    /// yet (a VOD added before it kept them: `MIGRATE_V37`, `MIGRATE_V40`).
+    pub fn fill_channel(&self, vod_id: i64, login: Option<&str>, page: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET channel_login = coalesce(channel_login, ?2), channel_url = coalesce(channel_url, ?3) WHERE id = ?1",
+            params![vod_id, login, page],
+        )?;
+        Ok(())
+    }
+
+    /// VOD `vod_id`'s channel's login and page as its site names them now
+    /// (`pipeline::refresh_details`): each one named replaces the one kept;
+    /// one not named leaves it as it is, never guessed or cleared.
+    pub fn refresh_channel(&self, vod_id: i64, login: Option<&str>, page: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET channel_login = coalesce(?2, channel_login), channel_url = coalesce(?3, channel_url) WHERE id = ?1",
+            params![vod_id, login, page],
+        )?;
         Ok(())
     }
 
@@ -2198,7 +2463,7 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
         // A part at a time, letting go of the library between them, so a busy
         // chat fetched again doesn't hold everything else up.
         while self.db.lock().unwrap().clear_some_chat(self.vod_id, 1000)? > 0 {
-            std::thread::yield_now();
+            give_way();
         }
         self.starts.clear();
         let db = self.db.lock().unwrap();
@@ -2232,6 +2497,55 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
 mod tests {
     use super::*;
     use crate::transcript::{Segment, Segmenter};
+
+    /// A job a part at a time (an erasure) lets a thread waiting for the
+    /// library in after the part it's on, not after the whole job.
+    #[test]
+    fn a_job_in_parts_lets_a_waiting_thread_in() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        const MESSAGES: usize = 20_000;
+        let dir = crate::TempDir::new("give-way");
+        let db = Db::open(&dir.join("library.db")).unwrap();
+        let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
+        let db = Arc::new(Mutex::new(db));
+        for round in 0..3 {
+            {
+                let db = db.lock().unwrap();
+                db.conn.execute_batch("BEGIN").unwrap();
+                for i in 0..MESSAGES {
+                    db.conn
+                        .execute(
+                            "INSERT INTO chat (vod_id, time, author, text, parts) VALUES (?1, ?2, 'viewer', ?3, '[]')",
+                            params![vod, i as f64, format!("message {i}")],
+                        )
+                        .unwrap();
+                }
+                db.conn.execute_batch("COMMIT").unwrap();
+            }
+            let begun = Arc::new(AtomicBool::new(false));
+            let job = {
+                let (db, begun) = (db.clone(), begun.clone());
+                std::thread::spawn(move || {
+                    loop {
+                        let held = db.lock().unwrap();
+                        begun.store(true, Ordering::SeqCst);
+                        if held.delete_some_of(vod, 1000).unwrap() == 0 {
+                            break;
+                        }
+                        drop(held);
+                        give_way();
+                    }
+                })
+            };
+            while !begun.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+            let left = db.lock().unwrap().erase_left(vod).unwrap();
+            job.join().unwrap();
+            assert!(left > MESSAGES / 2, "round {round}: let in with {left} of {MESSAGES} left");
+        }
+    }
 
     #[test]
     fn marks_are_put_back_as_they_were() {
@@ -2278,11 +2592,49 @@ mod tests {
             url: format!("https://youtu.be/{id}"),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
             started_at: None,
         }
+    }
+
+    /// Files received from drops arrive under the name their app gave, which
+    /// is free again once the first is renamed for its VOD: a second file of
+    /// that name is a VOD of its own, not the first one found again; nor is
+    /// it a 0.7.1 library's received file, whose row names where it arrived.
+    #[test]
+    fn a_second_file_received_under_the_same_name_is_a_new_vod() {
+        let root = crate::TempDir::new("received-twice");
+        let paths = crate::Paths::new(root.join("lib"));
+        paths.ensure().unwrap();
+        std::fs::create_dir_all(paths.received()).unwrap();
+        let db = Db::open_in(&paths).unwrap();
+        let arrived = shown(&paths.received().join("video.mp4"));
+        let mut file = info("x");
+        file.platform = "local".into();
+        file.platform_id = arrived.clone();
+        file.url = arrived.clone();
+        // As 0.7.1 added one, moved since by `library::settle`.
+        let (old, _) = db.add_vod(&file).unwrap();
+        db.set_received(old.id, &shown(&paths.source_received(old.id, "mp4"))).unwrap();
+
+        let first = db.add_received(&file).unwrap();
+        assert_ne!(first.id, old.id, "found as the 0.7.1 library's VOD");
+        assert_eq!(first.source_path.as_deref(), Some(arrived.as_str()), "played where it arrived till it's moved");
+        let to = shown(&paths.source_received(first.id, "mp4"));
+        assert_eq!(
+            (first.info.platform_id.clone(), first.info.url.clone()),
+            (format!("received:{}", first.id), to.clone())
+        );
+        std::fs::write(&to, b"first").unwrap();
+        db.set_received(first.id, &to).unwrap();
+        assert_eq!(db.vod(first.id).unwrap().unwrap().source_path, Some(to));
+        // Another drop, another file, the same name.
+        let second = db.add_received(&file).unwrap();
+        assert!(second.id != first.id && second.id != old.id, "found as VOD {} (the first file's)", second.id);
     }
 
     fn words(text: &str, start: f64) -> Vec<Word> {
@@ -2493,7 +2845,7 @@ mod tests {
             .unwrap();
         }
         let db = Db::open(&path).unwrap();
-        let edit = db.edits().unwrap()[0].id;
+        let edit = db.edits(crate::edits::tests::at_first()).unwrap()[0].id;
         let pieces = db.edit_pieces(edit).unwrap();
         assert_eq!(pieces.len(), 1);
         let p = &pieces[0];
@@ -2554,12 +2906,14 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         use crate::edits::LibraryItem::{Edit, Vod};
-        let edit = db.edits().unwrap().remove(0);
+        let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0);
         assert_eq!(db.library_order().unwrap(), [Vod(2), Edit(edit.id), Vod(1)], "the order kept");
-        assert_eq!(
-            (edit.title.as_str(), edit.current, edit.file_path.as_deref()),
-            ("Best of", true, Some("/v/best.mp4"))
-        );
+        assert_eq!((edit.title.as_str(), edit.current), ("Best of", true));
+        // Its file isn't there, nor where settle takes files from: read as
+        // gone (where it would be built), as before, so it's made again.
+        let file = edit.file_path.expect("a file, gone");
+        assert_eq!(file, shown(&db.files().clip_file(edit.id, "mp4")));
+        assert!(!Path::new(&file).exists());
         let pieces = db.edit_pieces(edit.id).unwrap();
         assert_eq!(
             pieces.iter().map(|p| (p.id, p.vod_id, p.start, p.end)).collect::<Vec<_>>(),
@@ -2574,7 +2928,8 @@ mod tests {
         let bar: Vec<_> = db.clips(1).unwrap().into_iter().map(|c| (c.id, c.start, c.end, c.title, c.shown)).collect();
         assert_eq!(bar, [(2, 30.0, 40.0, "Dinner".into(), true), (1, 10.0, 20.5, "Lunch".into(), true)]);
         assert!(db.clip_handed_out(1).unwrap() && !db.clip_handed_out(2).unwrap());
-        assert_eq!(db.clip(1).unwrap().unwrap().file_path.as_deref(), Some("/v/lunch.mp4"));
+        let lunch = db.clip(1).unwrap().unwrap().file_path;
+        assert_eq!(lunch, Some(shown(&db.files().clip_file(1, "mp4"))), "its file isn't there either: read as gone");
         assert_eq!(db.clips(2).unwrap().iter().map(|c| (c.id, c.shown)).collect::<Vec<_>>(), [(3, false)]);
         // Each VOD has its clip, over all of it.
         let own = db.vod_clip(1).unwrap().unwrap();
@@ -2727,7 +3082,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 36);
+        assert_eq!(version, 41);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2767,12 +3122,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 36);
+        assert_eq!(version, 41);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -2799,12 +3154,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 36);
+        assert_eq!(version, 41);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -2828,12 +3183,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 36);
+        assert_eq!(version, 41);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -2851,12 +3206,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 36);
+        assert_eq!(version, 41);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -2880,13 +3235,98 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 36);
+        assert_eq!(version, 41);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
+    }
+
+    #[test]
+    fn a_channels_login_is_kept_and_vods_from_before_have_none() {
+        let dir = crate::TempDir::new("migrate-v36");
+        let path = dir.join("library.sqlite");
+        let before = {
+            let db = Db::open(&path).unwrap();
+            let info = VodInfo {
+                platform: "twitch".into(),
+                channel: Some("마를로".into()),
+                ..crate::edits::tests::info("old")
+            };
+            db.add_vod(&info).unwrap().0.id
+        };
+        // Back to version 36: the column 37 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 36;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 41);
+        assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
+        let info = VodInfo {
+            platform: "twitch".into(),
+            channel: Some("마를로".into()),
+            channel_login: Some("marlowe".into()),
+            channel_url: None,
+            ..crate::edits::tests::info("new")
+        };
+        let (added, _) = db.add_vod(&info).unwrap();
+        assert_eq!(added.info.channel_login.as_deref(), Some("marlowe"));
+        let listed = db.vods().unwrap();
+        let shown = listed.iter().find(|v| v.id == added.id).unwrap();
+        assert_eq!(
+            (shown.info.channel.as_deref(), shown.info.channel_login.as_deref()),
+            (Some("마를로"), Some("marlowe"))
+        );
+        // The page reads it beside the name.
+        let json = serde_json::to_value(shown).unwrap();
+        assert_eq!(json["channel_login"], "marlowe");
+    }
+
+    #[test]
+    fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
+        let root = crate::TempDir::new("channel-page");
+        let path = root.join("library.sqlite");
+        let before = {
+            let db = Db::open(&path).unwrap();
+            db.add_vod(&VodInfo { platform: "dailymotion".into(), ..crate::edits::tests::info("old") }).unwrap().0.id
+        };
+        // Back to version 39: the column 40 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 39;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 41);
+        assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
+        let page = "https://www.dailymotion.com/quill";
+        let info = VodInfo {
+            platform: "dailymotion".into(),
+            channel_url: Some(page.into()),
+            ..crate::edits::tests::info("new")
+        };
+        let (added, _) = db.add_vod(&info).unwrap();
+        assert_eq!(added.info.channel_url.as_deref(), Some(page));
+        let json = serde_json::to_value(db.vod(added.id).unwrap().unwrap()).unwrap();
+        assert_eq!(json["channel_url"], page);
+        // Filled in where there's none; what's there stays.
+        db.fill_channel(before, Some("x2"), Some("https://www.dailymotion.com/x2")).unwrap();
+        db.fill_channel(added.id, Some("other"), Some("https://www.dailymotion.com/other")).unwrap();
+        let old = db.vod(before).unwrap().unwrap().info;
+        assert_eq!(
+            (old.channel_login.as_deref(), old.channel_url.as_deref()),
+            (Some("x2"), Some("https://www.dailymotion.com/x2"))
+        );
+        let new = db.vod(added.id).unwrap().unwrap().info;
+        assert_eq!(
+            (new.channel_login, new.channel_url.as_deref()),
+            (Some("other".into()), Some(page)),
+            "only the login was missing"
+        );
     }
 
     #[test]
@@ -3036,12 +3476,14 @@ mod tests {
         let (song, film, kept, nothing) = (vod("a"), vod("b"), vod("c"), vod("d"));
         db.set_source_path(song, "/music/song.MP3").unwrap();
         db.set_source_path(film, "/videos/film.mkv").unwrap();
-        db.set_media_path(kept, Some("/data/media/3.m4a")).unwrap();
+        let video = |ext| db.files().source_video(kept, ext).to_string_lossy().into_owned();
+        db.set_media_path(kept, Some(&video("m4a"))).unwrap();
         let audio_only = |id| db.vod(id).unwrap().unwrap().audio_only;
         assert!(audio_only(song) && audio_only(kept));
         assert!(!audio_only(film) && !audio_only(nothing));
-        db.set_media_path(kept, Some("/data/media/3.mp4")).unwrap();
+        db.set_media_path(kept, Some(&video("mp4"))).unwrap();
         assert!(!audio_only(kept));
+        assert!(db.set_media_path(kept, Some("/data/media/3.mp4")).is_err(), "only where it goes");
     }
 
     #[test]
@@ -3082,6 +3524,26 @@ mod tests {
         assert!(db.marks(vod).unwrap().is_empty());
     }
 
+    /// What a clip's file was made with is kept with it (`set_made_as`),
+    /// for the page to make it again when that changes; unknown till then.
+    #[test]
+    fn a_clip_keeps_what_its_file_was_made_with() {
+        use crate::settings::{ClipCodec, ClipQuality};
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap();
+        assert_eq!(clip.encoding, None);
+        let h265 = ClipEncoding { codec: ClipCodec::H265, quality: ClipQuality::High };
+        db.set_made_as(clip.id, Some(h265)).unwrap();
+        assert_eq!(db.clip(clip.id).unwrap().unwrap().encoding, Some(h265));
+        assert_eq!(db.made_as(clip.id).unwrap(), Some(h265));
+        db.set_made_as(clip.id, None).unwrap();
+        assert_eq!(db.clip(clip.id).unwrap().unwrap().encoding, None);
+        // As the page reads it.
+        let json = serde_json::to_value(Some(h265)).unwrap();
+        assert_eq!(json, serde_json::json!({ "codec": "h265", "quality": "high" }));
+    }
+
     #[test]
     fn clips_keep_their_order_and_follow_their_range() {
         let db = Db::open(Path::new(":memory:")).unwrap();
@@ -3098,14 +3560,15 @@ mod tests {
 
         // A cut that finishes after its range moved isn't recorded.
         db.set_clip_range(a.id, 11.0, 20.0).unwrap();
-        assert!(!db.set_clip_file(a.id, 10.0, 20.0, ClipStatus::Ready, Some("/c/a.mp4"), None).unwrap());
-        assert!(db.set_clip_file(a.id, 11.0, 20.0, ClipStatus::Ready, Some("/c/a.mp4"), None).unwrap());
+        let file = db.files().clip_file(a.id, "mp4").to_string_lossy().into_owned();
+        assert!(!db.set_clip_file(a.id, 10.0, 20.0, ClipStatus::Ready, Some(&file), None).unwrap());
+        assert!(db.set_clip_file(a.id, 11.0, 20.0, ClipStatus::Ready, Some(&file), None).unwrap());
         let a = db.clip(a.id).unwrap().unwrap();
-        assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Ready, Some("/c/a.mp4")));
+        assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Ready, Some(&*file)));
         // Moved again: made again, at the same file.
         db.set_clip_range(a.id, 12.0, 20.0).unwrap();
         let a = db.clip(a.id).unwrap().unwrap();
-        assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Waiting, Some("/c/a.mp4")));
+        assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Waiting, Some(&*file)));
         db.rename_clip(b.id, "renamed").unwrap();
         db.delete_clip(a.id).unwrap();
         assert_eq!(titles(&db), ["renamed"]);
@@ -3114,7 +3577,7 @@ mod tests {
         assert!(!db.clip_handed_out(c.id).unwrap());
         db.hand_out_clip(c.id).unwrap();
         assert!(db.clip_handed_out(c.id).unwrap());
-        assert_eq!(db.forget_hidden_clips().unwrap(), [c.id]);
+        assert_eq!(db.forget_hidden_clips().unwrap(), [(c.id, None, true)]);
         assert_eq!(titles(&db), ["renamed"]);
         // They go with their VOD.
         db.delete_vod(vod).unwrap();
@@ -3211,7 +3674,7 @@ mod tests {
         );
 
         // "Free up space" deleted the audio: VODs waiting to transcribe must download again.
-        db.set_audio_path(ready, Some("/work/r.m4a")).unwrap();
+        db.set_audio_path(ready, Some(&db.files().source_audio(ready, "m4a").to_string_lossy())).unwrap();
         db.forget_downloads().unwrap();
         assert_eq!(db.audio_path(ready).unwrap(), None);
         assert_eq!([status(trans), status(ready), status(done)], [Status::Queued, Status::Queued, Status::Done]);
@@ -3330,7 +3793,7 @@ mod tests {
         let path = dir.join("library.sqlite");
         let db = Db::open(&path).unwrap();
         db.add_vod(&info("a")).unwrap();
-        let reader = Db::open_reader(&path).unwrap();
+        let reader = Db::open_reader(&crate::Paths::new(&*dir)).unwrap();
         // A write under way on the other connection, not yet committed.
         db.conn.execute_batch("BEGIN IMMEDIATE; DELETE FROM vods;").unwrap();
         let started = std::time::Instant::now();

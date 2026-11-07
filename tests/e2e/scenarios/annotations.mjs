@@ -19,8 +19,8 @@
 // and highlight playing lit. Pointing at a highlight's row lights its glyph
 // and draws its line down the bar; pointing at a chapter's slice lights its
 // row. A click on a highlight's row plays it; opened, it names who's in it
-// by their short names, those with an account a link to the streamer's
-// channel that leaves the row open. Dragged onto "Make new edit",
+// by their short names, those in the cast opening their card and leaving
+// the row open. Dragged onto "Make new edit",
 // a highlight's row makes an edit holding it as a group named for it, one
 // band as a clip's pill goes in; from the keyboard, A on the other's row
 // asks which edit and puts it there, a group too; the edit open, its pane
@@ -36,16 +36,18 @@
 // greyed, its second segment can't be picked, and the transcript shows.
 // A character played by a streamer is named the character first, the
 // streamer after ("Marlowe (Vance)"): on their heads, in the Cast button
-// (with their channels) and in a highlight's tooltip, grouped and coloured as
-// the character. A cast member with an account is headed by their picture,
-// from the image server (the run's file host, lib/fileHost.mjs), their name a
-// link to their channel; one whose picture isn't there keeps their initial,
-// the character's. With pictures turned off in Settings › Privacy, every disc
-// is its initial and the image server isn't asked. Where the file has the streamer's own VOD running at the
-// same time (its povs: Marlowe's, from 0:20 in), the name and disc link to
-// that VOD at the same moment instead: a heading at its lines' start, a chip
-// at its highlight's start, the Cast list at the playhead; outside it, the
-// channel. (Only the links are read: the opener can't be stood in for.)
+// and in a highlight's tooltip, grouped and coloured as the character. A
+// cast member with an account is headed by their picture, from the image
+// server (the run's file host, lib/fileHost.mjs); one whose picture isn't
+// there keeps their initial, the character's. Their name and picture open
+// their streamer card (streamer-card has the cards themselves), which links
+// to their channel. With pictures turned off in Settings › Privacy, every disc
+// is its initial and the image server isn't asked. Where the file has the
+// streamer's own VOD running at the same time (its povs: Marlowe's, from
+// 0:20 in), the card's first link is to that VOD at the same moment: from a
+// heading at its lines' start, a chip at its highlight's start, the Cast
+// list at the playhead. (Only the links are read: the opener can't be stood
+// in for.)
 // The Timeline panel's Imported marks toggle hides the import's chapters
 // and highlights from the timeline (and the pane with them), and shows them
 // again. Imported again, the import's marks are replaced and a chapter of
@@ -210,7 +212,9 @@ export default {
     "annotations-pinned":
       'Under the transcript\'s header, a thin rule reading "💬 Hello" and under it a heading with a plain yellow picture, "Marlowe (Vance)" in colour and "0:00", over lines reading "Line 13" and on; nothing overlaps.',
     "annotations-cast":
-      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe (Vance)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; the line at 0:15 is under a heading "Unknown" with a gray circle holding a person\'s outline; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Vance) (Streamer · also Mar, Their stream at 0:15) and Ada (Friend, kick.com/ada_plays), each with the same circle as their heading.',
+      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe (Vance)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; the line at 0:15 is under a heading "Unknown" with a gray circle holding a person\'s outline; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Vance) (Streamer · also Mar) and Ada (Friend), each with the same circle as their heading.',
+    "columns-hidden":
+      "Both side columns are hidden: no library on the left and no chapters column on the right, each leaving only a thin full-height strip with a small arrow at the window's edge; the player, its timeline with its lanes, the bar of buttons and the transcript with its chat beside it fill the width between the strips.",
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
@@ -371,46 +375,44 @@ export default {
     if (read.join(" | ") !== expected.join(" | ")) wrong.push(`the transcript reads ${read.join(" | ")}`);
     if (chat.some((l) => l.named)) wrong.push("a line names its speaker as well as its group's head");
 
-    // The heads of those with an account: the name a link to their channel,
-    // saying where it goes (the head itself says who plays them), or for
-    // Marlowe's second, at 0:25, 5 s into Vance's own VOD, to that VOD there;
-    // the disc the same link, their picture once it has loaded, or
-    // their initial when there's none (Ada's), never empty.
+    // The heads of the cast: the name and the disc open their streamer card
+    // (Unknown's, no one's, neither); the disc their picture once it has
+    // loaded, or their initial when there's none (Ada's), never empty.
+    const marloweHead = { name: "Marlowe (Vance)", opens: true, disc: true, picture: "shown", initial: false };
+    const adaHead = { name: "Ada", opens: true, disc: true, picture: "none", initial: true };
+    const want = [
+      marloweHead,
+      adaHead,
+      { name: "Unknown", opens: false, disc: false, picture: "no img", initial: true },
+      marloweHead,
+      adaHead,
+    ];
+    // In the order wanted: the driver hands objects back with their keys in any order.
+    const headOf = (h) => ({ name: h.name, opens: h.opens, disc: h.disc, picture: h.picture, initial: h.initial });
+    // Until every head is as wanted, each picture settled: a slow web view draws
+    // the five heads while a picture is still on its way, so one look can catch
+    // it loading (Ada's 404) or loaded and not yet shown (Marlowe's). The last
+    // look is what's compared when they never get there.
+    let seen = [];
     const heads = await until(
       "the cast's pictures",
       async () => {
         const got = await app.js(`return [...document.querySelectorAll("#transcript .group-head")].map((h) => {
           const name = h.querySelector(".speaker");
           const img = h.querySelector(".avatar img");
-          return { name: name.textContent.trim(), link: name.tagName === "A" ? name.getAttribute("href") : null,
-            title: name.title, disc: h.querySelector(".avatar").getAttribute("href"),
+          return { name: name.textContent.trim(), opens: name.tagName === "BUTTON",
+            disc: h.querySelector(".avatar").tagName === "BUTTON",
             picture: img ? (!img.complete ? "loading" : img.naturalWidth > 0 && img.classList.contains("loaded") ? "shown" : "none") : "no img",
             initial: getComputedStyle(h.querySelector(".avatar")).color !== "rgba(0, 0, 0, 0)" };
         })`);
-        return got.length === 5 && got.every((h) => h.picture !== "loading") && got;
+        seen = got;
+        return got.length === 5 && got.every((h, i) => JSON.stringify(headOf(h)) === JSON.stringify(want[i])) && got;
       },
       MINUTE,
-    ).catch(() => []);
-    const marloweHead = (link, title) => ({ name: "Marlowe (Vance)", link, title, picture: "shown", initial: false });
-    const adaHead = {
-      name: "Ada",
-      link: "https://kick.com/ada_plays",
-      title: "kick.com/ada_plays",
-      picture: "none",
-      initial: true,
-    };
-    const want = [
-      marloweHead("https://www.twitch.tv/marlowe_live", "twitch.tv/marlowe_live"),
-      adaHead,
-      { name: "Unknown", link: null, title: "", picture: "no img", initial: true },
-      marloweHead("https://www.twitch.tv/videos/1000000001?t=0h0m5s", "Vance's stream at 0:05 · twitch.tv"),
-      adaHead,
-    ];
+    ).catch(() => seen);
     for (const [i, h] of heads.entries()) {
-      const w = want[i];
-      const got = { name: h.name, link: h.link, title: h.title, picture: h.picture, initial: h.initial };
-      if (JSON.stringify(got) !== JSON.stringify(w)) wrong.push(`head ${i + 1}: ${JSON.stringify(got)}`);
-      if (h.disc !== w.link) wrong.push(`head ${i + 1}'s disc links to ${h.disc}`);
+      const got = headOf(h);
+      if (JSON.stringify(got) !== JSON.stringify(want[i])) wrong.push(`head ${i + 1}: ${JSON.stringify(got)}`);
     }
     if (!heads.length) wrong.push("the heads' pictures never settled");
     const asked = [...new Set(host.requests.map((r) => `${r.method} ${r.path}`))].sort();
@@ -421,9 +423,44 @@ export default {
       wrong.push(`the image server was asked: ${asked.join(", ")}`);
     host.stop();
 
+    // Their links are on their cards, here with the file host not answering
+    // (so no card of their own: streamer-card has those). Marlowe's, from the
+    // head at 0:25, leads first to Vance's own VOD 5 s in, then to the
+    // channel; Ada's, from her disc, to hers.
+    const cardLinks = (head, part) =>
+      until(
+        `the card from head ${head + 1}`,
+        () =>
+          app.js(
+            `const card = document.querySelector('[role="dialog"] .card');
+             if (!card) {
+               document.querySelectorAll("#transcript .group-head")[arguments[0]].querySelector(arguments[1]).click();
+               return false;
+             }
+             return card.dataset.settled === "true" && [...card.querySelectorAll(".links a")].map((a) =>
+               a.textContent.replace(/\\s+/g, " ").trim() + " → " + a.getAttribute("href") + " (" + a.title + ")")`,
+            head,
+            part,
+          ),
+        10_000,
+      ).catch(() => []);
+    const marloweLinks = await cardLinks(3, ".speaker");
+    const marloweWant = [
+      "Their stream at 0:05 → https://www.twitch.tv/videos/1000000001?t=0h0m5s (Vance's stream at 0:05 · twitch.tv)",
+      "twitch.tv/marlowe_live → https://www.twitch.tv/marlowe_live (https://www.twitch.tv/marlowe_live)",
+    ];
+    if (marloweLinks.join(" | ") !== marloweWant.join(" | "))
+      wrong.push(`Marlowe's card at 0:25 links ${marloweLinks.join(" | ")}`);
+    await app.key("Escape");
+    const adaLinks = await cardLinks(1, ".avatar");
+    if (adaLinks.join(" | ") !== "kick.com/ada_plays → https://kick.com/ada_plays (https://kick.com/ada_plays)")
+      wrong.push(`Ada's card links ${adaLinks.join(" | ")}`);
+    await app.key("Escape");
+
     // The cast, from the transcript's header: each with the disc their lines
-    // have (its initial, in their colour), then who they are; at 0:35,
-    // Marlowe's link is to Vance's own VOD 15 s in, Ada's to her channel.
+    // have (its initial, in their colour), then who they are, their name
+    // opening their card, with no tooltip; at 0:35, Marlowe's leads first to
+    // Vance's own VOD 15 s in.
     await app.click(".cast-toggle");
     const cast = await until(
       "the cast list",
@@ -432,23 +469,42 @@ export default {
           return list ? [...list.querySelectorAll("li")].map((li) => {
             const disc = li.querySelector(".avatar");
             return (disc ? disc.textContent.trim() + " " + getComputedStyle(disc).backgroundColor + ": " : "no disc: ") +
-              li.querySelector(".who").textContent.replace(/\\s+/g, " ").trim() + " → " +
-              li.querySelector(".who a")?.getAttribute("href");
+              li.querySelector(".who").textContent.replace(/\\s+/g, " ").trim() +
+              (li.querySelector(".who button.name") ? " (opens)" : "") +
+              (li.querySelector("[title]") ? " (with a tooltip: " + li.querySelector("[title]").title + ")" : "");
           }) : false`),
       10_000,
     ).catch(() => []);
     const castWant = [
-      `M ${speakers[0]?.color}: Marlowe (Vance) Streamer · also Mar Their stream at 0:15 → https://www.twitch.tv/videos/1000000001?t=0h0m15s`,
-      `A ${speakers[1]?.color}: Ada Friend kick.com/ada_plays → https://kick.com/ada_plays`,
+      `M ${speakers[0]?.color}: Marlowe (Vance) Streamer · also Mar (opens)`,
+      `A ${speakers[1]?.color}: Ada Friend (opens)`,
     ];
     if (cast.join(" | ") !== castWant.join(" | ")) wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
+    await app.click('[role=dialog][aria-label="Cast"] li .who button.name');
+    const fromCast = await until(
+      "Marlowe's card from the cast list",
+      () =>
+        app.js(`const card = document.querySelector('[role="dialog"] .card');
+          return card?.dataset.settled === "true" && card.querySelector(".links a")?.getAttribute("href")`),
+      10_000,
+    ).catch(() => null);
+    if (fromCast !== "https://www.twitch.tv/videos/1000000001?t=0h0m15s")
+      wrong.push(`Marlowe's card from the cast list at 0:35 leads first to ${fromCast}`);
     await app.key("Escape");
 
     // Pictures turned off: each disc is its initial (Unknown's the outline),
     // in the transcript and in Cast, and the image server isn't asked.
-    const quiet = serveFiles(pictures);
+    // The image server's requests are counted from once the page has let go
+    // of every picture: a head's picture coming into view just before the
+    // switch is still asked for, with pictures on.
     await setPictures(app, false);
+    await until(
+      "no picture in the page",
+      async () => app.js(`return !document.querySelector(".avatar img")`),
+      10_000,
+    ).catch(() => {});
+    const quiet = serveFiles(pictures);
     const discs = (where) =>
       app.js(
         `return [...document.querySelectorAll(arguments[0])].map((d) =>
@@ -684,13 +740,11 @@ export default {
     // Opened, the first highlight names who's in it on chips under its why,
     // outside the row's button: each by the cast's own name for them
     // (Marlowe, not "Marlowe (Vance)" nor the file's "Mar"), Jules as
-    // written. One with an account is a link to the streamer's channel, its
-    // tooltip naming the streamer and where, reached from the keyboard
-    // (Marlowe's to Vance's own VOD at the highlight's start, 5 s in);
-    // Jules's is no link. No chip's name is cut short. A click on a chip
-    // leaves the row open and the player where it was. (The link's own click
-    // isn't made: the opener would start the system's browser, and the page
-    // can't stand in for it, its invoke being read-only.)
+    // written; the tooltip has the whole name only where the chip's is
+    // shorter. One in the cast opens their card, reached from the keyboard;
+    // Jules, not in it, opens none. No chip's name is cut short. A click on a
+    // chip leaves the row open and the player where it was, and Marlowe's
+    // card leads first to Vance's own VOD at the highlight's start, 5 s in.
     const funnyRow = paneRow(`highlight-${funny.id}`);
     await app.click(`${funnyRow} .chevron`);
     const people = await until(
@@ -700,8 +754,8 @@ export default {
           `return [...document.querySelectorAll(arguments[0] + " .detail .people .chip")].map((c) => {
             const name = c.querySelector("strong");
             c.focus();
-            return { tag: c.tagName, text: name?.textContent.trim(), href: c.getAttribute("href"), title: c.title,
-              focusable: document.activeElement === c, inButton: !!c.closest("button"),
+            return { tag: c.tagName, text: name?.textContent.trim(), title: c.title,
+              focusable: document.activeElement === c, inButton: !!c.parentElement.closest("button"),
               disc: !!c.querySelector(".avatar"), cut: !name || name.scrollWidth > name.clientWidth + 1 };
           })`,
           funnyRow,
@@ -711,23 +765,26 @@ export default {
       10_000,
     ).catch(() => []);
     const peopleWant = [
-      {
-        tag: "A",
-        text: "Marlowe",
-        href: "https://www.twitch.tv/videos/1000000001?t=0h0m5s",
-        title: "Vance's stream at 0:05 · twitch.tv",
-        focusable: true,
-      },
-      { tag: "A", text: "Ada", href: "https://kick.com/ada_plays", title: "Ada · kick.com/ada_plays", focusable: true },
-      { tag: "SPAN", text: "Jules", href: null, title: "", focusable: false },
+      { tag: "BUTTON", text: "Marlowe", title: "Marlowe (Vance)", focusable: true },
+      { tag: "BUTTON", text: "Ada", title: "", focusable: true },
+      { tag: "SPAN", text: "Jules", title: "", focusable: false },
     ];
     for (const [i, w] of peopleWant.entries()) {
       const p = people[i];
-      const got = p && { tag: p.tag, text: p.text, href: p.href, title: p.title, focusable: p.focusable };
+      const got = p && { tag: p.tag, text: p.text, title: p.title, focusable: p.focusable };
       if (JSON.stringify(got) !== JSON.stringify(w) || p.inButton || !p.disc || p.cut)
         wrong.push(`the opened highlight's chip ${i + 1}: ${JSON.stringify(p)}`);
     }
-    await app.click(`${funnyRow} .detail span.chip strong`);
+    await app.click(`${funnyRow} .detail button.chip`);
+    const fromChip = await until(
+      "Marlowe's card from the chip",
+      () =>
+        app.js(`const card = document.querySelector('[role="dialog"] .card');
+          return card?.dataset.settled === "true" && card.querySelector(".links a")?.getAttribute("href")`),
+      10_000,
+    ).catch(() => null);
+    if (fromChip !== "https://www.twitch.tv/videos/1000000001?t=0h0m5s")
+      wrong.push(`Marlowe's card from the chip leads first to ${fromChip}`);
     const stillOpen = await app.js(
       `const row = document.querySelector(arguments[0]);
       return { open: row?.classList.contains("expanded"), chevron: row?.querySelector(".chevron")?.getAttribute("aria-expanded") }`,
@@ -736,6 +793,7 @@ export default {
     if (!stillOpen.open || stillOpen.chevron !== "true")
       wrong.push(`a click on a chip closed its highlight: ${JSON.stringify(stillOpen)}`);
     if ((await app.shownTime()) !== 25) wrong.push(`a click on a chip moved the player to ${await app.shownTime()} s`);
+    await app.key("Escape");
     await app.click(`${funnyRow} .chevron`);
 
     // Its row dragged onto "Make new edit": an edit holding it as a group named for it.
@@ -933,7 +991,7 @@ export default {
       // The switch: its segments ("*" the one showing), whether each can be
       // picked, the colours of their text and of its border by name, the
       // heading's plain label gone, and what shows under the heading. A web
-      // view with no color-mix (macOS 12's) draws the faded border by the
+      // view with no color-mix draws the faded border by the
       // app's fallback (colorMix.js), the same colour.
       const SWITCH = '.head .switch[role="tablist"]';
       const look = () =>
@@ -1289,11 +1347,14 @@ export default {
        return { view: Math.round(scroller.getBoundingClientRect().bottom - viewTop()),
          headings: Math.round(speaker.bottom - chapter.top), line: Math.round(box('#transcript .line > button.row[data-time="0.5"]').height) };`,
     );
-    if (room.view < room.headings + room.line)
+    if (room.view < room.headings + room.line) {
       ctx.log(
         `the transcript's view is ${room.view} px under its header, short of its headings' ${room.headings} px and a line's ${room.line}: the pinned headings not tried`,
       );
-    else {
+      // The pictures' host stopped here too: left answering, it would answer
+      // the scenarios after this one, which expect nobody to.
+      picturesBack.stop();
+    } else {
       // Marlowe's 13th line at the top: his heading is above, and pinned.
       await app.js(`${PINS} await put('#transcript .line button.row[data-time="6"]', 0);`);
       const atRest = await app.js(`${PINS} return pins();`);

@@ -9,13 +9,14 @@
 // Pure: node --test apps/desktop/src/lib/textFocus.test.mjs.
 
 /** What a press or a key needs of an element: `closest`, as the DOM's. */
-type Node = { closest(selector: string): unknown };
+type Place = { closest(selector: string): unknown };
 /** The element with the focus: one that can let go of it. */
-type Focused = Node & { blur(): void; type?: string };
+type Focused = Place & { blur(): void; type?: string };
 
-/** Where a press lets go of a text field: the main side (the player, the
- *  timeline, the transcript, the clip bar) and the library's list. */
-const AREAS = ".main, .library-list";
+/** Where a press lets go of a text field, marked so in the page: the main
+ *  side (the player, the timeline, the transcript, the clip bar; App.svelte)
+ *  and the library's list (Library.svelte). */
+export const AREAS = "[data-press-blurs-text]";
 /** What keeps it: the toolbar (the search box, its filters), the search's
  *  own chips, another field, a dialog or a menu. */
 const KEEPS = ".toolbar, .grouping, input, textarea, select, [contenteditable], [role=dialog], [role=menu]";
@@ -31,7 +32,7 @@ export function isTextField(el: Focused | null): el is Focused {
  *  active element) lets go of the focus if it's a text field and the press
  *  is on the player, the timeline, the transcript, the clip bar or the
  *  library's list. True if it did. */
-export function pressLetsGoOfText(target: Node | null, focused: Focused | null): boolean {
+export function pressLetsGoOfText(target: Place | null, focused: Focused | null): boolean {
   if (!target || !isTextField(focused) || !target.closest(AREAS) || target.closest(KEEPS)) return false;
   focused.blur();
   return true;

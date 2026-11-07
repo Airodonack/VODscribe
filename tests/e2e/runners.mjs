@@ -22,7 +22,8 @@
 //   time stands still.
 //
 // The runner's app data is emptied before each scenario: runners are for
-// testing only. E2E_NETWORK=1 here is passed on (scenarios that reach the sites).
+// testing only. E2E_NETWORK=1 here is passed on (scenarios that reach the sites),
+// and on the Mac, E2E_SCREEN (lib/screen.mjs).
 // run.mjs's options pass through as they are: --shard splits the suite
 // between runners; --parallel is Linux's only, so 1 here (the app's data
 // folder on Windows and macOS can't be moved per worker).
@@ -33,6 +34,8 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+
+import { macNotClear, macScreen, windowsNotClear } from "./lib/runnerScreen.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, "..", "..");
@@ -68,6 +71,8 @@ const ssh = (command, opts = {}) =>
   execFileSync("ssh", [...shared, runner.host, command], { encoding: "utf8", ...opts });
 const scp = (...args) => execFileSync("scp", ["-q", ...shared, ...args], { stdio: "inherit" });
 const log = (what) => console.log(`[${name}] ${what}`);
+// The lines of run.mjs's output shown here as it goes: progress, results and what it found of the computer.
+const SHOWN = /^\[\d+ s\]|^e2e:|^preflight:|^  (ok|FAIL|flaky|wall)|FAILED/;
 
 /** Copies the harness (tests/e2e and what it imports, as committed plus what's new) to the runner's folder. */
 function sendHarness(mkdir) {
@@ -89,11 +94,14 @@ function sendHarness(mkdir) {
   execFileSync("ssh", [...shared, runner.host, unpack], { input: tar.stdout });
 }
 
-/** The Windows runner's screen before the suite, run in the scheduled task
- *  (over SSH there's no desktop to see): a screenshot to out\desktop-before.png,
- *  the windows up to out\desktop-before.txt, and exit 3 if a window is in
- *  front that isn't the desktop, the taskbar or the task's own console. */
-const WINDOWS_DESKTOP = String.raw`$ErrorActionPreference = 'Stop'
+/** The Windows runner's screen, run in the scheduled task (over SSH there's
+ *  no desktop to see) before the suite, and again after a failed one with
+ *  "after": a screenshot to out\desktop-<when>.png, the windows up to
+ *  out\desktop-<when>.txt, and exit 3 if a window is in front that isn't the
+ *  desktop, the taskbar or the task's own console, with what it is as JSON
+ *  (lib/runnerScreen.mjs windowsNotClear says it). */
+const WINDOWS_DESKTOP = String.raw`param([string]$When = 'before')
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type @'
 using System;
@@ -105,6 +113,8 @@ public static class Desk {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [StructLayout(LayoutKind.Sequential)] public struct Box { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Box r);
   public static string Text(IntPtr h) { var s = new StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
   public static string Class(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
 }
@@ -112,17 +122,23 @@ public static class Desk {
 $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
 [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
-$bitmap.Save("$PSScriptRoot\out\desktop-before.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$bitmap.Save("$PSScriptRoot\out\desktop-$When.png", [System.Drawing.Imaging.ImageFormat]::Png)
 $front = [Desk]::GetForegroundWindow()
 $id = 0; [void][Desk]::GetWindowThreadProcessId($front, [ref]$id)
-$owner = (Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
+$process = Get-Process -Id $id -ErrorAction SilentlyContinue
+$owner = $process.ProcessName
 $title = [Desk]::Text($front); $class = [Desk]::Class($front)
+# Windows' own: its program in the Windows folder (not known when its path can't be read).
+$system = [bool]($process.Path -and $process.Path.StartsWith($env:windir, [StringComparison]::OrdinalIgnoreCase))
+$box = New-Object Desk+Box; [void][Desk]::GetWindowRect($front, [ref]$box)
+$bounds = [System.Windows.Forms.Screen]::FromHandle($front).Bounds
+$full = $box.Left -le $bounds.Left -and $box.Top -le $bounds.Top -and $box.Right -ge $bounds.Right -and $box.Bottom -ge $bounds.Bottom
 $up = Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { "$($_.ProcessName)  $($_.MainWindowTitle)" }
-@("in front: $owner  $class  $title") + $up | Set-Content "$PSScriptRoot\out\desktop-before.txt"
+@("in front: $owner  $class  $title  (Windows' own: $system, full screen: $full)") + $up | Set-Content "$PSScriptRoot\out\desktop-$When.txt"
 # Nothing in front, the desktop, the taskbar, or the console this task runs in.
 $own = $front -eq [Desk]::GetConsoleWindow() -or $title -like '*run.cmd*'
 if ($front -eq [IntPtr]::Zero -or $own -or $class -in 'Progman', 'WorkerW', 'Shell_TrayWnd') { exit 0 }
-Write-Output "the screen isn't clear: $owner ($title) is in front"
+@{ owner = $owner; title = $title; class = $class; system = $system; fullScreen = $full } | ConvertTo-Json -Compress
 exit 3
 `;
 
@@ -133,6 +149,25 @@ async function windows() {
   // The scheduled task runs in a signed-in session, and only then.
   if (!ps(`(quser 2>$null) -match 'Active'; exit 0`))
     throw new Error(`no one is signed in on ${name}: the tests need someone's desktop (sign in, then run this again)`);
+  // A run still going there (one this left when stopped, or one started by
+  // hand) would have its app killed by the install below and its out folder
+  // taken for this one's, and this would wait on its exit.txt: refused, not
+  // overlapped. Its task runs as long as the tests (run.vbs waits), and its
+  // run.cmd holds out\run.log open.
+  const going = ps(
+    [
+      "$why = @()",
+      `if ((Get-ScheduledTask -TaskName vodscribe-e2e -ErrorAction SilentlyContinue).State -eq 'Running') { $why += 'its task vodscribe-e2e is running' }`,
+      `$log = '${dir}\\out\\run.log'`,
+      `if (Test-Path $log) { try { [IO.File]::Open($log, 'Open', 'ReadWrite', 'None').Close() } catch { $why += 'its out\\run.log is in use' } }`,
+      "$why -join ', and '",
+    ].join("\n"),
+  );
+  if (going)
+    throw new Error(
+      `a test run is still going on ${name} (${going}): let it end, or end it there (its node, then ` +
+        `schtasks /end /tn vodscribe-e2e), then run this again`,
+    );
   // What the tests need there, found the way the task will look for it:
   // Node alone, since the app is driven through its own test hook (bridge),
   // not through tauri-driver.
@@ -178,7 +213,11 @@ async function windows() {
     "powershell -NoProfile -ExecutionPolicy Bypass -File desktop.ps1 > out\\desktop.log 2>&1",
     "if errorlevel 3 (type out\\desktop.log > out\\run.log & echo 3 > out\\exit.txt & exit /b 3)",
     `node tests\\e2e\\run.mjs "${exe}" --driver bridge ${args} > out\\run.log 2>&1`,
-    "echo %ERRORLEVEL% > out\\exit.txt",
+    "set CODE=%ERRORLEVEL%",
+    // One of Windows' own offers (an upgrade screen, Copilot) can come up
+    // during the suite and fail what follows: a failed run looks again.
+    'if not "%CODE%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -File desktop.ps1 after > out\\desktop-after.log 2>&1',
+    "echo %CODE% > out\\exit.txt",
   ].join("\r\n");
   const local = path.join(out, "run.cmd");
   writeFileSync(local, cmd);
@@ -191,11 +230,27 @@ async function windows() {
   // console is Windows Terminal it opens large and in front, over the app's
   // picture (the pixel checks then see the console, not the app).
   const hidden = path.join(out, "run.vbs");
-  writeFileSync(hidden, `CreateObject("WScript.Shell").Run """${dir}\\run.cmd""", 0, False\r\n`);
+  // It waits for run.cmd, so the task is running for as long as the tests are.
+  writeFileSync(hidden, `CreateObject("WScript.Shell").Run """${dir}\\run.cmd""", 0, True\r\n`);
   scp(hidden, `${runner.host}:${runner.dir}/run.vbs`);
-  ssh(`schtasks /create /tn vodscribe-e2e /sc once /st 23:59 /it /f /tr "wscript.exe ${dir}\\run.vbs"`, {
-    stdio: "ignore",
-  });
+  // The task in the signed-in user's session, with no trigger: started only
+  // here. (`schtasks /create /sc once /st 23:59` also started it at 23:59 that
+  // day, a second run over the first, whose exit.txt ended the wait.)
+  const registered = ps(
+    [
+      "$ErrorActionPreference = 'Stop'",
+      `$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '"${dir}\\run.vbs"'`,
+      "$user = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive",
+      "Register-ScheduledTask -TaskName vodscribe-e2e -Action $action -Principal $user -Force | Out-Null; 'registered'",
+    ].join("\n"),
+  );
+  if (!registered.endsWith("registered")) throw new Error(`couldn't make the scheduled task on ${name}: ${registered}`);
+  // The last run's results gone first, its exit.txt above all: the wait below
+  // ends on one.
+  const left = ps(
+    `Remove-Item -LiteralPath '${dir}\\out' -Recurse -Force -ErrorAction SilentlyContinue; Test-Path -LiteralPath '${dir}\\out'`,
+  );
+  if (left === "True") throw new Error(`couldn't clear ${runner.dir}/out on ${name}: a file in it is in use`);
   ssh(`schtasks /run /tn vodscribe-e2e`, { stdio: "ignore" });
   log("running");
   const begun = Date.now();
@@ -212,7 +267,7 @@ async function windows() {
       if (lost === 1) log(`lost the connection (${e.message.split("\n").at(-2) ?? e.message}); still waiting`);
       continue;
     }
-    const lines = text.split(/\r?\n/).filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL|flaky|wall)|FAILED/.test(l));
+    const lines = text.split(/\r?\n/).filter((l) => SHOWN.test(l));
     for (const l of lines.slice(shown)) console.log(`  ${l}`);
     shown = lines.length;
     if (ps(`Test-Path '${dir}\\out\\exit.txt'`) === "True") break;
@@ -220,9 +275,19 @@ async function windows() {
       throw new Error("the scheduled task hasn't started the tests in a minute");
   }
   scp("-r", `${runner.host}:${runner.dir}/out/*`, out);
-  const checked = path.join(out, "desktop.log");
-  if (existsSync(checked) && readFileSync(checked, "utf8").trim())
-    log(`desktop: ${readFileSync(checked, "utf8").trim()}`);
+  // Nothing left to start on its own.
+  ps(`Unregister-ScheduledTask -TaskName vodscribe-e2e -Confirm:$false -ErrorAction SilentlyContinue; exit 0`);
+  // What's in front, as desktop.ps1 found it before the suite and after a
+  // failed one, or what went wrong with the check itself.
+  for (const [file, when] of [
+    ["desktop.log", "desktop"],
+    ["desktop-after.log", "desktop after the failed run"],
+  ]) {
+    const checked = path.join(out, file);
+    const said = existsSync(checked) ? readFileSync(checked, "utf8").trim() : "";
+    const front = said.split(/\r?\n/).find((l) => l.startsWith("{"));
+    if (said) log(`${when}: ${front ? windowsNotClear(JSON.parse(front)) : said}`);
+  }
   return Number(readFileSync(path.join(out, "exit.txt"), "utf8").trim());
 }
 
@@ -236,42 +301,42 @@ const ref = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.k
 const windows = ObjC.deepUnwrap(ObjC.castRefToObject(ref)) || [];
 [front ? front.localizedName.js : "", ...windows.filter((w) => w.kCGWindowAlpha > 0)
   .map((w) => [w.kCGWindowOwnerName, w.kCGWindowLayer, w.kCGWindowName || ""].join("\\t"))].join("\\n");`;
-/** Window layers from the Dock's up are the system's own (the Dock, the
- *  menu bar, Notification Center, the pointer); an app's windows and its
- *  dialogs sit below. */
-const MAC_DOCK_LAYER = 20;
-
 /** The runner's screen before the suite, kept as desktop-before.png: a
  *  window left over it (a system alert, a prompt, another app) sits over
  *  what the scenarios sample from the screen, and fails them while the app
  *  is fine. Throws, listing what's there, if any app but Finder is in front
- *  or has a window up. */
-function macDesktop() {
+ *  or has a window up (lib/runnerScreen.mjs macScreen). */
+async function macDesktop() {
   const shot = `${runner.dir}/desktop-before.png`;
-  // The display woken first, so the picture is of the desktop, not a dark screen.
-  ssh(`caffeinate -u -t 1; screencapture -x '${shot}'`);
-  scp(`${runner.host}:${shot}`, path.join(out, "desktop-before.png"));
-  const [front, ...windows] = ssh("osascript -l JavaScript -", { input: MAC_WINDOWS }).trim().split("\n");
-  const listed = windows.map((w) => w.split("\t"));
-  const foreign = listed.filter(([owner, layer]) => owner !== "Finder" && Number(layer) < MAC_DOCK_LAYER);
-  writeFileSync(
-    path.join(out, "desktop-before.txt"),
-    `frontmost: ${front}\n${listed.map((w) => w.join("  ")).join("\n")}\n`,
-  );
-  if (front !== "Finder" || foreign.length) {
-    const named = foreign.map(([owner, , title]) => (title ? `${owner} (${title})` : owner));
-    throw new Error(
-      `${name}'s screen isn't clear: ${front} is in front${named.length ? `, and up: ${named.join(", ")}` : ""}` +
-        ` (see ${path.join(out, "desktop-before.png")}); close it there, then run this again`,
+  const look = () => {
+    // The display woken first, so the picture is of the desktop, not a dark screen.
+    ssh(`caffeinate -u -t 1; screencapture -x '${shot}'`);
+    scp(`${runner.host}:${shot}`, path.join(out, "desktop-before.png"));
+    const [front, ...windows] = ssh("osascript -l JavaScript -", { input: MAC_WINDOWS }).trim().split("\n");
+    const listed = windows.map((w) => w.split("\t"));
+    writeFileSync(
+      path.join(out, "desktop-before.txt"),
+      `frontmost: ${front}\n${listed.map((w) => w.join("  ")).join("\n")}\n`,
     );
+    return { front, ...macScreen(front, listed) };
+  };
+  let seen = look();
+  if (seen.wake) {
+    // Just after a start, nothing activated yet: Finder brought to the front
+    // through Launch Services (System Events would ask for permission over SSH).
+    log("the login window is in front with nothing up (just started?): activating Finder");
+    ssh("open -a Finder");
+    await sleep(2000);
+    seen = look();
   }
+  if (!seen.clear) throw new Error(macNotClear(name, seen.front, seen.foreign, path.join(out, "desktop-before.png")));
   log("desktop clear");
 }
 
-function mac() {
+async function mac() {
   sendHarness(`mkdir -p '${runner.dir}'`);
   log("harness sent");
-  macDesktop();
+  await macDesktop();
   const target = `${runner.dir}/${path.basename(app)}`;
   ssh(`rm -rf '${target}'`);
   scp("-r", app, `${runner.host}:${runner.dir}/`);
@@ -283,18 +348,18 @@ function mac() {
       ...shared,
       runner.host,
       `export PATH="$HOME/.local/node/bin:$PATH" E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT='${runner.dir}/out'` +
-        `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}; ` +
+        `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}` +
+        `${process.env.E2E_SCREEN ? ` E2E_SCREEN='${process.env.E2E_SCREEN}'` : ""}; ` +
         `caffeinate -u -t 1; cd '${runner.dir}' && rm -rf out && node tests/e2e/run.mjs '${target}' ${args}`,
     ],
     { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1 << 28 },
   );
-  for (const l of run.stdout.split("\n").filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL|flaky|wall)|FAILED/.test(l)))
-    console.log(`  ${l}`);
+  for (const l of run.stdout.split("\n").filter((l) => SHOWN.test(l))) console.log(`  ${l}`);
   spawnSync("scp", ["-q", ...shared, "-r", `${runner.host}:${runner.dir}/out/*`, out], { stdio: "inherit" });
   return run.status;
 }
 
-const code = runner.os === "windows" ? await windows() : runner.os === "macos" ? mac() : null;
+const code = runner.os === "windows" ? await windows() : runner.os === "macos" ? await mac() : null;
 if (code === null) throw new Error(`runner ${name}: os ${runner.os} isn't one this can drive (windows, macos)`);
 log(`results in ${out}`);
 process.exit(code);

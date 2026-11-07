@@ -9,6 +9,7 @@ export const SECTIONS = [
   { id: "appearance", label: "Appearance", icon: "palette" },
   { id: "controls", label: "Controls", icon: "keyboard" },
   { id: "storage", label: "Storage", icon: "folder" },
+  { id: "encoding", label: "Encoding", icon: "film" },
   { id: "updates", label: "Updates", icon: "download" },
   { id: "privacy", label: "Privacy", icon: "lock" },
   { id: "help", label: "Help", icon: "circle-help" },

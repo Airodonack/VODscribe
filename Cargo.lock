@@ -1542,6 +1542,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "dragndrop-source"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "gtk",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "windows",
+ "windows-core 0.62.2",
+]
+
+[[package]]
+name = "dragndrop-target"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "gtk",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "windows",
+]
+
+[[package]]
 name = "dsa"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6618,10 +6643,12 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vodscribe"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "block2",
+ "dragndrop-source",
+ "dragndrop-target",
  "getrandom 0.4.3",
  "glib",
  "gtk",
@@ -6642,13 +6669,14 @@ dependencies = [
  "tauri-plugin-updater",
  "vodscribe-core",
  "vodscribe-player",
+ "webview2-com",
  "windows",
  "windows-core 0.62.2",
 ]
 
 [[package]]
 name = "vodscribe-core"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "bzip2 0.6.1",
@@ -6672,7 +6700,7 @@ dependencies = [
 
 [[package]]
 name = "vodscribe-player"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "cpal",
@@ -6701,7 +6729,7 @@ dependencies = [
 
 [[package]]
 name = "vodscribe-worker"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "serde_json",

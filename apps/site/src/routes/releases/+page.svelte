@@ -23,10 +23,39 @@
     section.scrollIntoView();
   }
 
+  /** The version being read: the topmost section crossing a line a fifth of
+   *  the way down the window. The list marks it where it stands beside the
+   *  notes; it stays put while the line is between two sections, and is the
+   *  newest release until the line reaches one. */
+  let reading = $state(list[0]?.version ?? "");
+
+  function watchReading() {
+    const sections = [...document.querySelectorAll<HTMLElement>(".release")];
+    const crossing = new Set<Element>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) crossing.add(e.target);
+          else crossing.delete(e.target);
+        }
+        const top = sections.find((section) => crossing.has(section));
+        if (top) reading = top.id;
+      },
+      // The root shrunk to the line itself.
+      { rootMargin: "-20% 0px -80% 0px" },
+    );
+    for (const section of sections) observer.observe(section);
+    return () => observer.disconnect();
+  }
+
   onMount(() => {
     openTarget();
     window.addEventListener("hashchange", openTarget);
-    return () => window.removeEventListener("hashchange", openTarget);
+    const unwatch = watchReading();
+    return () => {
+      window.removeEventListener("hashchange", openTarget);
+      unwatch();
+    };
   });
 </script>
 
@@ -96,7 +125,11 @@
   <div class="side">
     <nav class="versions" aria-label="Versions">
       {#each list as release (release.version)}
-        <a href="#{release.version}" class:current={release.version === current}>{release.version}</a>
+        <a
+          href="#{release.version}"
+          class:current={release.version === current}
+          class:reading={release.version === reading}>{release.version}</a
+        >
       {/each}
     </nav>
   </div>
@@ -154,6 +187,22 @@
       margin: 40px 0 0;
       padding-left: 14px;
       border-left: 1px solid var(--border);
+    }
+
+    /* The version being read: a bar over the list's divider line. */
+    .versions a {
+      position: relative;
+    }
+
+    .versions .reading::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -16px;
+      width: 3px;
+      border-radius: 2px;
+      background: var(--accent);
     }
   }
 

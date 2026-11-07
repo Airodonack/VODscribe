@@ -21,7 +21,11 @@ import { toast } from "./toasts.svelte";
 export type Target = { kind: "vod"; vod: Vod; at?: number } | { kind: "edit"; edit: Edit };
 
 /** One action: a menu's item, with the name a surface finds it by. */
-export type Action = MenuItem & { id: "folder" | "open" | "copy" | "add" | "remove" };
+export type Action = MenuItem & {
+  id: "folder" | "open" | "copy" | "add" | "remove";
+  /** The address it opens, for a surface that shows it as a link (one that drags). */
+  href?: string;
+};
 
 /** What a surface lends the actions it can't do on its own. */
 export type Hooks = {
@@ -75,7 +79,8 @@ export function actionsFor(target: Target, hooks: Hooks = {}): Action[] {
     // A site's VOD, its video downloaded or not, links to its site.
     if (vod.source_path === null) {
       const site = siteName(vod);
-      out.push({ id: "open", label: `Open on ${site}`, icon: "external", run: () => openUrl(watchUrl(vod, at)) });
+      const href = watchUrl(vod, at);
+      out.push({ id: "open", label: `Open on ${site}`, icon: "external", href, run: () => openUrl(href) });
       out.push({
         id: "copy",
         label: linksHaveTime(vod.platform) && at > 0 ? "Copy link to this moment" : "Copy link",

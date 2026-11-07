@@ -35,10 +35,10 @@ impl Db {
     pub fn add_realized(&self, vod_id: i64, start: f64, end: f64) -> Result<i64> {
         self.atomically(|db| {
             db.conn.execute(
-                "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published,
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published,
                                    status, progress, added_at, model, chat)
                  SELECT (SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                        'realized', ?1 || ':' || ?2 || '-' || ?3 || ':' || ?5, url, title, channel, ?4, thumbnail,
+                        'realized', ?1 || ':' || ?2 || '-' || ?3 || ':' || ?5, url, title, channel, channel_login, channel_url, ?4, thumbnail,
                         published, 'done', 1.0, ?5, model, chat
                  FROM vods WHERE id = ?1",
                 params![vod_id, start, end, end - start, now()],
@@ -140,9 +140,18 @@ impl Db {
     /// Notes that VOD `vod_id`'s files, transcript and chat are gone while
     /// pieces of it stay: holes, till nothing uses it and it goes too.
     pub fn set_gone(&self, vod_id: i64) -> Result<()> {
-        self.conn.execute("UPDATE vods SET gone = 1, media_path = NULL WHERE id = ?1", [vod_id])?;
+        self.conn.execute("UPDATE vods SET gone = 1, video_ext = NULL, media_path = NULL WHERE id = ?1", [vod_id])?;
         // Its cast and activity go with its transcript.
         self.conn.execute("DELETE FROM vod_annotations WHERE vod_id = ?1", [vod_id])?;
+        Ok(())
+    }
+
+    /// Moves VOD `vod_id`, gone but not yet erased (its work still
+    /// stopping), out of the way of the same VOD added again: under an id
+    /// of its own, `add_vod` doesn't find it and adds the VOD anew, and its
+    /// row stays to name its files till they're erased (`unused_sources`).
+    pub fn set_aside(&self, vod_id: i64) -> Result<()> {
+        self.conn.execute("UPDATE vods SET platform_id = platform_id || '#' || id WHERE id = ?1", [vod_id])?;
         Ok(())
     }
 }
@@ -155,6 +164,20 @@ mod tests {
     use crate::chat::{ChatMessage, ChatPart, Kind};
     use crate::edits::tests::info;
     use crate::transcript::Segment;
+
+    #[test]
+    fn a_vod_set_aside_is_added_anew_and_left_to_erase() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let old = db.add_vod(&info("x")).unwrap().0.id;
+        db.remove_entry(old).unwrap();
+        db.set_gone(old).unwrap();
+        db.set_aside(old).unwrap();
+        let (new, created) = db.add_vod(&info("x")).unwrap();
+        assert!(created && new.id != old, "added anew");
+        // Still there to name its files, and the next start erases it.
+        assert!(db.vod(old).unwrap().is_some(), "its row deleted by the add");
+        assert_eq!(db.unused_sources().unwrap(), vec![old]);
+    }
 
     #[test]
     fn a_realized_stretch_is_a_source_of_its_own() {
@@ -295,7 +318,12 @@ mod tests {
             db.delete_vod(other).unwrap();
             (vod, kept)
         };
-        rusqlite::Connection::open(&path).unwrap().execute_batch("PRAGMA user_version = 35;").unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 35;",
+            )
+            .unwrap();
         let db = Db::open(&path).unwrap();
 
         let lines = db.lines(kept).unwrap();

@@ -1,7 +1,8 @@
 //! The list of jobs the library shows (Jobs.svelte): the clips' queue (clips
 //! cut and edits rendered, one at a time: `clips::Cutter`), then the
-//! erasures of removed VODs (`vods::Sweeper`), which run beside it, each with
-//! how far it is. Sent whole as `jobs` whenever it changes, by a thread of
+//! erasures of removed VODs (`vods::Sweeper`), which run beside it, then the
+//! files dropped on the window being received (`receive`), each with how far
+//! it is. Sent whole as `jobs` whenever it changes, by a thread of
 //! its own: the queues (`Jobs::watch`) and the progress of what's running
 //! only send it word, so nothing that changes a queue while holding the
 //! library's lock waits on the list's reads.
@@ -10,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::Db;
 
 use crate::{AppState, CmdResult};
@@ -25,6 +26,8 @@ pub(crate) enum Kind {
     Edit,
     /// A removed VOD's transcript, chat and files, erased.
     Erase,
+    /// A file dropped on the window, received from the app it came from.
+    Receive,
 }
 
 /// A queue whose running job reports its progress.
@@ -40,9 +43,10 @@ pub(crate) enum Queue {
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub(crate) struct Job {
     kind: Kind,
-    /// The clip's or edit's id; the VOD's, for an erasure.
+    /// The clip's or edit's id; the VOD's, for an erasure; the file's own
+    /// (`receive`), for one received.
     id: i64,
-    /// The clip's or edit's title; the VOD's, for an erasure.
+    /// The clip's or edit's title; the VOD's, for an erasure; the file's name.
     label: String,
     /// Begun: the one each queue is at.
     running: bool,
@@ -99,7 +103,6 @@ pub(crate) fn begun(app: &AppHandle, queue: Queue, id: i64) {
 
 /// How far (0..1) job `id` on the clips' queue is along, if it's the one
 /// running and that's known.
-#[cfg(target_os = "macos")]
 pub(crate) fn progress_of(app: &AppHandle, id: i64) -> Option<f64> {
     let state = app.try_state::<AppState>()?;
     let running = *state.job_list.rendering.lock().unwrap();
@@ -127,7 +130,7 @@ fn send_changes(app: &AppHandle, heard: Receiver<()>) {
         while heard.try_recv().is_ok() {}
         let jobs = listed(app);
         if last.as_ref() != Some(&jobs) {
-            let _ = app.emit("jobs", &jobs);
+            crate::page::emit(app, "jobs", &jobs);
             last = Some(jobs);
         }
     }
@@ -143,26 +146,15 @@ fn listed(app: &AppHandle) -> Vec<Job> {
     // Read-only: never waits for the library's writes.
     let db = state.reads.lock().unwrap();
     let out = |id| state.clips.is_out(id);
-    arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out))
+    let mut jobs = arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out));
+    jobs.extend(receiving(&state));
+    jobs
 }
 
-/// Sends the list as it is now, from the main thread, where Tauri sends it at
-/// once: while a drag out waits for its files in a main loop run inside an
-/// ask (clips.rs `start_drag`), what the list's own thread sends waits in
-/// Tauri's queue until that ends, and the jobs shown would stand. Not if the
-/// library's reads are busy just now (the next tick tells).
-#[cfg(target_os = "linux")]
-pub(crate) fn retell(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let render = state.clips.listed();
-    let erase = state.sweeper.listed();
-    let rendering = *state.job_list.rendering.lock().unwrap();
-    let erasing = *state.job_list.erasing.lock().unwrap();
-    let Ok(db) = state.reads.try_lock() else { return };
-    let out = |id| state.clips.is_out(id);
-    let jobs = arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out));
-    drop(db);
-    let _ = app.emit("jobs", &jobs);
+/// The files being received, as jobs: each running.
+fn receiving(state: &AppState) -> Vec<Job> {
+    let listed = state.receives.listed().into_iter();
+    listed.map(|(id, label, progress)| Job { kind: Kind::Receive, id, label, running: true, progress }).collect()
 }
 
 /// What job `id` on `queue` makes and what it's called; None if it's gone,
@@ -176,7 +168,7 @@ pub(crate) fn describe(db: &Db, queue: Queue, id: i64, out: impl Fn(i64) -> bool
                 let clip = db.clip(id).ok()??;
                 (clip.shown || out(id)).then_some((Kind::Clip, clip.title))
             }
-            false => Some((Kind::Edit, db.edit(id).ok()??.title)),
+            false => Some((Kind::Edit, db.clip_title(id).ok()??)),
         },
         Queue::Erase => Some((Kind::Erase, db.vod(id).ok()??.info.title)),
     }
@@ -230,13 +222,19 @@ pub(crate) async fn reorder_jobs(app: AppHandle, ids: Vec<i64>) -> CmdResult<()>
 
 /// Cancels a job from the list: a clip or edit is taken out of the queue or
 /// stopped (`Cutter::cancel_job`); an erasure is stopped, what's left of the
-/// VOD erased at the next start (`Sweeper::cancel`).
+/// VOD erased at the next start (`Sweeper::cancel`); a file being received
+/// stops, and what came of it goes (`Receives::cancel`).
 #[tauri::command]
 pub(crate) async fn cancel_job(app: AppHandle, kind: Kind, id: i64) -> CmdResult<()> {
     let state = app.state::<AppState>();
     match kind {
         Kind::Clip | Kind::Edit => state.clips.cancel_job(&app, id),
         Kind::Erase => state.sweeper.cancel(id),
+        Kind::Receive => {
+            if state.receives.cancel(id) {
+                changed(&app);
+            }
+        }
     }
     Ok(())
 }
@@ -295,5 +293,7 @@ mod tests {
         );
         let kind: Kind = serde_json::from_str("\"clip\"").unwrap();
         assert_eq!(kind, Kind::Clip);
+        let kind: Kind = serde_json::from_str("\"receive\"").unwrap();
+        assert_eq!(kind, Kind::Receive);
     }
 }

@@ -18,6 +18,11 @@ const fixtures = path.dirname(LANDED);
 
 export default {
   name: "upgrade-0.5.0",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "upgraded-library":
+      "Dark theme: the library holds landed-10-minutes, saying Paused 10% over a short progress line, with play, ×, folder and bin icons, then eagle-has-landed; the main area offers to search all 2 VODs.",
+  },
   before(ctx) {
     // The paused one's file, made where it's made for the other scenarios.
     const speech = path.dirname(longSpeech(path.join(ctx.out, "fixtures")));

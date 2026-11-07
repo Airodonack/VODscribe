@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-streamer-index"
+description = "Enables the streamer_index command without any pre-configured scope."
+commands.allow = ["streamer_index"]
+
+[[permission]]
+identifier = "deny-streamer-index"
+description = "Denies the streamer_index command without any pre-configured scope."
+commands.deny = ["streamer_index"]

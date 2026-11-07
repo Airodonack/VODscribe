@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::{ClipStatus, Db};
 use vodscribe_core::edits::{self, Edit, EditPiece};
-use vodscribe_core::settings::Settings;
+use vodscribe_core::settings::{ClipEncoding, Settings};
 use vodscribe_core::{clips, render, tools};
 
 use crate::history::{self, Doc};
@@ -29,13 +29,19 @@ struct Progress {
     progress: f64,
 }
 
+/// How clips and edits are made now (Settings › Encoding): what a rendered
+/// edit is current against (`Db::edit`).
+pub(crate) fn made_now(app: &AppHandle) -> ClipEncoding {
+    Settings::load(&app.state::<AppState>().paths.settings()).clip_encoding()
+}
+
 /// News of edit `id`; of a snippet open in the editor, for its clip bar too.
 pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
-    if let Ok(Some(edit)) = db.edit(id) {
+    if let Ok(Some(edit)) = db.edit(id, made_now(app)) {
         let snippet = edit.snippet_of.is_some();
-        let _ = app.emit("edit", edit);
+        crate::page::emit(app, "edit", edit);
         if snippet && let Ok(Some(clip)) = db.clip(id) {
-            let _ = app.emit("clip", clip);
+            crate::page::emit(app, "clip", clip);
         }
     }
 }
@@ -48,8 +54,9 @@ pub(crate) fn remake_snippet(app: &AppHandle, db: &Db, id: i64) {
         return;
     }
     // Its file as it is if what it's made of hasn't changed (a highlight or
-    // a cut added, say), unless that file's gone.
-    if let Ok(Some(edit)) = db.edit(id)
+    // a cut added, say) and it's made as clips are made now, unless that
+    // file's gone.
+    if let Ok(Some(edit)) = db.edit(id, made_now(app))
         && edit.current
         && edit.status == ClipStatus::Ready
         && edit.file_path.as_deref().is_some_and(|p| Path::new(p).is_file())
@@ -63,11 +70,6 @@ pub(crate) fn remake_snippet(app: &AppHandle, db: &Db, id: i64) {
         // Once: changes made one after another remake it once, not once each.
         state.clips.queue_once(id);
     }
-}
-
-/// Where edit videos go: Edits beside the clips' folders.
-fn edits_dir(app: &AppHandle) -> PathBuf {
-    crate::clips::clips_dir(app).join("Edits")
 }
 
 /// Edit `id`'s pieces, each a hole if its footage is gone for good: its VOD
@@ -99,11 +101,12 @@ pub(crate) fn missing(app: &AppHandle, db: &Db, pieces: &[EditPiece]) -> Vec<(i6
 pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     // A snippet whose file is of it as it is already (made for a change
-    // undone since, say) isn't made again.
+    // undone since, say), and made as clips are made now (`Edit::current`
+    // says both), isn't made again.
     {
         let db = state.db.lock().unwrap();
         if db.is_snippet(id)? == Some(true)
-            && let Some(edit) = db.edit(id)?
+            && let Some(edit) = db.edit(id, made_now(app))?
             && edit.current
             && edit.file_path.as_deref().is_some_and(|p| Path::new(p).is_file())
         {
@@ -124,7 +127,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
         }
         let db = state.db.lock().unwrap();
-        let edit = db.edit(id)?.context("That edit is gone.")?;
+        let edit = db.edit(id, made_now(app))?.context("That edit is gone.")?;
         let version = db.revision(id)?;
         let edit_pieces = pieces(app, &db, id)?;
         // What it's made of, to know later whether a change touched it.
@@ -133,22 +136,15 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::cover(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;
         // Sound alone if every piece's VOD is, named for the format clips are made in.
-        let format = Settings::load(&state.paths.settings()).clip_format;
+        let encoding = Settings::load(&state.paths.settings()).clip_encoding();
         let audio_only = edit_pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
-        // The same file as last time, if it's still named for the edit (its
-        // extension may be the one for sound alone, found only by rendering).
-        let name = format!("{}.{}", clips::safe_name(&edit.title), clips::extension(audio_only, format));
-        let out = match &edit.file_path {
-            // (render() gives it the extension for what it holds: the same, written over.)
-            Some(path) if Path::new(path).file_stem() == Path::new(&name).file_stem() => PathBuf::from(path),
-            // A snippet's goes with the clips; a listed clip's in Edits.
-            _ if edit.snippet_of.is_some() => clips::unique_path(&crate::clips::clips_dir(app), &name),
-            _ => clips::unique_path(&edits_dir(app), &name),
-        };
+        // Made again in place (its extension may be the one for sound alone,
+        // found only by rendering: render() gives it that).
+        let out = state.paths.clip_file(id, clips::extension(audio_only, encoding.format()));
         crate::files::writing(&out);
-        anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path, made_of, chapters))
+        anyhow::Ok((pieces, ffmpeg, out, version, encoding, edit.file_path, made_of, chapters))
     })();
-    let (pieces, ffmpeg, out, version, format, before, made_of, chapters) = match prepared {
+    let (pieces, ffmpeg, out, version, encoding, before, made_of, chapters) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
@@ -165,11 +161,11 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
     let report = |progress: f64| {
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
-            let _ = app.emit("edit-progress", Progress { id, progress });
+            crate::page::emit(app, "edit-progress", Progress { id, progress });
             crate::job_list::progressed(app, id, progress);
         }
     };
-    let result = render::render(&ffmpeg, &pieces, None, &chapters, format, &out, stop, report);
+    let result = render::render(&ffmpeg, &pieces, None, &chapters, encoding, &out, stop, report);
     // As made: sound alone is named so (an .m4a or .wav), found only then.
     let out = result.as_ref().map_or(out, |made| made.clone());
     let db = state.db.lock().unwrap();
@@ -178,19 +174,19 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         Ok(_) => {
             db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?;
             db.set_made_of(id, &made_of)?;
+            db.set_made_as(id, Some(encoding))?;
         }
         // Stopped, or deleted: as it was before, if it's still there.
         Err(e) if vodscribe_core::is_canceled(e) => db.set_edit_render(id, ClipStatus::Waiting, None, None, None)?,
         Err(e) => db.set_edit_render(id, ClipStatus::Error, None, Some(&format!("{e:#}")), None)?,
     }
-    if result.is_ok() && db.edit(id)?.is_none() {
+    if result.is_ok() && db.revision(id)?.is_none() {
         crate::files::delete_file(&out);
     }
-    // The video made before under another name (renamed, or the other format)
-    // goes, unless another app took it.
-    if let Some(old) = before.filter(|p| result.is_ok() && Path::new(p) != out)
-        && !db.edit_handed_out(id, true)?
-    {
+    // The video made before in the other format goes (the names it was
+    // handed out by stay).
+    let before = before.filter(|p| crate::clips::own_file(&state.paths, p));
+    if let Some(old) = before.filter(|p| result.is_ok() && Path::new(p) != out) {
         crate::files::delete_file(old);
     }
     emit(app, &db, id);
@@ -207,9 +203,9 @@ pub(crate) struct EditView {
 }
 
 pub(crate) fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
-    let edit = db.edit(id).map_err(err)?.ok_or("That edit is gone.")?;
+    let edit = db.edit(id, made_now(app)).map_err(err)?.ok_or("That edit is gone.")?;
     let pieces = pieces(app, db, id).map_err(err)?;
-    let _ = app.emit("edit", edit.clone());
+    crate::page::emit(app, "edit", edit.clone());
     Ok(EditView { edit, pieces })
 }
 
@@ -242,14 +238,16 @@ fn title(text: &str) -> CmdResult<String> {
 
 #[tauri::command]
 pub(crate) async fn list_edits(app: AppHandle) -> CmdResult<Vec<Edit>> {
-    crate::with_reads(app, |db| db.edits()).await
+    let now = made_now(&app);
+    crate::with_reads(app, move |db| db.edits(now)).await
 }
 
 /// A new, empty edit, named "Edit 1", "Edit 2" and so on.
 #[tauri::command]
 pub(crate) async fn create_edit(state: State<'_, AppState>) -> CmdResult<Edit> {
     let db = state.db.lock().unwrap();
-    let taken: Vec<String> = db.edits().map_err(err)?.into_iter().map(|e| e.title).collect();
+    let now = Settings::load(&state.paths.settings()).clip_encoding();
+    let taken: Vec<String> = db.edits(now).map_err(err)?.into_iter().map(|e| e.title).collect();
     let name = (1..).map(|n| format!("Edit {n}")).find(|n| !taken.contains(n)).expect("a free name");
     db.add_edit(&name).map_err(err)
 }
@@ -313,23 +311,22 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
     };
     // Its render stops (one that ends now finds it gone, and deletes its file).
     state.clips.cancel(id);
-    if let Some(file) = gone.file {
-        crate::files::delete_file(file);
-    }
+    crate::clips::let_go_files(&state.paths, id, gone.file.as_deref(), gone.handed_out);
     // Its clips' files once they're out of the library, as `clips::remove`
     // does for one.
     for (clip, handed_out) in gone.clips {
         crate::clips::after_delete(&app, clip.id, clip.file_path, handed_out);
     }
-    let _ = app.emit("edit-removed", id);
+    crate::page::emit(&app, "edit-removed", id);
     Ok(())
 }
 
-/// What `delete_edit` takes away with an edit: its video's file, unless
-/// another app took it (dragged out), and the clips that were on its clip
-/// bar, each with whether its file was dragged out (another app's then).
+/// What `delete_edit` takes away with an edit: its video's file, whether
+/// that was dragged out (handed out to another app), and the clips that were
+/// on its clip bar, each with whether its file was.
 pub(crate) struct EditGone {
     pub file: Option<String>,
+    pub handed_out: bool,
     pub clips: Vec<(vodscribe_core::db::Clip, bool)>,
 }
 
@@ -339,7 +336,8 @@ pub(crate) struct EditGone {
 /// error if it isn't an edit.
 pub(crate) fn delete_edit_in(db: &Db, id: i64, stop: impl Fn(i64)) -> Result<EditGone> {
     let gone = db.atomically(|db| {
-        let file = db.edit(id)?.and_then(|e| e.file_path);
+        // (Only its file: how clips are made now doesn't come into it.)
+        let file = db.edit(id, ClipEncoding::default())?.and_then(|e| e.file_path);
         let handed_out = db.edit_handed_out(id, false)?;
         let mut clips = Vec::new();
         for clip in db.bar_clips(id)? {
@@ -348,7 +346,7 @@ pub(crate) fn delete_edit_in(db: &Db, id: i64, stop: impl Fn(i64)) -> Result<Edi
             clips.push((clip, out));
         }
         anyhow::ensure!(db.delete_edit(id)?, "That isn't an edit.");
-        Ok(EditGone { file: file.filter(|_| !handed_out), clips })
+        Ok(EditGone { file, handed_out, clips })
     })?;
     for (clip, _) in &gone.clips {
         stop(clip.id);
@@ -367,7 +365,7 @@ pub(crate) async fn add_to_edit(
     index: Option<usize>,
 ) -> CmdResult<EditView> {
     changing(&app, edit_id, "Piece added", |db| {
-        db.edit(edit_id)?.context("That edit is gone.")?;
+        db.revision(edit_id)?.context("That edit is gone.")?;
         db.add_group(edit_id, clip_id, index).map(|_| ())
     })
 }
@@ -387,7 +385,7 @@ pub(crate) async fn add_range_to_edit(
 ) -> CmdResult<EditView> {
     let title = title.as_deref().and_then(clips::written_title);
     changing(&app, edit_id, "Piece added", |db| {
-        db.edit(edit_id)?.context("That edit is gone.")?;
+        db.revision(edit_id)?.context("That edit is gone.")?;
         db.vod(vod_id)?.context("That VOD is gone.")?;
         let title = match title {
             Some(title) => title,
@@ -520,33 +518,51 @@ pub(crate) async fn stop_render(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Edit `id`'s rendered video, if it's there.
-fn rendered(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
+/// Edit `id`'s rendered video under the name it's handed out by: its title
+/// (`clips::handed_out`). Named under the library's lock, as a clip's is
+/// (`clips::hand_out_made`): a delete in between left a name made after it
+/// had looked for them, a full-size file nothing removed.
+fn handed_out(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     let state = app.state::<AppState>();
-    let edit = state.db.lock().unwrap().edit(id).map_err(err)?.ok_or("That edit is gone.")?;
-    edit.file_path.map(PathBuf::from).filter(|p| p.is_file()).ok_or_else(|| "This edit isn't rendered yet.".into())
+    let format = Settings::load(&state.paths.settings()).clip_encoding().format();
+    let db = state.db.lock().unwrap();
+    let edit = db.edit(id, made_now(app)).map_err(err)?.ok_or("That edit is gone.")?;
+    let path = edit.file_path.map(PathBuf::from).filter(|p| p.is_file()).ok_or("This edit isn't rendered yet.")?;
+    let name = crate::clips::drag_name(&db, format, id);
+    Ok(crate::clips::handed_out(&state.paths, id, &path, &name))
 }
 
-/// Shows edit `id`'s video in the system file manager.
+/// Shows edit `id`'s video in the system file manager, under its title:
+/// from there it's the user's to take.
 #[tauri::command]
 pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let path = rendered(&app, id)?;
+    let path = handed_out(&app, id)?;
+    let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     app.opener().reveal_item_in_dir(path).map_err(err)
 }
 
 /// Starts dragging edit `id`'s video out of the window, as for a clip
-/// (`clips::drag_clip`): false if it didn't begin, the button up first.
+/// (`clips::drag_clip`), `drag` the page's number for it, which comes back
+/// with its end; an MP4 is watched for DaVinci Resolve as a clip's is
+/// (resolve.rs). False if it didn't begin, the button up first.
 #[tauri::command]
-pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
-    let path = rendered(&app, id)?;
+pub(crate) async fn drag_edit(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: i64,
+    drag: Option<u64>,
+) -> CmdResult<bool> {
+    let path = handed_out(&app, id)?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let settings = Settings::load(&app.state::<AppState>().paths.settings());
+    let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &[name.as_str()]));
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let names = vec![crate::clips::Outgoing { name, job: None }];
     let files = move || vec![crate::clips::Made::Ready(path.clone())];
-    crate::clips::drag_file(window, None, names, files, None, taken, |_| {}, || {}).await
+    crate::clips::drag_file(window, drag, names, files, None, resolve, taken, |_| {}, || {}).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing
@@ -568,7 +584,7 @@ pub(crate) async fn edit_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc:
         let frame = source
             .zip(tools::find_ffmpeg(&state.paths.bin()))
             .and_then(|((path, at), ffmpeg)| vodscribe_core::local::frame(&ffmpeg, &path, at, 320).ok());
-        frame.or_else(|| std::fs::read(state.paths.thumbs().join(thumb?)).ok()).unwrap_or_default()
+        frame.or_else(|| std::fs::read(state.paths.source_thumb(&thumb?)).ok()).unwrap_or_default()
     })
     .await
     .map_err(err)?;

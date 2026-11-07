@@ -1,0 +1,50 @@
+{
+  "index": {
+    "format": "vodscribe-streamers",
+    "version": 1,
+    "accounts": {
+      "twitch/marlowe_live": "marlowe",
+      "kick/ada_plays": "ada"
+    }
+  },
+  "cards": {
+    "marlowe": {
+      "format": "vodscribe-streamer",
+      "version": 1,
+      "id": "marlowe",
+      "name": "Vance",
+      "avatar": { "platform": "twitch", "login": "marlowe_live" },
+      "channels": [
+        { "platform": "twitch", "login": "marlowe_live" },
+        { "platform": "youtube", "login": "@vanceplays" },
+        { "platform": "kick", "login": "vance" }
+      ],
+      "aliases": ["Mar", "V"],
+      "socials": [{ "label": "Bluesky", "url": "https://bsky.app/profile/vance.example" }],
+      "contexts": {
+        "nopixel": {
+          "characters": [
+            { "name": "Marlowe", "wiki": "https://nopixel.fandom.com/wiki/Marlowe" },
+            { "name": "Dez Kade" }
+          ]
+        }
+      }
+    },
+    "ada": {
+      "format": "vodscribe-streamer",
+      "version": 1,
+      "id": "ada",
+      "name": "Ada",
+      "channels": [
+        { "platform": "kick", "login": "ada_plays" },
+        { "platform": "twitch", "login": "ada_plays" }
+      ]
+    },
+    "pell": {
+      "format": "vodscribe-streamer",
+      "version": 1,
+      "id": "pell",
+      "name": "Pell Harrow"
+    }
+  }
+}

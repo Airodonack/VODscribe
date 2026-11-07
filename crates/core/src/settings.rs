@@ -27,12 +27,88 @@ pub enum Theme {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ClipFormat {
-    /// H.264 and AAC in MP4: small, and read by nearly every editor.
+    /// H.264 or H.265, and AAC, in MP4: small, and read by nearly every editor.
     #[default]
     Mp4,
-    /// DNxHR LB and PCM in MOV: an editing format, for DaVinci Resolve on
-    /// Linux, which reads neither H.264 (the free edition) nor AAC.
+    /// DNxHR or ProRes, and PCM, in MOV: editing formats; DNxHR for DaVinci
+    /// Resolve on Linux, which reads neither H.264 (the free edition) nor AAC.
     Mov,
+}
+
+/// The codec clips' (and rendered edits') pictures are encoded with; each
+/// goes in one `ClipFormat` (`format`).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipCodec {
+    /// H.264: light to decode, read by nearly every editor and player.
+    #[default]
+    H264,
+    /// H.265: smaller files for the same picture, slower to make; Resolve's
+    /// free edition on Linux and some Windows players can't read it.
+    H265,
+    /// DNxHR: every frame whole, for editing (Resolve, Premiere).
+    Dnxhr,
+    /// ProRes: every frame whole, for Apple's editors.
+    Prores,
+}
+
+impl ClipCodec {
+    /// The file a picture in this codec goes in.
+    pub fn format(self) -> ClipFormat {
+        match self {
+            ClipCodec::H264 | ClipCodec::H265 => ClipFormat::Mp4,
+            ClipCodec::Dnxhr | ClipCodec::Prores => ClipFormat::Mov,
+        }
+    }
+
+    /// The codec a file of `format` was made with before codecs were a
+    /// choice: a settings file from then reads as it did.
+    fn of(format: ClipFormat) -> Self {
+        match format {
+            ClipFormat::Mp4 => ClipCodec::H264,
+            ClipFormat::Mov => ClipCodec::Dnxhr,
+        }
+    }
+}
+
+/// How much picture clips keep, for the size it costs (`clips::output_args`
+/// says what each is in each codec).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipQuality {
+    Proxy,
+    #[default]
+    Standard,
+    High,
+}
+
+/// What clips and rendered edits are encoded as.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClipEncoding {
+    pub codec: ClipCodec,
+    pub quality: ClipQuality,
+}
+
+impl ClipEncoding {
+    /// The file it goes in, which names the extension.
+    pub fn format(self) -> ClipFormat {
+        self.codec.format()
+    }
+}
+
+/// What's done with a VODscription found for a VOD just added or refreshed
+/// (the page's offers.svelte.ts). The offer asked for (its gift button, its
+/// row's menu) shows whatever this is.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UseVodscription {
+    /// Offered, with a "Don't ask again" box that keeps the answer given.
+    #[default]
+    Ask,
+    /// Used with no offer, and a toast says so.
+    Always,
+    /// Not offered; its gift button still offers it.
+    Never,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -49,8 +125,14 @@ pub struct Settings {
     /// (`pipeline::keeps_video`) and for clips (`clips::selector`), in pixels;
     /// `video_height()` gives the default when unset.
     pub video_height: Option<u32>,
-    /// What clips and rendered edits are made as.
+    /// The file clips and rendered edits are made as; always the one
+    /// `clip_codec` goes in once loaded or saved (`normalized`).
     pub clip_format: ClipFormat,
+    /// The codec clips are encoded with, and their quality; unset only in a
+    /// file from before they were a choice, read as clips were made then
+    /// (`clip_encoding`).
+    pub clip_codec: Option<ClipCodec>,
+    pub clip_quality: Option<ClipQuality>,
     /// The keyboard controls the user changed (Settings › Controls), by the
     /// page's action id: each the whole list of that action's keys, an empty
     /// one for none. Only the page reads them (keymap.ts); ids it no longer
@@ -73,13 +155,24 @@ pub struct Settings {
     pub load_cast_pictures: bool,
     /// Whether the note on permission shows before a video or clip is
     /// downloaded from a site (the page's permission.ts): on until its
-    /// "Don't show this again" is ticked or it's turned off in Settings.
-    /// Only the page reads it.
+    /// "Don't ask again" is ticked or it's turned off in Settings. Only the
+    /// page reads it.
     pub ask_before_downloading: bool,
-    /// Whether the page suggests MOV clips once, after a clip is dragged out,
-    /// where DaVinci Resolve is installed on Linux (resolveHint.svelte.ts):
-    /// off once answered, back on from Settings. Only the page reads it.
+    /// Whether an MP4 clip dragged out onto DaVinci Resolve on Linux is
+    /// refused there and the page asks to make clips as MOV (the app's
+    /// resolve.rs): on until its "Don't ask again" is ticked or it's turned
+    /// off in Settings.
     pub suggest_mov_for_resolve: bool,
+    /// What's done with a VODscription found (Settings › Privacy, or the
+    /// offer's "Don't ask again"); unset only in a file from before it was
+    /// a choice, read from `ask_to_use_vodscription` (`use_vodscription`).
+    /// Looking one up is `ask_for_annotations`, apart from this. Only the
+    /// page reads it.
+    pub use_vodscription: Option<UseVodscription>,
+    /// The offer's switch before `use_vodscription`, on or off: written as
+    /// on only while it's `Ask` (`normalized`), for a version that reads
+    /// only this.
+    pub ask_to_use_vodscription: bool,
 }
 
 impl Default for Settings {
@@ -90,12 +183,16 @@ impl Default for Settings {
             emote_providers: EmoteProviders::default(),
             video_height: None,
             clip_format: ClipFormat::default(),
+            clip_codec: None,
+            clip_quality: None,
             key_bindings: BTreeMap::new(),
             show_keys: false,
             ask_for_annotations: true,
             load_cast_pictures: true,
             ask_before_downloading: true,
             suggest_mov_for_resolve: true,
+            use_vodscription: None,
+            ask_to_use_vodscription: true,
         }
     }
 }
@@ -166,13 +263,49 @@ impl Settings {
         self.video_height.unwrap_or(DEFAULT_VIDEO_HEIGHT)
     }
 
+    /// What clips and rendered edits are encoded as. Unset, as before they
+    /// were a choice: the format's codec, H.264 at CRF 18 or DNxHR LB (the
+    /// lowest step, as `ClipQuality::Proxy`).
+    pub fn clip_encoding(&self) -> ClipEncoding {
+        let codec = self.clip_codec.unwrap_or(ClipCodec::of(self.clip_format));
+        let then = if codec == ClipCodec::Dnxhr { ClipQuality::Proxy } else { ClipQuality::Standard };
+        ClipEncoding { codec, quality: self.clip_quality.unwrap_or(then) }
+    }
+
+    /// What's done with a VODscription found. Unset, as the switch before
+    /// it had it: on, asked; off, never.
+    pub fn use_vodscription(&self) -> UseVodscription {
+        self.use_vodscription.unwrap_or(if self.ask_to_use_vodscription {
+            UseVodscription::Ask
+        } else {
+            UseVodscription::Never
+        })
+    }
+
+    /// The codec and quality set, and the format the one the codec goes in:
+    /// the codec decides, so a page that changes it needn't change the format.
+    /// So with a VODscription found: what's done decides, and the switch
+    /// before it is written to match.
+    pub fn normalized(mut self) -> Self {
+        let ClipEncoding { codec, quality } = self.clip_encoding();
+        self.clip_codec = Some(codec);
+        self.clip_quality = Some(quality);
+        self.clip_format = codec.format();
+        let found = self.use_vodscription();
+        self.use_vodscription = Some(found);
+        self.ask_to_use_vodscription = found == UseVodscription::Ask;
+        self
+    }
+
     /// Missing or unreadable settings fall back to defaults.
     pub fn load(path: &Path) -> Self {
-        let Ok(text) = fs::read_to_string(path) else { return Self::default() };
-        serde_json::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("{}: unreadable, using the defaults: {e}", path.display());
-            Self::default()
-        })
+        let Ok(text) = fs::read_to_string(path) else { return Self::default().normalized() };
+        serde_json::from_str::<Self>(&text)
+            .unwrap_or_else(|e| {
+                eprintln!("{}: unreadable, using the defaults: {e}", path.display());
+                Self::default()
+            })
+            .normalized()
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -182,7 +315,7 @@ impl Settings {
         static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _turn = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = path.with_extension("tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
+        fs::write(&tmp, serde_json::to_string_pretty(&self.clone().normalized())?)?;
         fs::rename(tmp, path)?;
         Ok(())
     }
@@ -225,6 +358,23 @@ mod tests {
     }
 
     #[test]
+    fn clip_codecs_follow_old_formats_and_lead_new_ones() {
+        // A settings.json as 0.7.1 wrote it: a format, no codec or quality.
+        let read = |json: &str| serde_json::from_str::<Settings>(json).unwrap().normalized();
+        let mov = read(r#"{"clip_format": "mov"}"#);
+        assert_eq!(mov.clip_encoding(), ClipEncoding { codec: ClipCodec::Dnxhr, quality: ClipQuality::Proxy });
+        assert_eq!(read(r#"{"clip_format": "mp4"}"#).clip_encoding(), ClipEncoding::default());
+        assert_eq!(read("{}").clip_encoding(), ClipEncoding::default());
+        assert_eq!(read("{}").clip_format, ClipFormat::Mp4);
+        // The codec decides the format, whatever the page sent with it.
+        let prores = read(r#"{"clip_format": "mp4", "clip_codec": "prores", "clip_quality": "high"}"#);
+        assert_eq!((prores.clip_format, prores.clip_quality), (ClipFormat::Mov, Some(ClipQuality::High)));
+        assert_eq!(read(r#"{"clip_format": "mov", "clip_codec": "h265"}"#).clip_format, ClipFormat::Mp4);
+        let again = read(&serde_json::to_string(&prores).unwrap());
+        assert_eq!(again.clip_encoding(), ClipEncoding { codec: ClipCodec::Prores, quality: ClipQuality::High });
+    }
+
+    #[test]
     fn the_keyboard_legend_starts_closed_and_stays_as_left() {
         // A settings.json as 0.5.x wrote it: no word of the legend.
         let old: Settings = serde_json::from_str(r#"{"theme": "dark", "video_height": 720}"#).unwrap();
@@ -263,12 +413,37 @@ mod tests {
     fn the_notes_start_shown_and_stay_as_left() {
         // A settings.json as 0.7.0 wrote it: no word of the notes.
         let old: Settings = serde_json::from_str(r#"{"theme": "dark", "load_cast_pictures": false}"#).unwrap();
-        assert!(old.ask_before_downloading && old.suggest_mov_for_resolve);
-        assert!(Settings::default().ask_before_downloading && Settings::default().suggest_mov_for_resolve);
-        let off = Settings { ask_before_downloading: false, suggest_mov_for_resolve: false, ..old };
+        assert!(old.ask_before_downloading && old.suggest_mov_for_resolve && old.ask_to_use_vodscription);
+        let fresh = Settings::default();
+        assert!(fresh.ask_before_downloading && fresh.suggest_mov_for_resolve && fresh.ask_to_use_vodscription);
+        let off = Settings {
+            ask_before_downloading: false,
+            suggest_mov_for_resolve: false,
+            ask_to_use_vodscription: false,
+            ..old
+        };
         let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
-        assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve);
+        assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve && !again.ask_to_use_vodscription);
+        assert!(again.ask_for_annotations, "the offer's own switch, apart from looking up");
         assert!(!again.load_cast_pictures);
+    }
+
+    #[test]
+    fn a_vodscription_found_is_used_as_last_answered() {
+        let read =
+            |json: &str| serde_json::to_value(serde_json::from_str::<Settings>(json).unwrap().normalized()).unwrap();
+        // A settings.json from before the three answers: the offer's switch alone.
+        assert_eq!(read(r#"{"ask_to_use_vodscription": false}"#)["use_vodscription"], "never");
+        assert_eq!(read(r#"{"ask_to_use_vodscription": true}"#)["use_vodscription"], "ask");
+        assert_eq!(read("{}")["use_vodscription"], "ask");
+        // The answer decides, and the switch is written to match, for an app
+        // that reads only that: on only while the offer is asked.
+        for (answer, asks) in [("ask", true), ("always", false), ("never", false)] {
+            let saved = read(&format!(r#"{{"use_vodscription": "{answer}", "ask_to_use_vodscription": {}}}"#, !asks));
+            assert_eq!(saved["use_vodscription"], answer);
+            assert_eq!(saved["ask_to_use_vodscription"], asks, "{answer}");
+            assert_eq!(read(&saved.to_string())["use_vodscription"], answer, "{answer}, read again");
+        }
     }
 
     /// A key binding written by hand in the wrong shape (a string for a

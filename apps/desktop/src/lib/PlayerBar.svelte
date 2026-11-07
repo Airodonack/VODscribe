@@ -18,7 +18,7 @@
   // The row of controls under every player's timeline (the VOD's, Player.svelte;
   // an edit's, EditView.svelte): play, the time, the panel's own actions (Split
   // and Clip, or what an edit has instead) with a line of context, then
-  // sound, speed, the panel's own at the right (a VOD's Transcribe), captions,
+  // sound, speed, captions (a VOD's with a menu of how much to transcribe),
   // the keyboard legend's button (the legend opens under this row:
   // PlayerPanel.svelte), full screen and hiding the video, where the player
   // has them: at the lower right, where video players keep their view toggles.
@@ -50,7 +50,7 @@
     ontoggleplay,
     onfullscreen,
     actions,
-    beside,
+    captions,
     hide,
   }: {
     player: BarControls | null;
@@ -71,8 +71,11 @@
     onfullscreen: (on: boolean) => void;
     /** The panel's own buttons and line of context, after the time. */
     actions?: Snippet;
-    /** The panel's own controls at the right, before the captions button (a VOD's Transcribe). */
-    beside?: Snippet;
+    /** A menu on the captions button, right-clicked or pressed and held
+     *  (hold.svelte.ts): a VOD's, of how much to transcribe (Player.svelte).
+     *  `title` is added to the button's; `menu` is given the button, its anchor.
+     *  With a menu the button can be pressed with no captions too, for it. */
+    captions?: { hold: Hold; title: string; menu: Snippet<[HTMLElement | undefined]> };
     /** Hides the video, and the bar with it (a VOD's player; shown again
      *  from its header, Player.svelte). */
     hide?: { label: string; run: () => void };
@@ -107,7 +110,24 @@
     if (!speedHold.held) nextSpeed();
   }
 
-  // macOS 12's web view has no container queries: there the bar reads its
+  // The captions button: a click turns them on or off, once there are any;
+  // the panel's menu, if it has one, opens as the speeds' does.
+  let captionsButton = $state<HTMLElement>();
+  function onCaptionsClick() {
+    if (captions?.hold.held || !captionsAvailable) return;
+    prefs.toggleCaptions();
+  }
+  const captionsTitle = $derived(
+    `${
+      !captionsAvailable
+        ? "Transcribe to get captions"
+        : captionsOn
+          ? `Hide captions${keyHint("captions.toggle")}`
+          : `Show captions${keyHint("captions.toggle")}`
+    }${captions ? `. ${captions.title}` : ""}`,
+  );
+
+  // A web view without container queries (macOS 12's, for one): there the bar reads its
   // column's width itself (as the query would: PlayerPanel.svelte's
   // .controls, its content box) for the same narrow layouts, by class.
   let bar = $state<HTMLElement>();
@@ -200,6 +220,7 @@
           <button
             data-speed={s}
             class:current={s === rate}
+            class:pointed={speedHold.pointed?.dataset.speed === String(s)}
             aria-pressed={s === rate}
             onclick={() => {
               player?.rate?.set(s);
@@ -211,23 +232,27 @@
       </div>
     </Popover>
   {/if}
-  {@render beside?.()}
-  <!-- Always there, in a VOD's bar and an edit's alike, so the bar stays put; with no captions (nothing transcribed yet), off. -->
+  <!-- Always there, in a VOD's bar and an edit's alike, so the bar stays put;
+       with no captions (nothing transcribed yet), off: grayed, and disabled
+       unless it has a menu, which a disabled button couldn't open. -->
   <button
     class="control"
     class:on={captionsOn && captionsAvailable}
-    onclick={() => prefs.toggleCaptions()}
-    disabled={!captionsAvailable}
+    class:off={!captionsAvailable}
+    bind:this={captionsButton}
+    onpointerdown={captions?.hold.down}
+    oncontextmenu={captions?.hold.menu}
+    onclick={onCaptionsClick}
+    disabled={!captionsAvailable && !captions}
+    aria-disabled={!captionsAvailable}
     aria-pressed={captionsOn && captionsAvailable}
+    aria-expanded={captions ? captions.hold.open : undefined}
     aria-label="Captions"
-    title={!captionsAvailable
-      ? "Transcribe to get captions"
-      : captionsOn
-        ? `Hide captions${keyHint("captions.toggle")}`
-        : `Show captions${keyHint("captions.toggle")}`}
+    title={captionsTitle}
   >
     <Icon name="captions" size={16} />
   </button>
+  {@render captions?.menu(captionsButton)}
   <!-- Full screen hides the legend, so its button goes too. -->
   {#if !fullscreen}
     <button
@@ -289,6 +314,11 @@
 
   .control.on {
     color: var(--accent);
+  }
+
+  /* As a disabled button (app.css), for the captions button with a menu. */
+  .control.off {
+    opacity: 0.5;
   }
 
   /* The panel's actions (Split, Clip…): labelled, with their keys, but
@@ -363,7 +393,8 @@
     grid-column: 2;
   }
 
-  .speeds button:hover {
+  .speeds button:hover,
+  .speeds button.pointed {
     background: var(--surface-2);
   }
 
@@ -458,7 +489,7 @@
     }
   }
 
-  /* The same two, where there are no container queries (macOS 12). */
+  /* The same two, where there are no container queries. */
   .bar.narrow .volume,
   .bar.narrow .speed,
   .bar.narrow .keys,

@@ -3,10 +3,11 @@
 // edit's row does once rendered. Its menu opens with the focus on its first
 // item, the arrows move it, Escape closes it and gives the focus back; it
 // has Show in folder, Add to edit… and Remove…, which asks as removing
-// several does, saying the transcript is erased. An edit's row has a menu
+// several does, saying the transcript is erased, and no Refresh details. An edit's row has a menu
 // too: Add to edit… asks which edit, and Delete edit… asks before it goes.
 // A site's VOD whose video was downloaded has Show in folder too, on its
-// row and in its menu, beside Open on its site and Copy link; the menu is
+// row and in its menu, beside Open on its site, Copy link and Refresh
+// details; the menu is
 // as wide as its longest item, and a click on the row closes it without
 // opening or picking the row. So has one
 // whose download is paused part way, for the part file as it is; with no
@@ -64,6 +65,8 @@ export default {
     for (const want of ["Show in folder", "Add to edit…", "Remove…"])
       if (!items.some((i) => i.startsWith(want)))
         throw new Error(`the VOD's menu has ${JSON.stringify(items)}, no ${want}`);
+    // A file has no site to ask again.
+    if (items.includes("Refresh details")) throw new Error(`a file's menu has ${JSON.stringify(items)}`);
     await until("the focus on its first item", async () => (await focused()) === items[0], 10_000);
     await app.js(
       `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))`,
@@ -136,7 +139,7 @@ export default {
     const kept = path.join(ctx.out, "row-menus", "kept.mp3");
     mkdirSync(path.dirname(kept), { recursive: true });
     copyFileSync(fixtures.landed, kept);
-    makeSiteVod(vod.id, "dailymotion", "xe2erow", { mediaPath: kept });
+    makeSiteVod(vod.id, "dailymotion", "xe2erow", { video: kept });
     app = await ctx.start();
     await app.toLibrary();
     await until(
@@ -148,7 +151,7 @@ export default {
     });
     await app.rowMenu(vod.id);
     const siteItems = await menu("VOD menu");
-    for (const want of ["Show in folder", "Open on", "Copy link"])
+    for (const want of ["Show in folder", "Open on", "Copy link", "Refresh details"])
       if (!siteItems.some((i) => i.startsWith(want)))
         throw new Error(`the downloaded VOD's menu has ${JSON.stringify(siteItems)}, no ${want}`);
     // Its longest item (Check all VODs for VODscriptions) fits: nothing to
@@ -173,6 +176,11 @@ export default {
       );
     const before = await rowState();
     if (before !== "closed, not picked") throw new Error(`before its click, the row is ${before}`);
+    // What of the click reaches the page, seen before anything else sees it.
+    await app.js(
+      `const seen = (window.__rowClick = []);
+       for (const type of ["pointerdown", "click", "mouseup"]) window.addEventListener(type, () => seen.push(type), { capture: true });`,
+    );
     if (!os.unavailable()) {
       const r = await os.rectOf(app, `${vodRow} .meta`);
       os.click(r.x + r.w / 2, r.y + r.h / 2, r.scale);
@@ -194,7 +202,16 @@ export default {
       5_000,
     ).catch(() => false);
     if (!closed) wrong.push("a click on the row left its menu open");
-    await new Promise((r) => setTimeout(r, 500));
+    // Its release seen, and with it whatever the click does to the row; or,
+    // on the Mac's window in the back, no press: the window's coming to the
+    // front closed the menu, and nothing of the click comes.
+    await until(
+      "the click on the row over",
+      () =>
+        app.js(`const seen = window.__rowClick;
+                return !seen.includes("pointerdown") || seen.includes("click") || seen.includes("mouseup")`),
+      5_000,
+    ).catch(() => wrong.push("the click on the row was pressed and never let go"));
     const after = await rowState();
     if (after !== before) wrong.push(`the click on the row with its menu open left the row ${after}`);
     if (wrong.length) throw new Error(wrong.join("; "));

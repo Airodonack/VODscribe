@@ -2,6 +2,11 @@
 
 export default {
   name: "setup",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "library-empty":
+      "The library on a first start, light theme: on the left an empty Paste a VOD link… box with a pale Add button, the line or add video files… or drop files and links anywhere, and No VODs yet; in the middle a film icon over Your library is empty and a short paragraph naming Kick, Twitch and YouTube.",
+  },
   async run(app, ctx) {
     await app.toLibrary();
     await ctx.checkpoint("library-empty");

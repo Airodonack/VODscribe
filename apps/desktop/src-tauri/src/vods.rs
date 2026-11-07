@@ -1,20 +1,22 @@
 //! Commands on the library: adding, ordering and controlling VODs, and reading
 //! their transcripts.
 
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
+use tauri::{AppHandle, Manager, State};
+use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod, give_way};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
 use vodscribe_core::search::AuthorSuggestion;
-use vodscribe_core::settings::ClipFormat;
+use vodscribe_core::settings::{ClipEncoding, ClipFormat};
 use vodscribe_core::stretches::{self, Stretch};
-use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
+use vodscribe_core::{Paths, clips, fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
 use crate::{AppState, CmdResult, emit_vod, err, thumbnails};
@@ -71,7 +73,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         }
         let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(fetch::NO_YT_DLP))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
+        let probe_path = state.paths.temp_probe(nanos);
         let info = fetch::probe(&yt_dlp, &url, &probe_path, &cancel);
         // Canceled once looked up, but before it's in the library: not added either.
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -86,7 +88,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
             // for soon doesn't probe again. Only a shortcut: if the file can't
             // be moved (a virus scanner holding it, say), the worker probes
             // again, and the VOD, already saved, must still be shown.
-            if std::fs::rename(&probe_path, pipeline::info_path(&state.paths.work(), vod.id)).is_err() {
+            if std::fs::rename(&probe_path, state.paths.source_info(vod.id)).is_err() {
                 let _ = std::fs::remove_file(&probe_path);
             }
         } else {
@@ -100,7 +102,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
 
     // Not transcribed: that's asked for (Transcribe), all of it or a stretch.
     let state = app.state::<AppState>();
-    let _ = app.emit("vod", &added.vod);
+    crate::page::emit(&app, "vod", &added.vod);
     if added.created {
         state.chat.push(added.vod.id);
         crate::annotations::look_up_added(&app, &added.vod);
@@ -108,6 +110,51 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
     }
     Ok(added)
+}
+
+/// One VOD's "Refresh details" under way (`refresh_details`), held in
+/// `AppState::refreshing` until it ends, however it ends.
+struct Refreshing<'a>(&'a Mutex<HashSet<i64>>, i64);
+
+impl<'a> Refreshing<'a> {
+    /// None when VOD `vod_id`'s is under way already.
+    fn claim(under_way: &'a Mutex<HashSet<i64>>, vod_id: i64) -> Option<Self> {
+        // Lazily: a guard made and dropped here would take the lock held now.
+        under_way.lock().unwrap().insert(vod_id).then(|| Self(under_way, vod_id))
+    }
+}
+
+impl Drop for Refreshing<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// A site's VOD's "Refresh details" (its row's menu): what its site names
+/// of its channel now (`pipeline::refresh_details`; only that, for now),
+/// then the file host asked again about its VODscription, as when it was
+/// added (`annotations::look_up_refreshed`), which the answer doesn't wait
+/// for: an offer comes when it's found. The page asks again for its
+/// streamer card itself (streamers.ts `CardCache.fresh`). It runs beside a
+/// download or transcription of the VOD without touching either, and a
+/// failure changes nothing. None when one for the VOD is under way
+/// already: a second press does nothing. Later it may refresh the video's
+/// other details from its site too, such as its description.
+#[tauri::command]
+pub(crate) async fn refresh_details(app: AppHandle, vod_id: i64) -> CmdResult<Option<Vod>> {
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Option<Vod>> {
+        let state = app.state::<AppState>();
+        let Some(_under_way) = Refreshing::claim(&state.refreshing, vod_id) else { return Ok(None) };
+        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(fetch::NO_YT_DLP))?;
+        let mut vod = pipeline::refresh_details(&state.db, &yt_dlp, &state.paths, vod_id, &AtomicBool::new(false))?;
+        pipeline::mark_partial(&state.paths, &mut vod);
+        crate::page::emit(&app, "vod", &vod);
+        crate::annotations::look_up_refreshed(&app, &vod);
+        Ok(Some(vod))
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 
 #[derive(Serialize)]
@@ -136,30 +183,70 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
     .await
     .map_err(err)?;
 
-    let state = app.state::<AppState>();
     for (vod, created) in &added {
-        let _ = app.emit("vod", vod);
-        if *created {
-            // A file has no chat; the queue records that.
-            state.chat.push(vod.id);
-            let (app, id) = (app.clone(), vod.id);
-            std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
-        }
+        announce_file(&app, vod, *created);
     }
     Ok(AddedFiles { vods: added.into_iter().map(|(v, _)| v).collect(), errors })
 }
 
+/// Tells the page of file VOD `vod`, just added (`created`) or found.
+fn announce_file(app: &AppHandle, vod: &Vod, created: bool) {
+    crate::page::emit(app, "vod", vod);
+    if created {
+        // A file has no chat; the queue records that.
+        app.state::<AppState>().chat.push(vod.id);
+        let (app, id) = (app.clone(), vod.id);
+        std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
+    }
+}
+
+/// Adds the file at `path`, received from another app's drag into the
+/// kept videos' folder (`receive`), as a file dropped on the window is;
+/// it's erased with its VOD (`erase_source`). Its VOD's id.
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+pub(crate) fn add_received(app: &AppHandle, path: &Path) -> anyhow::Result<i64> {
+    let (vod, created) = add_local(app, path, true)?;
+    announce_file(app, &vod, created);
+    Ok(vod.id)
+}
+
 fn add_file(app: &AppHandle, path: &Path) -> anyhow::Result<(Vod, bool)> {
+    add_local(app, path, false)
+}
+
+/// Adds the file at `path`; one in the app's own data only if it's one
+/// `received` (into the kept videos' folder).
+fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
     // probe refuses network paths and non-media files before touching them.
     let info = local::probe(&ffmpeg, path)?;
     let canonical = Path::new(&info.url);
-    if local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local) {
+    let own = local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local);
+    if own && !(received && local::is_inside(canonical, &state.paths.media())) {
         anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
     // One transaction, so a file never shows up as an online VOD with a path for a link.
-    add_to_library(app, &info, Some(&info.url))
+    // One received is always new: its name may be one a VOD received before arrived under.
+    let (vod, created) = match received {
+        true => (state.db.lock().unwrap().add_received(&info)?, true),
+        false => add_to_library(app, &info, Some(&info.url))?,
+    };
+    let Some(ext) = canonical.extension().and_then(|e| e.to_str()).filter(|_| received) else {
+        return Ok((vod, created));
+    };
+    // The app's own copy goes where the library keeps a received file, named
+    // for its VOD, before anything reads it (nothing's asked of it yet).
+    let to = state.paths.source_received(vod.id, ext);
+    // Never over another file (one a VOD has, or an older VOD's leftover).
+    if let Err(e) = crate::receive::rename_new(canonical, &to) {
+        // Played where it arrived, moved by `library::settle` at the next start.
+        eprintln!("VOD {}: its received file stays where it arrived: {e}", vod.id);
+        return Ok((vod, created));
+    }
+    let db = state.db.lock().unwrap();
+    db.set_received(vod.id, &to.to_string_lossy())?;
+    Ok((db.vod(vod.id)?.unwrap_or(vod), created))
 }
 
 /// Adds a VOD (a file at `source`, if given), in one transaction; one
@@ -168,7 +255,9 @@ fn add_file(app: &AppHandle, path: &Path) -> anyhow::Result<(Vod, bool)> {
 /// One removed and not yet erased, or being erased (nothing else uses it),
 /// is erased whole first, the sweep's job taken over (`Sweeper::hand_over`):
 /// added back, it's added anew. Otherwise the add would take its row from
-/// under the sweep, which would stop there and leave its files.
+/// under the sweep, which would stop there and leave its files. One whose
+/// work doesn't stop in time (`WORK_STOPPING`) is set aside instead
+/// (`Db::set_aside`), its files erased once it has (`Sweeper::left`).
 fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
     let erasing = {
@@ -183,13 +272,26 @@ fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) 
         erase_unused(app, Sweep { vod: id, kept: false }, &AtomicBool::new(false))?;
     }
     let db = state.db.lock().unwrap();
-    db.atomically(|db| {
+    let mut left = None;
+    let added = db.atomically(|db| {
+        if let Some(id) = erasing
+            && db.vod(id)?.is_some()
+            && db.uses(id)? <= 0
+        {
+            db.set_aside(id)?;
+            left = Some(id);
+        }
         let (vod, created) = db.add_vod(info)?;
         if created && let Some(source) = source {
             db.set_source_path(vod.id, source)?;
         }
         Ok((db.vod(vod.id)?.unwrap_or(vod), created))
-    })
+    })?;
+    drop(db);
+    if let Some(id) = left {
+        state.sweeper.left(id);
+    }
+    Ok(added)
 }
 
 /// Opens a local VOD's file in the system's video player, for formats the
@@ -219,17 +321,17 @@ pub(crate) async fn media_extensions() -> CmdResult<Vec<&'static str>> {
 #[tauri::command]
 pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let file = pipeline::file_on_disk(&state.db.lock().unwrap(), &state.paths.work(), id).map_err(err)?;
+    let file = pipeline::file_on_disk(&state.db.lock().unwrap(), &state.paths, id).map_err(err)?;
     let file = file.ok_or("That VOD has no file on this computer.")?;
     app.opener().reveal_item_in_dir(file).map_err(err)
 }
 
 #[tauri::command]
 pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
-    let work = app.state::<AppState>().paths.work();
+    let paths = app.state::<AppState>().paths.clone();
     crate::with_reads(app, move |db| {
         let mut vods = db.listed_vods()?;
-        vods.iter_mut().for_each(|vod| pipeline::mark_partial(&work, vod));
+        vods.iter_mut().for_each(|vod| pipeline::mark_partial(&paths, vod));
         Ok(vods)
     })
     .await
@@ -263,7 +365,7 @@ async fn erase_in_parts(
         let state = handle.state::<AppState>();
         // Letting go between parts, so what's waiting gets its turn.
         while part(&state.db.lock().unwrap())? > 0 {
-            std::thread::yield_now();
+            give_way();
         }
         Ok(())
     })
@@ -332,7 +434,7 @@ pub(crate) async fn delete_vod(
     if !erased && state.db.lock().unwrap().uses(id).map_err(err)? <= 0 {
         state.sweeper.removed(id);
     }
-    let _ = app.emit("vod-removed", id);
+    crate::page::emit(&app, "vod-removed", id);
     Ok(None)
 }
 
@@ -342,7 +444,11 @@ pub(crate) async fn delete_vod(
 fn erase_source(app: &AppHandle, db: &Db, id: i64, kept: bool) -> anyhow::Result<()> {
     let paths = &app.state::<AppState>().paths;
     pipeline::remove_work_files(&paths.work(), id);
-    pipeline::remove_media(&paths.work(), id);
+    pipeline::remove_media(paths, id);
+    // A file received from another app's drag is the app's own copy.
+    if let Some(source) = db.vod(id)?.filter(|v| v.received).and_then(|v| v.source_path) {
+        let _ = std::fs::remove_file(source);
+    }
     thumbs::remove(&paths.thumbs(), id);
     vodscribe_core::peaks::remove(&paths.peaks(), id);
     crate::storyboards::remove(app, id);
@@ -394,15 +500,11 @@ fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &Atomi
         let (new, out) = {
             let db = state.db.lock().unwrap();
             let new = db.add_realized(vod_id, start, end)?;
-            let name = clips::extension(vod.audio_only, ClipFormat::Mp4);
-            (
-                new,
-                pipeline::media_stem(&pipeline::media_dir(&state.paths.work()), new, &vod.info.title)
-                    .with_extension(name),
-            )
+            (new, state.paths.source_video(new, clips::extension(vod.audio_only, ClipFormat::Mp4)))
         };
         let within = (start - source.offset, end - source.offset);
-        let made = clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, ClipFormat::Mp4, stop, |_| {});
+        let made =
+            clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, ClipEncoding::default(), stop, |_| {});
         let db = state.db.lock().unwrap();
         let moved = made.and_then(|()| {
             db.set_media_path(new, Some(&out.to_string_lossy()))?;
@@ -472,6 +574,12 @@ impl Sweeper {
         self.jobs.push_new(Sweep { vod: id, kept: true }, |j| j.vod == id);
     }
 
+    /// VOD `id` was set aside by its add, its work still stopping
+    /// (`add_to_library`): it's erased, row and all, once that's stopped.
+    pub(crate) fn left(&self, id: i64) {
+        self.jobs.push_new(Sweep { vod: id, kept: false }, |j| j.vod == id);
+    }
+
     /// Stops erasing VOD `id`, or takes it out of the queue: what's left of
     /// it is erased at the next start.
     pub(crate) fn cancel(&self, id: i64) {
@@ -529,7 +637,7 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
-        std::thread::yield_now();
+        give_way();
     }
     // Its storyboard's ffmpeg lets go of its files first (on Windows a file
     // open elsewhere can't be deleted): it may have been at work on it as
@@ -564,8 +672,8 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
 /// downloaded again when played (`pipeline::keeps_video`).
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let remove = |work: &Path, id| remove_kept(&state.storyboards, work, id);
-    delete_kept_video(&state.db, &state.videos, &state.paths.work(), id, remove)?;
+    let remove = |paths: &Paths, id| remove_kept(&state.storyboards, paths, id);
+    delete_kept_video(&state.db, &state.videos, &state.paths, id, remove)?;
     crate::storyboards::forget_gone(&app, id);
     emit_vod(&app, &state.db.lock().unwrap(), id)
 }
@@ -575,18 +683,18 @@ pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id:
 /// them: a file another process has open can't be deleted on Windows, and
 /// would stay, its record gone. Called with the record forgotten already
 /// (no job starts on the file again) and the library let go of.
-pub(crate) fn remove_kept(storyboards: &crate::storyboards::Storyboards, work: &Path, id: i64) {
+pub(crate) fn remove_kept(storyboards: &crate::storyboards::Storyboards, paths: &Paths, id: i64) {
     storyboards.let_go(id);
-    pipeline::remove_media(work, id);
+    pipeline::remove_media(paths, id);
 }
 
 /// `delete_video`'s work: `remove` deletes the files (`remove_kept`).
 pub(crate) fn delete_kept_video(
-    db: &std::sync::Mutex<Db>,
+    db: &Mutex<Db>,
     videos: &crate::videos::Videos,
-    work: &Path,
+    paths: &Paths,
     id: i64,
-    remove: impl FnOnce(&Path, i64),
+    remove: impl FnOnce(&Paths, i64),
 ) -> CmdResult<()> {
     // Through to the files' deletion: a download recorded meanwhile, or one
     // a "Keep video" begins meanwhile, waits for it (`Videos::files`).
@@ -597,7 +705,7 @@ pub(crate) fn delete_kept_video(
         if busy(vod.status) {
             return Err("Its video is still in use: wait until it's transcribed.".into());
         }
-        forget_video(&db, work, id).map_err(err)?;
+        forget_video(&db, id).map_err(err)?;
         vod.media
     };
     // Forgotten first, so nothing starts on it; deleted with the library let
@@ -606,7 +714,7 @@ pub(crate) fn delete_kept_video(
     // Delete all's to clear. A download that recorded it has written all it
     // will; a "Keep video" queued meanwhile begins after.
     if had {
-        remove(work, id);
+        remove(paths, id);
     }
     Ok(())
 }
@@ -616,16 +724,11 @@ pub(crate) fn busy(status: Status) -> bool {
     matches!(status, Status::Downloading | Status::Transcribing | Status::Ready | Status::Queued)
 }
 
-/// Forgets VOD `id`'s kept video (and its audio, if that was kept with it);
-/// the caller deletes the files (`pipeline::remove_media`), once it has let
-/// the library go.
-pub(crate) fn forget_video(db: &Db, work: &std::path::Path, id: i64) -> anyhow::Result<()> {
-    db.set_media_path(id, None)?;
-    let media = pipeline::media_dir(work);
-    if db.audio_path(id)?.is_some_and(|p| std::path::Path::new(&p).parent() == Some(media.as_path())) {
-        db.set_audio_path(id, None)?;
-    }
-    Ok(())
+/// Forgets VOD `id`'s kept video (its audio, when that's the video, is
+/// known from it and so goes with it); the caller deletes the files
+/// (`pipeline::remove_media`), once it has let the library go.
+pub(crate) fn forget_video(db: &Db, id: i64) -> anyhow::Result<()> {
+    db.set_media_path(id, None)
 }
 
 /// Puts VOD `id`'s requests in one of `which` (paused, failed) back in their
@@ -735,7 +838,7 @@ pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i
         .control_vod(id, Stop::Cancel, |running| {
             let db = state.db.lock().unwrap();
             for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id)) {
-                worker::cancel(&db, &state.paths.work(), stretch.id)?;
+                worker::cancel(&db, &state.paths, stretch.id)?;
             }
             Ok(())
         })
@@ -750,7 +853,7 @@ pub(crate) async fn cancel_stretch(app: AppHandle, state: State<'_, AppState>, i
     let Some(vod_id) = state.db.lock().unwrap().stretch(id).map_err(err)?.map(|s| s.vod_id) else { return Ok(()) };
     state
         .worker
-        .control(id, Stop::Cancel, || worker::cancel(&state.db.lock().unwrap(), &state.paths.work(), id))
+        .control(id, Stop::Cancel, || worker::cancel(&state.db.lock().unwrap(), &state.paths, id))
         .map_err(err)?;
     emit_vod(&app, &state.db.lock().unwrap(), vod_id)
 }
@@ -892,6 +995,18 @@ pub(crate) async fn kick_stream(url: String) -> CmdResult<Vec<vodscribe_core::ki
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A second Refresh details of a VOD while its first is under way gets
+    /// nothing to do; another VOD's goes ahead, and once the first ends, its next does.
+    #[test]
+    fn one_refresh_of_a_vod_at_a_time() {
+        let under_way = Mutex::default();
+        let first = Refreshing::claim(&under_way, 7).unwrap();
+        assert!(Refreshing::claim(&under_way, 7).is_none());
+        assert!(Refreshing::claim(&under_way, 8).is_some());
+        drop(first);
+        assert!(Refreshing::claim(&under_way, 7).is_some());
+    }
 
     #[test]
     fn a_stretch_asked_for_is_within_the_vod() {

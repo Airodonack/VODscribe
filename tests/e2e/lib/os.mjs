@@ -205,14 +205,19 @@ export function click(x, y, scale = 1) {
     );
   } else {
     // Straight to CoreGraphics, in points, not pixels: System Events doesn't
-    // answer a script run over SSH (its AppleEvent times out).
+    // answer a script run over SSH (its AppleEvent times out). Pointed there,
+    // pressed and released a moment later, as a hand clicks: after a click on
+    // the title bar with its release right on the press's heels, the window
+    // went on following the pointer, as if the release was missed, and the
+    // next gesture dragged it off the screen (drag-note, the hosted Mac,
+    // 2026-11-05; macGesture's releases wait for the same reason).
     const [px, py] = [Math.round(x / scale), Math.round(y / scale)];
     execFileSync("osascript", [
       "-l",
       "JavaScript",
       "-e",
-      `ObjC.import("CoreGraphics"); const p = $.CGPointMake(${px}, ${py});
-       for (const t of [1, 2]) $.CGEventPost(0, $.CGEventCreateMouseEvent(null, t, p, 0));`,
+      `${MAC_EVENTS}
+       mouse(5, ${px}, ${py}); $.usleep(50000); mouse(1, ${px}, ${py}); $.usleep(100000); mouse(2, ${px}, ${py});`,
     ]);
   }
 }
@@ -489,6 +494,24 @@ export async function parkPointer(app) {
     await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error(`the page still has something under the system's pointer, moved off it to ${spot.join(",")}`);
+}
+
+/**
+ * The app's window in front, as a click on its title bar puts it (an app
+ * can't bring another to the front from a script on a Mac any more, and the
+ * app a drop went to comes to the front, with the keys), once the page says
+ * it has the focus. On a Mac, a moment instead: the page can say it has the
+ * focus while its window isn't in front, and a press right after the click
+ * that brought it there goes nowhere.
+ */
+export async function toFront(app) {
+  const page = await windowRect(app);
+  click(page.x + Math.round(page.w / 2), page.y - 14, page.scale);
+  if (process.platform === "darwin") return new Promise((r) => setTimeout(r, 1500));
+  for (let waited = 0; !(await app.js(`return document.hasFocus()`)); waited += 50) {
+    if (waited >= 5000) throw new Error("the app's page doesn't have the focus after a click on its title bar");
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 /** The app window's page area on the screen (pixels), as rectOf gives an element's. */

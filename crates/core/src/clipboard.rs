@@ -281,20 +281,6 @@ impl Db {
         Ok(None)
     }
 
-    /// Moves clips `ids` (in their order) of listed clip `bar`'s clip bar to
-    /// just after its clip `after`; where they are if `after` isn't there.
-    fn place_after_on_bar(&self, bar: i64, ids: &[i64], after: i64) -> Result<()> {
-        let mut order: Vec<i64> =
-            self.bar_clips(bar)?.into_iter().map(|c| c.id).filter(|id| !ids.contains(id)).collect();
-        let Some(at) = order.iter().position(|&id| id == after) else { return Ok(()) };
-        order.splice(at + 1..at + 1, ids.iter().copied());
-        for (i, id) in order.iter().enumerate() {
-            self.conn
-                .execute("UPDATE clips SET bar_position = ?2 WHERE id = ?1", rusqlite::params![id, i as i64 + 1])?;
-        }
-        Ok(())
-    }
-
     /// `Paste::Timeline`'s writes: the piece at the moment split there, the
     /// copies in. The stretch they play.
     fn paste_in(&self, clip: i64, at: f64, items: &[Copied]) -> Result<(f64, f64)> {
@@ -569,32 +555,6 @@ mod tests {
         // The first paste's split and copy are one change: the state before it put back, one piece again.
         db.restore_edit(edit, &before).unwrap();
         assert_eq!(shape(&db, edit), [(vod, 10.0, 20.0, None)]);
-    }
-
-    /// A clip whose timeline starts with a group (a clip pasted at its start,
-    /// or an edit holding one copied whole) is still a clip of its bar, read
-    /// by its first piece: the bar it's on still lists.
-    #[test]
-    fn a_clip_that_starts_with_a_group_is_read_by_its_first_piece() {
-        let (db, vod) = library();
-        let pill = db.add_clip(vod, 1.0, 2.0, "Hello", true).unwrap().id;
-        let other = db.add_clip(vod, 7.0, 8.0, "Other", true).unwrap().id;
-        // A clip pasted at the start of a clip of the VOD's bar open in the editor.
-        let copy = db.copy_of(&Put::Clip { id: pill }).unwrap();
-        db.paste(Paste::Timeline { clip: other, at: 0.0 }, std::slice::from_ref(&copy)).unwrap();
-        let clip = db.clip(other).unwrap().unwrap();
-        assert_eq!((clip.vod_id, clip.start, clip.end), (vod, 1.0, 2.0), "its first piece, in the group");
-        assert_eq!(db.clips(vod).unwrap().len(), 2);
-        // An edit starting with a clip dropped in, copied whole onto another edit's bar.
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_group(edit, pill, None).unwrap();
-        db.add_piece(edit, vod, (5.0, 6.0), "a", None).unwrap();
-        let whole = db.copy_of(&Put::Clip { id: edit }).unwrap();
-        let target = db.add_edit("f").unwrap().id;
-        let made = db.paste(Paste::Bar { bar: target, after: None }, &[whole]).unwrap().clips[0].0;
-        assert_eq!(db.clip(made).unwrap().map(|c| c.start), Some(1.0));
-        assert_eq!(db.bar_clips(target).unwrap().len(), 1);
-        assert_eq!(db.unfinished_clips().unwrap().len(), 3, "the pills and the pasted clip wait to be made");
     }
 
     #[test]

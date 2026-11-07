@@ -30,6 +30,10 @@ export interface Vod {
   url: string;
   title: string;
   channel: string | null;
+  /** The channel's login (Twitch's) or handle, as its site gave it, where it can differ from `channel`; null for a VOD added before it was kept. */
+  channel_login?: string | null;
+  /** The channel's page as its site gave it (https on the VOD's site), for a site whose channels' addresses can't be built from a login; null when it gave none. */
+  channel_url?: string | null;
   duration: number | null;
   thumbnail: string | null;
   /** File name of the local thumbnail copy ("" if there's none); see `thumbUrl`. */
@@ -141,8 +145,13 @@ export interface Settings {
   emote_providers: EmoteProvider[];
   /** The tallest video kept from sites without embeds; unset means DEFAULT_HEIGHT (platform.ts). */
   video_height: number | null;
-  /** What clips and rendered edits are made as (crates/core `settings::ClipFormat`). */
+  /** The file clips and rendered edits are made as (crates/core `settings::ClipFormat`): always the one
+   *  `clip_codec` goes in, sent with it. */
   clip_format: ClipFormat;
+  /** The codec clips and rendered edits are encoded with (crates/core `settings::ClipCodec`). */
+  clip_codec: ClipCodec;
+  /** How much picture they keep (crates/core `settings::ClipQuality`). */
+  clip_quality: ClipQuality;
   /** The keyboard controls changed in Settings, by action id (keymap.ts): each
    *  action's whole list of bindings, an empty one for no key. */
   key_bindings: Record<string, string[]>;
@@ -154,12 +163,28 @@ export interface Settings {
   load_cast_pictures: boolean;
   /** Whether the note on permission shows before downloading from a site (permission.ts). */
   ask_before_downloading: boolean;
-  /** Whether MOV clips are suggested where DaVinci Resolve is on Linux (resolveHint.svelte.ts). */
+  /** Whether an MP4 clip dropped on DaVinci Resolve on Linux asks to switch to MOV (resolveDrop.svelte.ts). */
   suggest_mov_for_resolve: boolean;
+  /** What's done with a VODscription found for a VOD just added or refreshed (offers.svelte.ts);
+   *  the app also writes the switch before it, `ask_to_use_vodscription`, to match. */
+  use_vodscription: UseVodscription;
 }
 
-/** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
+/** Offered, used with no offer, or not offered (crates/core `settings::UseVodscription`). */
+export type UseVodscription = "ask" | "always" | "never";
+
+/** MP4 (H.264 or H.265, AAC), or MOV (DNxHR or ProRes, PCM) for editors. */
 export type ClipFormat = "mp4" | "mov";
+
+export type ClipCodec = "h264" | "h265" | "dnxhr" | "prores";
+
+export type ClipQuality = "proxy" | "standard" | "high";
+
+/** A codec and quality together (crates/core `settings::ClipEncoding`). */
+export interface ClipEncoding {
+  codec: ClipCodec;
+  quality: ClipQuality;
+}
 
 /** What this computer's webview plays, best first (crates/core `playable::Playable`). */
 export interface Playable {
@@ -302,12 +327,13 @@ export interface Line {
 export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
 
 /** A job in the library's list (desktop job_list.rs): a clip or an edit
- *  being made, one at a time, or a removed VOD being erased, beside them. */
+ *  being made, one at a time, or a removed VOD being erased, beside them,
+ *  or a file dropped on the window being received. */
 export interface Job {
-  kind: "clip" | "edit" | "erase";
-  /** The clip's or edit's id; the VOD's, for an erasure. */
+  kind: "clip" | "edit" | "erase" | "receive";
+  /** The clip's or edit's id; the VOD's, for an erasure; the file's own, for one received. */
   id: number;
-  /** The clip's or edit's title; the VOD's, for an erasure. */
+  /** The clip's or edit's title; the VOD's, for an erasure; the file's name. */
   label: string;
   /** Begun: the one each queue is at. */
   running: boolean;
@@ -315,17 +341,26 @@ export interface Job {
   progress: number | null;
 }
 
+/** What the page hears of a file dropped with no path (receive.rs `Received`):
+ *  VOD `vod` to open, the first of its drop added; or `name` (unknown when
+ *  its app gave nothing) not received, and why, in a sentence. */
+export type Received = { kind: "open"; vod: number } | { kind: "failed"; name: string | null; why: string };
+
 /** How the system's drag of files out of the window ended (clips.rs `DragEnded`):
  *  whether they went to another app; if they never came, why; and whether
  *  they didn't because the app let go on takes only files already made
  *  (`finished_only`; `receiver`, its name, where the system gives it).
- *  `drag` is the number `dragClips` was given for it (none for an edit's). */
+ *  `drag` is the number `dragClips` or `dragEdit` was given for it. */
 export interface DragEnded {
   drag: number | null;
   delivered: boolean;
   failed: string | null;
   finished_only: boolean;
   receiver: string | null;
+  /** Let go on DaVinci Resolve on Linux, which was refused the MP4 clips or edit
+   *  ("refused"), or on an app the system doesn't name, where Resolve is
+   *  installed ("maybe"): the page asks to switch to MOV (resolveDrop.svelte.ts). */
+  resolve?: "refused" | "maybe" | null;
 }
 
 /** A drag of clips' files out of the window let go on another app before
@@ -355,6 +390,9 @@ export interface Clip {
   /** How long it plays (on an edit's clip bar it may hold several pieces;
    *  `start`..`end` are its first one's). */
   length?: number;
+  /** What its file was made with; null if it isn't made, or was made
+   *  before this was recorded (crates/core `Clip::encoding`). */
+  encoding?: ClipEncoding | null;
 }
 
 /** A video made of pieces of VODs (crates/core `edits::Edit`). */
@@ -367,8 +405,11 @@ export interface Edit {
   error: string | null;
   /** The revision it's at: every change to it is one. */
   revision: number;
-  /** Whether the rendered video is of the edit as it is now. */
+  /** Whether the rendered video is of the edit as it is now, made as clips are made now. */
   current: boolean;
+  /** What its video was made with; null if it isn't rendered, or was before
+   *  this was recorded (crates/core `Edit::encoding`). */
+  encoding?: ClipEncoding | null;
   pieces: number;
   /** How long it plays, in seconds. */
   length: number;
@@ -400,6 +441,15 @@ export interface EditPiece {
 /** A section (`from`..`to` of VOD `vod_id`) downloading for edits: its
  *  footage can be used up to `usable` (the VOD's time) already; before that's
  *  known, `progress` (0..1) guesses how far it is. */
+/** Where a VOD's video download is (videos.rs `VideoProgress`): `progress`
+ *  null once it's over; `streamed` while it plays as it comes in. */
+export interface VideoProgress {
+  id: number;
+  progress: number | null;
+  error: string | null;
+  streamed: boolean;
+}
+
 export interface Fetching {
   vod_id: number;
   from: number;
@@ -468,8 +518,10 @@ export interface CastMember {
   role: string;
   /** The streamer behind a character, by their public name. */
   player?: string;
-  /** Where they stream: the transcript links to the channel and shows their picture (accounts.ts). */
+  /** Where they stream: their card links to the channel, and they show its picture (accounts.ts). */
   account?: { platform: "twitch" | "kick" | "youtube"; login: string };
+  /** Their streamer card's id, when the file names one (streamers.ts). */
+  streamer?: string;
 }
 
 /** What a VOD is doing from `start` to `end`: a game, just chatting, an event. */
@@ -497,6 +549,8 @@ export interface VodAnnotations {
   activity: Activity[];
   /** Other streamers' VODs that ran alongside. */
   povs: Pov[];
+  /** What the VOD is part of ("nopixel"): which sections of a streamer card show (streamers.ts). */
+  contexts: string[];
 }
 
 /** A caption (crates/core `transcript::Cue`). */
@@ -659,6 +713,14 @@ export const api = {
   avatarBase: () => invoke<string | null>("avatar_base"),
   /** A VOD's cast and activity, if annotations were imported for it. */
   vodAnnotations: (vodId: number) => invoke<VodAnnotations | null>("vod_annotations", { vodId }),
+  /** Streamer card `id` as the file host has it, unread (streamers.ts reads it); null when it isn't there,
+   *  or Settings turned asking the file host off. */
+  streamerCard: (id: string) => invoke<unknown>("streamer_card", { id }),
+  /** The file host's index of streamers' accounts, unread (streamers.ts), as `streamerCard` asks. */
+  streamerIndex: () => invoke<unknown>("streamer_index"),
+  /** A site's VOD's "Refresh details": what its site names of its channel now, and its VODscription asked for
+   *  again (vods.rs `refresh_details`); the VOD then, or null when one for it is under way already. */
+  refreshDetails: (vodId: number) => invoke<Vod | null>("refresh_details", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),
   /** A mark (a cut, chapter or highlight) in edit `editId` at `time` seconds of its timeline. */
@@ -667,8 +729,6 @@ export const api = {
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     marking(invoke<Mark>("add_mark", { vodId, time, kind, text })),
   setMarkText: (id: number, text: string | null) => marking(invoke<void>("set_mark_text", { id, text })),
-  /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
-  resolveInstalled: () => invoke<boolean>("resolve_installed"),
   /** The view open (an edit or a VOD's), for the history: what changes are made from. */
   setView: (view: Doc | null) => invoke<void>("set_view", { view }),
   /** Undoes the newest change in `view`'s history (or one made from it); null if there's none. */
@@ -768,7 +828,9 @@ export const api = {
   cancelJob: (kind: Job["kind"], id: number) => invoke<void>("cancel_job", { kind, id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
   /** Starts dragging edit `id`'s video out of the window; false if the button came up before it could. */
-  dragEdit: (id: number) => invoke<boolean>("drag_edit", { id }),
+  /** Starts dragging edit `id`'s video out of the window; `drag`, the page's
+   *  number for the drag, comes back with its end (`DragEnded`). */
+  dragEdit: (id: number, drag: number) => invoke<boolean>("drag_edit", { id, drag }),
   moveMark: (id: number, time: number) => marking(invoke<void>("move_mark", { id, time })),
   deleteMark: (id: number) => marking(invoke<void>("delete_mark", { id })),
   /** Takes away a mark just added, as if never made (not undoable, nor its adding). */
@@ -933,6 +995,8 @@ export const events = {
   vodRemoved: (cb: (id: number) => void) => on<number>("vod-removed", (e) => cb(e.payload)),
   /** The list of jobs (clips and edits being made, removed VODs being erased), whenever it changes. */
   jobs: (cb: (jobs: Job[]) => void) => on<Job[]>("jobs", (e) => cb(e.payload)),
+  /** A file dropped with no path, received (receive.rs): the first of its drop added, or one that failed. */
+  received: (cb: (received: Received) => void) => on<Received>("received", (e) => cb(e.payload)),
   /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
   annotationsFound: (cb: (id: number) => void) => on<number>("annotations-found", (e) => cb(e.payload)),
   /** VOD `id` has had annotations imported, from wherever: what's shown of it is read again. */
@@ -952,9 +1016,8 @@ export const events = {
   /** A batch of a VOD's chat was saved while it's being fetched; `chat` has it now. */
   chatSaved: (cb: (id: number) => void) => on<number>("chat-saved", (e) => cb(e.payload)),
   clip: (cb: (clip: Clip) => void) => on<Clip>("clip", (e) => cb(e.payload)),
-  /** A VOD's video download: `progress` null when waiting or over, `error` if it failed. */
-  videoProgress: (cb: (p: { id: number; progress: number | null; error: string | null }) => void) =>
-    on<{ id: number; progress: number | null; error: string | null }>("video-progress", (e) => cb(e.payload)),
+  /** A VOD's video download: how far, over (`progress` null), or failed (`error`). */
+  videoProgress: (cb: (p: VideoProgress) => void) => on<VideoProgress>("video-progress", (e) => cb(e.payload)),
   clipProgress: (cb: (id: number, progress: number) => void) =>
     on<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
   clipRemoved: (cb: (id: number) => void) => on<number>("clip-removed", (e) => cb(e.payload)),

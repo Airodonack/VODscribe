@@ -1,0 +1,45 @@
+# vodscribe-core sources
+
+One module per subject.
+
+- `lib.rs`: the crate's root, and `Paths`, where the data folder's parts live and every file of the library's is built.
+- `library.rs`: moves files recorded by full path before 0.7.2 to where `Paths` builds them.
+- `db.rs`: the library, one SQLite file with full-text indexes over transcripts and chat.
+- `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
+- `transcript.rs`: words and lines as the model gives them.
+- `fetch.rs`: a VOD's details and audio through yt-dlp.
+- `kick.rs`: Kick's VODs, which yt-dlp can't read yet.
+- `twitch.rs`: Twitch clips.
+- `local.rs`: files on this computer, read in place.
+- `pipeline.rs`: gets a stretch's audio and runs the worker on it.
+- `audio.rs`: decodes any media to 16 kHz mono with ffmpeg.
+- `asr.rs`: runs the speech model through sherpa-onnx.
+- `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
+- `gpu.rs`: the optional NVIDIA GPU add-on.
+- `deps.rs`: the pinned ffmpeg and Deno downloads.
+- `tools.rs`: finds and updates yt-dlp and ffmpeg.
+- `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
+- `net.rs`: downloads, with stall and cancel handling.
+- `query.rs`: the search box's language, parsed.
+- `search.rs`: a query run against what was said and what chat wrote.
+- `searcher.rs`: search's own read connection, so a slow search never holds up the views.
+- `chat.rs`: chat replays from Kick, Twitch and YouTube.
+- `emotes.rs`: local copies of emote images.
+- `word_emotes.rs`: 7TV, BetterTTV and FrankerFaceZ emotes that chat writes as words.
+- `layers.rs`: saved chat searches drawn on the timeline.
+- `clips.rs`: clips cut to the frame with ffmpeg, in the codec and quality Settings picks.
+- `edits.rs`: edits, documents of pieces of VODs.
+- `render.rs`: renders an edit as one file, encoded as clips are.
+- `footage.rs`: where a stretch's picture and sound come from.
+- `sources.rs`: the VODs clips are made of, kept while any clip uses them.
+- `mkv.rs`: how much of a Matroska file still being written is whole.
+- `time.rs`: time in flicks, a whole number per frame at every common rate.
+- `clipboard.rs`: what Ctrl+C copies and Ctrl+V puts back.
+- `annotations.rs`: importing a VOD's published annotations, and fetching streamer cards.
+- `annotations_filter.rs`: the Bloom filter of published VODs, so the host never learns the library.
+- `thumbs.rs`: local copies of VOD thumbnails.
+- `peaks.rs`: a VOD's waveform.
+- `playable.rs`: what this computer's web view can play.
+- `settings.rs`: the app's settings.
+- `choices.rs`: the small choices the page remembers.
+- [`bin`](bin): the developer CLI.

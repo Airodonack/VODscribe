@@ -1,35 +1,41 @@
-"""Checks main is ready to tag as a release, and prints the commands to do it.
+"""Checks a release branch is ready to tag, and prints the commands to do it.
 
     python3 scripts/ready-to-release.py
 
-Run after the version bump is pushed. It doesn't tag anything: tagging
-publishes, so that stays a person's decision. Fails (listing every problem)
-unless:
+Run on `release/X.Y.Z` once its version commit is pushed. The version commit
+goes on that branch, cut from main, not on main; after a fix that needed a
+commit, a fresh branch `release/X.Y.Z-2` (and so on) is cut from main again.
+The tag's run is the one full lane: it builds every system, runs every
+end-to-end shard and publishes. It doesn't tag anything: tagging publishes,
+so that stays a person's decision. Fails (listing every problem) unless:
 
-  git        the working tree is clean, on main, and the same commit as origin/main
+  git        the working tree is clean, on release/X.Y.Z or release/X.Y.Z-N
+             for Cargo's version, the same commit as that branch on origin,
+             and cut from main (origin/main is in it, so nothing on main is
+             missing)
   version    Cargo.toml's version is a release (not 0.4.1+dev: between releases
              main carries the next version with +dev; the app, its installers
              and the site all take theirs from it), has a dated CHANGELOG.md
              entry, Cargo.lock agrees, and its tag doesn't exist yet
   commit     HEAD is the "Version X.Y.Z" commit and its body carries the entry
-             (the tag goes on it and nothing else: a fix after it makes the
-             release the next patch number)
+             (the tag goes on it and nothing else)
   changelog  the entry's new behaviour comes first and its fixes last, as
              sub-bullets under one closing "- Fixes:" bullet, and every
              bullet opens with a headline of eight words or fewer, with no
              colon or parenthesis (the releases page shows it plain)
   e2e        the end-to-end tests' ledgers (tests/e2e: durations.json,
              flaky.json, budgets.json) name only scenarios that exist
-  CI         the checks and the installer builds passed on this very commit
-             (a build replaced by a newer push doesn't count: run it by hand,
-             `gh workflow run build.yml`)
+  CI         the checks (check.yml) passed on this very commit
 
-Then it lists what can't be checked from here: the review passes, and
-whether the changelog entry has what people would notice: every commit
-summary since the last release (they're written for people who use the
-app), less the ones about tests and CI, to read against it. Either way it
-names the scenarios tests/e2e/durations.json has no time for yet, for the
-pre-release round to refresh.
+Then it lists what can't be checked from here: the release round on the
+test machines, the review passes, and whether the changelog entry has what
+people would notice: every commit summary since the last release (they're
+written for people who use the app), less the ones about tests and CI, to
+read against it. Either way it names the scenarios tests/e2e/durations.json
+has no time for yet, for the pre-release round to refresh.
+
+Once the tag's run has published, main fast-forwards to the version commit,
+the site branch moves to it, and main goes on as the next version.
 """
 
 import json
@@ -124,7 +130,7 @@ def commit_problems(subject: str, message: str, version: str, entry: str) -> lis
     body carries the changelog entry (GitHub's view of the tag shows the
     commit, so the message is the release notes). v0.6.0 and v0.7.0 were
     tagged on e2e fixes pushed after the version commit; a fix after it
-    makes the release the next patch number, with a new version commit."""
+    gets a new version commit on a fresh release branch."""
     problems = []
     if subject.strip() != f"Version {version}":
         problems.append(f'HEAD is "{subject.strip()}", not "Version {version}": the tag goes on the version commit, last before the tag')
@@ -165,6 +171,46 @@ def unmeasured(e2e: Path) -> list[str]:
     return sorted(scenarios(e2e) - set(json.loads((e2e / "durations.json").read_text())))
 
 
+# The branch a version commit goes on: release/0.7.2, or release/0.7.2-2
+# when the first one needed a fix before anything was published.
+RELEASE_BRANCH = re.compile(r"release/(\d+\.\d+\.\d+)(?:-\d+)?")
+
+
+def git_problems(root: Path, version: str) -> list[str]:
+    """What's wrong with the checkout at `root` as the release of `version`:
+    clean, on its release branch, pushed, and cut from main."""
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(("git", *args), cwd=root, check=False, capture_output=True, text=True)
+
+    problems = []
+    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+        problems.append("the working tree has uncommitted changes")
+    branch = git("branch", "--show-current").stdout.strip()
+    named = RELEASE_BRANCH.fullmatch(branch)
+    if not named:
+        problems.append(
+            f'HEAD is on {branch or "no branch"}, not release/{version}: the version commit goes on a branch cut from main'
+        )
+        return problems
+    if named[1] != version:
+        problems.append(f"{branch} is named for {named[1]}, but Cargo.toml says {version}")
+    git("fetch", "--quiet", "--tags", "origin", "main")
+    # Fails when the branch isn't on origin yet; the check below says so.
+    git("fetch", "--quiet", "origin", branch)
+    head = git("rev-parse", "HEAD").stdout.strip()
+    pushed = git("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}").stdout.strip()
+    if not pushed:
+        problems.append(f"{branch} isn't on origin: push it")
+    elif pushed != head:
+        problems.append(f"this commit isn't origin/{branch}: push, or pull")
+    if git("merge-base", "--is-ancestor", "origin/main", "HEAD").returncode != 0:
+        problems.append(
+            f"origin/main has commits {branch} lacks: cut release/{version}-N from main and put the version commit on it"
+        )
+    return problems
+
+
 def next_dev(version: str) -> str:
     """The version main carries after `version` is released: 0.4.0 -> 0.4.1+dev."""
     major, minor, patch = (int(n) for n in version.split("+")[0].split(".")[:3])
@@ -175,14 +221,8 @@ def main() -> None:
     problems: list[str] = []
     version = release.cargo_version((release.ROOT / "Cargo.toml").read_text())
 
-    if run("git", "status", "--porcelain", "--untracked-files=no"):
-        problems.append("the working tree has uncommitted changes")
-    if run("git", "branch", "--show-current") != "main":
-        problems.append("not on main")
-    run("git", "fetch", "--quiet", "--tags", "origin", "main")
+    problems += git_problems(release.ROOT, version.split("+")[0])
     sha = run("git", "rev-parse", "HEAD")
-    if sha != run("git", "rev-parse", "origin/main"):
-        problems.append("this commit isn't origin/main: push, or pull")
 
     if "+" in version:
         problems.append(f"{version} is a development version: bump it to the release's (drop the +dev)")
@@ -212,16 +252,18 @@ def main() -> None:
     if run("git", "tag", "--list", f"v{version}"):
         problems.append(f"v{version} is already tagged: bump the version")
 
-    for workflow, what in [("check.yml", "checks"), ("build.yml", "installer builds")]:
-        result = ci_result(workflow, sha)
-        if result != "success":
-            problems.append(f"the {what} ({workflow}) on {sha[:7]}: {result}")
+    # The installer builds and the end-to-end tests run on the tag: that run
+    # is the release's one full lane, so none is asked for before it.
+    result = ci_result("check.yml", sha)
+    if result != "success":
+        problems.append(f"the checks (check.yml) on {sha[:7]}: {result}")
 
     if problems:
         sys.exit(f"Not ready to release {version}:\n  " + "\n  ".join(problems) + (f"\nAlso: {timing}" if timing else ""))
     print(f"""Ready to release {version} ({sha[:7]}), as far as can be checked from here.
 
 Before tagging, check what can't be:
+  - the release round on the test machines passed on this release's code
   - the security, correctness, races and code quality review passes are done
   - anything only testable by hand was tried in this build{chr(10) + "  - " + timing if timing else ""}
   - CHANGELOG.md's entry has what people would notice of these (newest
@@ -232,13 +274,29 @@ Then, to publish (a signed, annotated tag: the repo signs tags with the
 same key as commits; a bare `git tag` would make an unsigned one):
   git tag -s v{version} -m "Version {version}" && git tag -v v{version} && git push origin v{version}
 
-The publish job checks the release once it's up (scripts/verify-release.py).
+The tag's run is the full lane: every build, every system's end-to-end
+shards, then the publish job, which checks the release once it's up
+(scripts/verify-release.py). A one-off failure: re-run the failed jobs. A
+failure that needs a commit: the fix lands on main, the unpublished tag is
+deleted on GitHub, and a fresh release/{version}-N cut from main gets the
+version commit, tagged v{version} again.
 
 Once it's out:
+  - main, to the version commit (a fast-forward: the branch was cut from it)
+      git push origin v{version}^{{commit}}:main
+    (refused when main gained commits after the cut: merge the tag into
+    main instead, with no rebase, so the tagged commit stays as it is)
+      git fetch origin main && git switch --detach origin/main
+      git merge --no-edit v{version} && git push origin HEAD:main
   - the website, from the release: Cloudflare builds vodscribe.com from the
     site branch, so its demo shows what people can download, not main
       git push origin v{version}^{{commit}}:refs/heads/site
-    (refused if site has fixes of its own since: merge the tag into it)
+    refused when site has commits of its own (fixes made there, often on
+    main too by now): merge the tag into it; the diff is empty when the
+    merge's tree is the release's, else site has a change the release lacks
+      git fetch origin site && git switch --detach origin/site
+      git merge --no-edit v{version} && git diff --stat v{version}
+      git push origin HEAD:refs/heads/site
   - main goes on as the next version, in development, in a commit of its
     own: Cargo.toml (and Cargo.lock, by cargo check) to {next_dev(version)}, and
     an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md""")

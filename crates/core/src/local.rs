@@ -93,6 +93,8 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
         url: path.to_string_lossy().into_owned(),
         title,
         channel: None,
+        channel_login: None,
+        channel_url: None,
         duration: streams.duration,
         thumbnail: None,
         published: None,

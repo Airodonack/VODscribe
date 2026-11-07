@@ -7,12 +7,16 @@
 // each part without lines, whose Transcribe transcribes just that part, and
 // which shows the request at work, with Stop. The captions button waits for
 // captions, and a search with no match says what it didn't look through.
-// The bar's Transcribe sits at its right before the captions button and,
-// hovered, lights up what it would do: the whole VOD, then the rest; held,
-// it opens the menu of how much; clicked, it does the rest, and once all is
-// transcribed it asks before doing all of it again. On another file with
-// nothing transcribed, T pressed twice asks for the whole VOD once, and
-// hovered meanwhile, the bar's Transcribe lights nothing: nothing's left to ask.
+// The bar has no Transcribe button: the captions button, right-clicked,
+// opens the Transcribe menu, whose first entry reads Transcribe VOD, then
+// Transcribe selection with a stretch selected (by I and O, or picked
+// between two cuts), then Transcribe the rest;
+// hovered, an entry lights up what it would do, the first and one of how
+// much from the playhead alike; held, the button opens the menu too.
+// Picked, the first entry does the rest, and once all is transcribed it
+// asks before doing all of it again. On another file with nothing
+// transcribed, T pressed twice asks for the whole VOD once, and the first
+// entry, hovered meanwhile, lights nothing: nothing's left to ask.
 
 import path from "node:path";
 
@@ -30,13 +34,24 @@ function formatTime(seconds) {
 const EDGE = 0.5;
 
 const SEARCH = 'input[placeholder="Search for a phrase…"]';
+const CAPTIONS = '.bar button[aria-label="Captions"]';
+/** The captions button's menu (TranscribeFrom.svelte, with its first entry). */
+const MENU = '[role=dialog][aria-label="Transcribe"]';
 
 export default {
   name: "transcribe-stretch",
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "transcribe-lit-the-rest":
-      "In the bar under the timeline a Transcribe button sits at the right, just before the captions (CC) button; on the timeline the two stretches 0:00 to 2:00 and 3:00 to the end are outlined and lit, and the stretch from 2:00 to 3:00 between them is not.",
+      "A small menu is open above the captions (CC) button under the timeline, its first entry Transcribe the rest, then From and a time, with lengths under it; on the timeline the two stretches 0:00 to 2:00 and 3:00 to the end are outlined and lit, and the stretch from 2:00 to 3:00 between them is not.",
+    "transcribe-lit-the-whole-VOD":
+      "A ten-minute file, not transcribed: a small menu is open above the greyed captions (CC) button under the timeline, its first entry Transcribe VOD; the whole timeline, from 0:00 to the end, is outlined and lit; there is no Transcribe button in the bar; the transcript says Not transcribed yet. with Transcribe the whole VOD and Transcribe from here links.",
+    "transcribe-lit-the-selection":
+      "The same file with a short stretch picked near the start of the timeline: a small menu is open above the captions (CC) button, its first entry Transcribe selection; only that stretch is outlined and lit on the timeline.",
+    "transcribe-lit-the-stretch-picked":
+      "The same file with two cuts near the start of the timeline and the short stretch between them picked: a small menu is open above the captions (CC) button, its first entry Transcribe selection; only that stretch is outlined and lit on the timeline.",
+    "transcribe-lit-all-of-it-again":
+      "The same file, now transcribed (a list of lines from 0:00 Swippin', uh …): a small menu is open above the captions (CC) button, its first entry Transcribe again…; the whole timeline, from 0:00 to the end, is outlined and lit again.",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -64,17 +79,24 @@ export default {
 
     // What the page shows: the transcript, its rows for parts not
     // transcribed (whitespace made single), its header, the captions button.
+    // The transcript lays out only the rows within 1000 px of its view
+    // (Transcript.svelte `AROUND`), so the row after 0:00–4:00's 46 lines
+    // isn't there on a short screen until it's scrolled to: the rows are
+    // looked for scrolled to the end, where what's left to transcribe is.
     const panel = () => app.js(`return document.querySelector("#transcript")?.innerText ?? ""`);
     const gapRows = () =>
       app.js(
-        `return [...document.querySelectorAll("#transcript .row.gap")].map((r) => r.textContent.replace(/\\s+/g, " ").trim())`,
+        `const view = document.querySelector("#transcript")?.closest(".body");
+         if (view) view.scrollTop = view.scrollHeight;
+         return [...document.querySelectorAll("#transcript .row.gap")].map((r) => r.textContent.replace(/\\s+/g, " ").trim())`,
       );
     const head = () =>
       app.js(`return document.querySelector(".head .status")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
     const notTranscribing = async () => !/Transcribing/.test(await head());
     const captionsButton = () =>
       app.js(
-        `const b = document.querySelector('.bar button[aria-label="Captions"]'); return b && { disabled: b.disabled, title: b.title }`,
+        `const b = document.querySelector(arguments[0]); return b && { disabled: b.getAttribute("aria-disabled") === "true", title: b.title }`,
+        CAPTIONS,
       );
 
     // The stretches lit up on the timeline (to the second), not counting an
@@ -89,17 +111,38 @@ export default {
            return [Math.round(time(r.left)), Math.round(time(r.right))];
          });`,
       );
-    const hover = (on) =>
+    /** The captions button right-clicked: the Transcribe menu, open; its first entry's label. */
+    const openMenu = async () => {
+      await app.js(
+        `document.querySelector(arguments[0]).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }))`,
+        CAPTIONS,
+      );
+      return until(
+        "the Transcribe menu",
+        () =>
+          app.js(
+            `return document.querySelector(arguments[0] + ' [data-choice="lead"] span')?.textContent.trim() ?? null`,
+            MENU,
+          ),
+        10_000,
+      );
+    };
+    const menuOpen = () => app.js(`return !!document.querySelector(arguments[0])`, MENU);
+    const closeMenu = async () => {
+      await app.key("Escape");
+      await until("the Transcribe menu to close", async () => !(await menuOpen()), 10_000);
+    };
+    /** The menu's entry `key` ("lead", or a length's) pointed at, or not. */
+    const hover = (key, on) =>
       app.js(
-        `document.querySelector(".bar button.transcribe").dispatchEvent(new MouseEvent(arguments[0]))`,
+        `document.querySelector(arguments[0] + ' [data-choice="' + arguments[1] + '"]').dispatchEvent(new MouseEvent(arguments[2]))`,
+        MENU,
+        key,
         on ? "mouseenter" : "mouseleave",
       );
-    /** The bar's Transcribe hovered: its title starts `title`, and `want` ([start, end], ±2 s) lights up (a checkpoint); then not hovered, nothing. */
-    const litWhileHovered = async (what, title, want) => {
-      const said = await app.js(`return document.querySelector(".bar button.transcribe")?.title ?? null`);
-      if (!said?.startsWith(title)) throw new Error(`for ${what}, the bar's Transcribe says "${said}"`);
-      await hover(true);
-      await until(
+    /** `want` ([start, end], ±2 s) lit up on the timeline. */
+    const litUp = (what, want) =>
+      until(
         `${what} lit up`,
         async () => {
           const seen = await lit();
@@ -111,9 +154,22 @@ export default {
         },
         10_000,
       );
+    /** The menu opened: its first entry reads `label`, and hovered, `want` lights up (a checkpoint); then not hovered, nothing; closed. */
+    const litWhileHovered = async (what, label, want) => {
+      const said = await openMenu();
+      if (said !== label) throw new Error(`for ${what}, the menu's first entry says "${said}"`);
+      await hover("lead", true);
+      await litUp(what, want);
       await ctx.checkpoint(`transcribe-lit-${what.replace(/ /g, "-")}`);
-      await hover(false);
+      await hover("lead", false);
       await until("nothing lit up", async () => (await lit()).length === 0, 10_000);
+      await closeMenu();
+    };
+    /** The menu's first entry, picked. */
+    const pickLead = async () => {
+      await openMenu();
+      await app.click(`${MENU} [data-choice="lead"]`);
+      await until("the Transcribe menu to close", async () => !(await menuOpen()), 10_000);
     };
 
     // Nothing transcribed: said, with the two ways to start.
@@ -151,30 +207,104 @@ export default {
     );
     await app.pause();
     const before = await captionsButton();
-    if (!before?.disabled || before.title !== "Transcribe to get captions")
+    if (!before?.disabled || !before.title.startsWith("Transcribe to get captions. Right-click to transcribe"))
       throw new Error(`with nothing transcribed, the captions button is ${JSON.stringify(before)}`);
     ctx.log("the empty transcript offers both ways; from here opens the menu; captions grayed out");
 
-    // The bar's Transcribe, at its right just before the captions button:
-    // with nothing transcribed it would do the whole VOD, lit up on the
-    // timeline while it's hovered; pressed and held, the menu of how much
-    // from the playhead, which let go elsewhere closes, asking nothing.
-    const place = await app.js(
-      `const buttons = [...document.querySelectorAll(".bar button")];
-       const at = buttons.findIndex((b) => b.matches(".transcribe"));
-       const context = document.querySelector(".bar .context");
-       return { at, next: buttons[at + 1]?.getAttribute("aria-label") ?? null,
-                right: !!context && !!(context.compareDocumentPosition(buttons[at]) & Node.DOCUMENT_POSITION_FOLLOWING) };`,
-    );
-    if (place.at < 0 || place.next !== "Captions" || !place.right)
-      throw new Error(`the bar's Transcribe is at ${JSON.stringify(place)}, not at the right before Captions`);
+    // No Transcribe button in the bar: the captions button's menu instead.
+    // With nothing transcribed its first entry does the whole VOD, lit up on
+    // the timeline while it's hovered; with a stretch selected, the
+    // selection. An entry of how much from the playhead lights up that.
+    // Pressed and held, the button opens the menu too, which let go
+    // elsewhere closes, asking nothing.
+    if (await app.js(`return !!document.querySelector(".bar button.transcribe")`))
+      throw new Error("the bar still has a Transcribe button");
     const length = Math.round(added.duration);
-    await litWhileHovered("the whole VOD", "Transcribe the whole VOD", [[0, length]]);
+    await litWhileHovered("the whole VOD", "Transcribe VOD", [[0, length]]);
+    await openMenu();
+    const opened = await menu();
+    const fromAt = /^From (\d+):(\d\d) for:$/.exec(opened ?? "");
+    if (!fromAt) throw new Error(`the menu says "${opened}" before its lengths`);
+    const start = Number(fromAt[1]) * 60 + Number(fromAt[2]);
+    await hover("300", true);
+    await litUp("5 min from the playhead", [[start, Math.min(start + 300, length)]]);
+    await hover("300", false);
+    await closeMenu();
+    // A selection: O begins one at the playhead (past the start, as it played).
+    await app.toStart();
+    for (let i = 0; i < 3; i++) await app.key("ArrowRight", { shift: true });
+    await until("the player at 3 s", async () => (await app.shownTime()) === 3, 10_000);
+    await app.key("o");
+    const selected = await until(
+      "a selection",
+      () =>
+        app.js(
+          `const bar = document.querySelector(".scrubber");
+           const sel = bar.querySelector(".selection");
+           if (!sel) return null;
+           const box = bar.getBoundingClientRect();
+           const time = (x) => Number(bar.dataset.viewStart) + ((x - box.left) / box.width) * Number(bar.dataset.span);
+           const r = sel.getBoundingClientRect();
+           return [Math.round(time(r.left)), Math.round(time(r.right))];`,
+        ),
+      10_000,
+    );
+    if (selected[1] - selected[0] < 1 || selected[1] - selected[0] > length - 10)
+      throw new Error(`the selection is ${JSON.stringify(selected)}`);
+    await litWhileHovered("the selection", "Transcribe selection", [selected]);
+    await until(
+      "the selection let go",
+      async () => {
+        if (!(await app.js(`return !!document.querySelector(".scrubber .selection")`))) return true;
+        await app.key("Escape");
+        return false;
+      },
+      10_000,
+    );
+    // A stretch picked between two cuts (B at 3 s and 8 s, then a Ctrl-click
+    // between them, ⌘ on a Mac) is a selection too; the cuts then go again.
+    const cutAt = async (s) => {
+      await app.toStart();
+      for (let i = 0; i < s; i++) await app.key("ArrowRight", { shift: true });
+      await until(`the player at ${s} s`, async () => (await app.shownTime()) === s, 10_000);
+      await app.key("b");
+    };
+    const cutCount = async () => (await app.invoke("list_marks", { vodId: vod.id })).length;
+    for (const s of [3, 8]) {
+      await cutAt(s);
+      await until("the cut, selected", () => app.js(`return !!document.querySelector(".cut.selected")`), 10_000);
+      await app.key("Escape");
+      await until("the cut let go", () => app.js(`return !document.querySelector(".cut.selected")`), 10_000);
+    }
+    await until("two cuts", async () => (await cutCount()) === 2, 10_000);
     await app.js(
-      `document.querySelector(".bar button.transcribe").dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 1, isPrimary: true }))`,
+      `const mac = /Mac/.test(navigator.platform);
+       const bar = document.querySelector(".scrubber");
+       const box = bar.getBoundingClientRect();
+       const x = box.left + ((5.5 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+       const at = { bubbles: true, cancelable: true, clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: 1, isPrimary: true, pointerId: 1, ctrlKey: !mac, metaKey: mac };
+       bar.dispatchEvent(new PointerEvent("pointerdown", at));
+       window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`,
+    );
+    await until("the stretch picked", () => app.js(`return !!document.querySelector(".scrubber .chosen")`), 10_000);
+    await litWhileHovered("the stretch picked", "Transcribe selection", [[3, 8]]);
+    await until(
+      "the stretch let go",
+      async () => {
+        if (!(await app.js(`return !!document.querySelector(".scrubber .chosen")`))) return true;
+        await app.key("Escape");
+        return false;
+      },
+      10_000,
+    );
+    for (const s of [8, 3]) await cutAt(s);
+    await until("the cuts gone", async () => (await cutCount()) === 0, 10_000);
+    await app.js(
+      `document.querySelector(arguments[0]).dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 1, isPrimary: true }))`,
+      CAPTIONS,
     );
     const held = await until("the menu, held open", menu, 10_000);
-    if (!/^From \d+:\d\d for:$/.test(held)) throw new Error(`Transcribe held opened "${held}"`);
+    if (!/^From \d+:\d\d for:$/.test(held)) throw new Error(`the captions button held opened "${held}"`);
     await app.js(
       `const r = document.querySelector("button.time").getBoundingClientRect();
        const at = { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, bubbles: true, pointerId: 1, isPrimary: true };
@@ -182,9 +312,10 @@ export default {
     );
     await until("the menu to close", async () => (await menu()) === null, 10_000);
     const stillNone = await app.invoke("transcript_stretches", { vodId: vod.id });
-    if (stillNone.length) throw new Error(`the held menu, let go elsewhere, asked for ${JSON.stringify(stillNone)}`);
+    if (stillNone.length)
+      throw new Error(`the menu, its entries hovered or held, asked for ${JSON.stringify(stillNone)}`);
     ctx.log(
-      `the bar's Transcribe: before Captions; hovered, 0-${length} s lit; held, "${held}", let go elsewhere, closed`,
+      `the captions button's menu: Transcribe VOD, 0-${length} s lit; 5 min from ${start} s lit; Transcribe selection, ${selected.join("-")} s lit, and for the stretch picked between cuts, 3-8 s; held, "${held}", let go elsewhere, closed`,
     );
 
     /** Asks for `start`..`end` and waits till it's done: no request left. */
@@ -250,12 +381,12 @@ export default {
     if (shownTimes.length !== first.length || shownTimes.some((t) => t < 120 - EDGE || t > 180 + EDGE))
       throw new Error(`the transcript shows lines at ${shownTimes}, for ${first.length} in 2:00–3:00`);
     await until("the captions button to work", async () => (await captionsButton())?.disabled === false, MINUTE);
-    // The bar's Transcribe would now do the rest: before 2:00 and after 3:00, lit up.
+    // The menu's first entry would now do the rest: before 2:00 and after 3:00, lit up.
     await litWhileHovered("the rest", "Transcribe the rest", [
       [0, 120],
       [180, Math.round(added.duration)],
     ]);
-    ctx.log("the bar's Transcribe, hovered: 0:00-2:00 and 3:00 on lit up, the rest");
+    ctx.log("the menu's Transcribe the rest, hovered: 0:00-2:00 and 3:00 on lit up");
     // A search of it alone finding nothing: only chat and those lines were looked through.
     await app.type(SEARCH, "zebra crossing");
     const none = await until(
@@ -398,11 +529,11 @@ export default {
     });
     ctx.log(`the rest: "${working[0]}", "${working[1].at(-1)}"; stopped, "${left}"`);
 
-    // The bar's Transcribe, clicked: the rest, all of it now transcribed.
+    // The menu's first entry, picked: the rest, all of it now transcribed.
     // Then it would transcribe the whole VOD again, which replaces it all:
     // it asks first, as the library row's Transcribe again does; answered
     // Cancel, nothing is asked for; answered Transcribe again, all of it is.
-    await app.click(".bar button.transcribe");
+    await pickLead();
     await app.timed("the rest transcribed", () =>
       until(
         "all of it transcribed",
@@ -419,12 +550,12 @@ export default {
       (await app.invoke("transcript_stretches", { vodId: vod.id })).filter((s) => s.status !== "done");
     const questions = await app.asked();
     await app.answer("Cancel");
-    await app.click(".bar button.transcribe");
+    await pickLead();
     await until("the question", async () => (await app.asked()) === questions + 1, 10_000);
     await new Promise((r) => setTimeout(r, 500));
     if ((await pending()).length) throw new Error(`answered Cancel, it asked for ${JSON.stringify(await pending())}`);
     await app.answer("Transcribe again");
-    await app.click(".bar button.transcribe");
+    await pickLead();
     await until("the second question", async () => (await app.asked()) === questions + 2, 10_000);
     const again = await until(
       "all of it asked for again",
@@ -435,7 +566,9 @@ export default {
       },
       10_000,
     );
-    ctx.log(`the bar's Transcribe: the rest, then all of it again only once asked (request ${again.id}, 0 to the end)`);
+    ctx.log(
+      `the menu's first entry: the rest, then all of it again only once asked (request ${again.id}, 0 to the end)`,
+    );
 
     // Another file, nothing of it transcribed: T, then T again while the
     // whole VOD waits (behind the one above), is one request, not two.
@@ -444,7 +577,8 @@ export default {
       "the other open",
       () =>
         app.js(
-          `return !!document.querySelector('.list .vod.selected[data-key="${other.id}"]') && !!document.querySelector(".bar button.transcribe")`,
+          `return !!document.querySelector('.list .vod.selected[data-key="${other.id}"]') && !!document.querySelector(arguments[0])`,
+          CAPTIONS,
         ),
       MINUTE,
     );
@@ -457,11 +591,15 @@ export default {
     const twiceT = await asks();
     if (twiceT.length !== 1 || twiceT[0].start !== 0 || twiceT[0].end !== null)
       throw new Error(`T pressed twice asked for ${JSON.stringify(twiceT)}`);
-    await hover(true);
+    const leadNow = await openMenu();
+    if (leadNow !== "Transcribe VOD")
+      throw new Error(`with nothing transcribed, the menu's first entry says "${leadNow}"`);
+    await hover("lead", true);
     await new Promise((r) => setTimeout(r, 1000));
     const litNow = await lit();
-    await hover(false);
-    if (litNow.length) throw new Error(`with all of it asked for, Transcribe lights ${JSON.stringify(litNow)}`);
+    await hover("lead", false);
+    await closeMenu();
+    if (litNow.length) throw new Error(`with all of it asked for, Transcribe VOD lights ${JSON.stringify(litNow)}`);
     ctx.log(`T twice on a file with nothing transcribed: one request (${twiceT[0].id}), nothing lit`);
   },
 };

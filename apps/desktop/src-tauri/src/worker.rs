@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::{Db, Status, Vod};
 use vodscribe_core::pipeline::{Transcription, WorkerSpec};
 use vodscribe_core::settings::{Device, Settings};
@@ -73,14 +73,14 @@ impl Worker {
     /// once the app's state is managed, since a job reads it (`emit_vod`)
     /// and a job left from last time is there to start at once.
     pub fn start(app: AppHandle, paths: Paths) -> Result<Self> {
-        Db::open(&paths.db())?.requeue_interrupted()?;
+        Db::open_in(&paths)?.requeue_interrupted()?;
         let queue = Arc::new(Mutex::new(Queue { jobs: Vec::new(), held: true }));
         let (dl_tx, dl_rx) = mpsc::channel();
         let (tr_tx, tr_rx) = mpsc::channel();
         for (stage, rx) in [(Stage::Download, dl_rx), (Stage::Transcribe, tr_rx)] {
             let ctx = Ctx {
                 app: app.clone(),
-                db: Db::open(&paths.db())?,
+                db: Db::open_in(&paths)?,
                 paths: paths.clone(),
                 queue: queue.clone(),
                 wake_other: match stage {
@@ -171,6 +171,21 @@ impl Worker {
         idle(&running)?;
         Ok(!running.is_empty())
     }
+
+    /// For the tests (readd-stuck.mjs): VOD `vod_id` has work running that
+    /// doesn't stop when told, for `busy`, as a download stuck on the
+    /// network would. A job of no request, which no stage runs.
+    #[cfg(feature = "e2e")]
+    pub fn e2e_busy(&self, vod_id: i64, busy: Duration) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let job = Job { stretch_id: -1, vod_id, flag: flag.clone(), reason: Arc::default() };
+        self.queue.lock().unwrap().jobs.push(job);
+        let queue = self.queue.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(busy);
+            queue.lock().unwrap().jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
+        });
+    }
 }
 
 impl Job {
@@ -237,7 +252,7 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
         let finished = {
             let mut queue = ctx.queue.lock().unwrap();
             let stop = *reason.lock().unwrap();
-            let finished = finish(stage, &ctx.db, &ctx.paths.work(), stretch.id, result, stop, progress);
+            let finished = finish(stage, &ctx.db, &ctx.paths, stretch.id, result, stop, progress);
             queue.jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
             finished
         };
@@ -276,7 +291,7 @@ fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<(Vod, Stretch)>> {
 fn finish(
     stage: Stage,
     db: &Db,
-    work: &std::path::Path,
+    paths: &Paths,
     stretch_id: i64,
     result: Result<()>,
     stop: Option<Stop>,
@@ -286,7 +301,7 @@ fn finish(
         // The transcript finished before the stop took effect: keep it.
         (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
         (_, Some(Stop::Pause)) => db.set_stretch_status(stretch_id, Status::Paused, progress, None)?,
-        (_, Some(Stop::Cancel)) => cancel(db, work, stretch_id)?,
+        (_, Some(Stop::Cancel)) => cancel(db, paths, stretch_id)?,
         (Ok(()), None) => {}
         // Stopped without a recorded reason: keep the work, as a pause would.
         (Err(e), None) if vodscribe_core::is_canceled(&e) => {
@@ -310,19 +325,19 @@ pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read 
 /// on request (videos.rs), stays. A stretch's own section never downloads
 /// the video: a download there is "Keep video"'s, or Play's. A stretch
 /// already done isn't a request: it's left as it is.
-pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
+pub fn cancel(db: &Db, paths: &Paths, stretch_id: i64) -> Result<()> {
     let Some(stretch) = db.stretch(stretch_id)?.filter(|s| s.status != Status::Done) else { return Ok(()) };
     let vod_id = stretch.vod_id;
     let whole = stretch.is_whole();
-    pipeline::remove_section(work_dir, stretch.vod_id, stretch.id);
+    pipeline::remove_section(paths, stretch.vod_id, stretch.id);
     db.end_request(stretch_id)?;
     if !db.requests(vod_id)?.is_empty() {
         return Ok(());
     }
-    pipeline::remove_work_files(work_dir, vod_id);
+    pipeline::remove_work_files(&paths.work(), vod_id);
     db.set_audio_path(vod_id, None)?;
     if whole && db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform) && !v.media) {
-        pipeline::remove_media(work_dir, vod_id);
+        pipeline::remove_media(paths, vod_id);
     }
     Ok(())
 }
@@ -341,7 +356,7 @@ fn reporter<'a>(
         let now = Instant::now();
         if status != last.0 || now - last.1 >= PROGRESS_INTERVAL {
             last = (status, now);
-            let _ = app.emit("vod-progress", (vod_id, stretch_id, status, p));
+            crate::page::emit(app, "vod-progress", (vod_id, stretch_id, status, p));
         }
     }
 }
@@ -361,7 +376,7 @@ fn download(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, prog
         vod,
         stretch,
         &tools,
-        &ctx.paths.work(),
+        &ctx.paths,
         Some((&playable, height)),
         flag,
         reporter(&app, vod.id, stretch.id, progress),
@@ -426,13 +441,13 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, pr
     let app = ctx.app.clone();
     let mut report = reporter(&app, vod.id, stretch.id, progress);
     // The pipeline holds the stage's connection, so notices go through a second one.
-    let notes = Db::open(&ctx.paths.db())?;
+    let notes = Db::open_in(&ctx.paths)?;
     let mut notice = |notice: String| {
         let _ = notes.set_note(vod.id, Some(&notice));
         let _ = crate::emit_vod(&app, &notes, vod.id);
     };
     pipeline::transcribe(&mut ctx.db, vod, stretch, &ffmpeg, &audio, &transcription, flag, &mut report, &mut notice)?;
-    pipeline::remove_section(&ctx.paths.work(), vod.id, stretch.id);
+    pipeline::remove_section(&ctx.paths, vod.id, stretch.id);
     // The whole audio stays while another request of the VOD may use it.
     if ctx.db.requests(vod.id)?.is_empty() {
         pipeline::remove_work_files(&ctx.paths.work(), vod.id);
@@ -503,32 +518,43 @@ mod tests {
     use vodscribe_core::fetch::VodInfo;
     use vodscribe_core::stretches::Transcribed;
 
-    /// A work dir, deleted when the test ends.
-    struct Work(std::path::PathBuf);
+    /// A library's work dir, which it reads as, and its `paths`; the
+    /// library's folder is deleted when the test ends.
+    struct Work {
+        paths: Paths,
+        dir: std::path::PathBuf,
+    }
 
     impl std::ops::Deref for Work {
         type Target = std::path::Path;
         fn deref(&self) -> &std::path::Path {
-            &self.0
+            &self.dir
         }
     }
 
     impl Drop for Work {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_dir_all(&self.paths.root);
         }
     }
 
     /// A library with one VOD and a request for all of it in `status`, and
     /// a work dir holding its audio. Returns the request's id.
     fn setup(status: Status) -> (Db, Work, i64) {
-        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        // A folder of its own, so its media folder (beside the work folder) is its own too.
+        let root = std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id()));
+        let paths = Paths::new(&root);
+        let work = paths.work();
+        std::fs::create_dir_all(&work).unwrap();
+        let db = Db::open(&paths.db()).unwrap();
         let info = VodInfo {
             platform: "youtube".into(),
             platform_id: "x".into(),
             url: "https://youtu.be/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -537,13 +563,9 @@ mod tests {
         let id = db.add_vod(&info).unwrap().0.id;
         let stretch = db.request(id, 0.0, None).unwrap().id;
         db.set_stretch_status(stretch, status, 0.5, None).unwrap();
-        // A folder of its own, so its media folder (beside it) is its own too.
-        let work =
-            std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id())).join("work");
-        std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join(format!("{id}.m4a")), b"audio").unwrap();
         db.set_audio_path(id, Some(&work.join(format!("{id}.m4a")).to_string_lossy())).unwrap();
-        (db, Work(work), stretch)
+        (db, Work { paths, dir: work }, stretch)
     }
 
     /// The VOD of request `stretch`.
@@ -581,26 +603,28 @@ mod tests {
     #[test]
     fn a_cancelled_stretch_leaves_the_video_downloading_to_play() {
         let (_, work, _) = setup(Status::Transcribing);
-        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let db = Db::open(&work.parent().unwrap().join("other.sqlite")).unwrap();
         let info = VodInfo {
             platform: "rumble".into(),
             platform_id: "r".into(),
             url: "https://rumble.com/r".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(600.0),
             thumbnail: None,
             published: None,
             started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0.id;
-        let media = pipeline::media_dir(&work);
+        let media = work.paths.media();
         std::fs::create_dir_all(&media).unwrap();
-        let part = pipeline::media_stem(&media, vod, "t").with_extension("mp4.part");
+        let part = db.files().source_video(vod, "mp4.part");
         std::fs::write(&part, b"half a video").unwrap();
         let id = db.request(vod, 100.0, Some(130.0)).unwrap().id;
         db.set_stretch_status(id, Status::Transcribing, 0.5, None).unwrap();
-        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.5)
+        finish(Stage::Transcribe, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.5)
             .unwrap();
         assert_eq!(db.requests(vod).unwrap(), []);
         assert!(part.exists(), "a stretch's section never downloads the video: not its to delete");
@@ -610,7 +634,7 @@ mod tests {
     fn a_pause_keeps_the_request_and_its_work() {
         let (mut db, work, id) = setup(Status::Transcribing);
         write_a_line(&mut db, id);
-        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Pause), 0.4)
+        finish(Stage::Transcribe, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Pause), 0.4)
             .unwrap();
         assert_eq!(status(&db, id).0, Status::Paused);
         let stretch = db.stretch(id).unwrap().unwrap();
@@ -624,7 +648,7 @@ mod tests {
         let (mut db, work, id) = setup(Status::Transcribing);
         let vod = vod_of(&db, id);
         write_a_line(&mut db, id);
-        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+        finish(Stage::Transcribe, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
         let shown = db.vod(vod).unwrap().unwrap();
         assert_eq!((shown.status, shown.transcribed, shown.error), (Status::None, Transcribed::Some, None));
@@ -644,13 +668,13 @@ mod tests {
         std::fs::write(work.join(format!("{vod}.s{id}.m4a.part")), b"part").unwrap();
         db.set_stretch_audio(id, Some(&section.to_string_lossy())).unwrap();
         let other = db.request(vod, 100.0, Some(110.0)).unwrap().id;
-        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+        finish(Stage::Transcribe, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
         let mut left: Vec<_> =
             std::fs::read_dir(&*work).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         left.sort();
         assert_eq!(left, [format!("{vod}.m4a")], "the whole audio, for the other request");
-        finish(Stage::Download, &db, &work, other, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.0)
+        finish(Stage::Download, &db, &work.paths, other, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.0)
             .unwrap();
         assert_eq!(std::fs::read_dir(&*work).unwrap().count(), 0);
     }
@@ -659,7 +683,8 @@ mod tests {
     fn a_cancel_before_any_line_leaves_nothing_asked() {
         let (db, work, id) = setup(Status::Downloading);
         let vod = vod_of(&db, id);
-        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4).unwrap();
+        finish(Stage::Download, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+            .unwrap();
         assert_eq!(db.stretches(vod).unwrap(), []);
         assert_eq!(db.vod(vod).unwrap().unwrap().status, Status::None);
     }
@@ -667,14 +692,14 @@ mod tests {
     #[test]
     fn a_cancel_keeps_a_video_downloaded_on_request() {
         let (db, work, id) = setup(Status::Transcribing);
-        let media = pipeline::media_dir(&work);
+        let media = work.paths.media();
         std::fs::create_dir_all(&media).unwrap();
         let vod = vod_of(&db, id);
-        let video = pipeline::media_stem(&media, vod, "t").with_extension("mp4");
+        let video = db.files().source_video(vod, "mp4");
         std::fs::write(&video, b"").unwrap();
         let video = video.to_string_lossy().into_owned();
         db.set_media_path(vod, Some(&video)).unwrap();
-        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+        finish(Stage::Transcribe, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
         assert_eq!(db.vod(vod).unwrap().unwrap().status, Status::None);
         assert!(std::path::Path::new(&video).exists());
@@ -689,7 +714,7 @@ mod tests {
         // Written anew as it was merged with the others done.
         let id = db.stretches(vod).unwrap()[0].id;
         for stop in [Stop::Pause, Stop::Cancel] {
-            finish(Stage::Transcribe, &db, &work, id, Ok(()), Some(stop), 1.0).unwrap();
+            finish(Stage::Transcribe, &db, &work.paths, id, Ok(()), Some(stop), 1.0).unwrap();
             assert_eq!(status(&db, id), (Status::Done, None));
         }
     }
@@ -702,7 +727,7 @@ mod tests {
         let vod = vod_of(&db, id);
         db.finish_stretch(id).unwrap();
         let done = db.stretches(vod).unwrap();
-        cancel(&db, &work, done[0].id).unwrap();
+        cancel(&db, &work.paths, done[0].id).unwrap();
         assert_eq!(db.stretches(vod).unwrap(), done);
         assert!(db.audio_path(vod).unwrap().is_some());
         assert!(work.join(format!("{vod}.m4a")).exists());
@@ -711,9 +736,9 @@ mod tests {
     #[test]
     fn a_stop_with_no_reason_is_a_pause_and_a_failure_is_an_error() {
         let (db, work, id) = setup(Status::Downloading);
-        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), None, 0.3).unwrap();
+        finish(Stage::Download, &db, &work.paths, id, Err(vodscribe_core::Canceled.into()), None, 0.3).unwrap();
         assert_eq!(status(&db, id).0, Status::Paused);
-        finish(Stage::Download, &db, &work, id, Err(anyhow::anyhow!("HTTP 404")), None, 0.3).unwrap();
+        finish(Stage::Download, &db, &work.paths, id, Err(anyhow::anyhow!("HTTP 404")), None, 0.3).unwrap();
         assert_eq!(status(&db, id), (Status::Error, Some("HTTP 404".into())));
     }
 
@@ -722,7 +747,7 @@ mod tests {
         let (db, work, id) = setup(Status::Downloading);
         let vod = vod_of(&db, id);
         db.delete_vod(vod).unwrap();
-        finish(Stage::Download, &db, &work, id, Err(anyhow::anyhow!("gone")), None, 0.3).unwrap();
+        finish(Stage::Download, &db, &work.paths, id, Err(anyhow::anyhow!("gone")), None, 0.3).unwrap();
         assert!(db.vod(vod).unwrap().is_none());
     }
 

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::Db;
 use vodscribe_core::tools;
 use vodscribe_player::clock::{Event, Player};
@@ -42,10 +42,21 @@ struct Open {
 }
 
 impl Native {
-    /// Whether a player is playing something other than `doc`: work in the
-    /// background for `doc` waits meanwhile, so playing stays smooth.
-    pub(crate) fn playing_other(&self, doc: Doc) -> bool {
-        self.open.lock().unwrap().as_ref().is_some_and(|o| o.doc != doc && o.player.playing())
+    /// Whether a player is playing footage other than VOD `vod`'s: work in
+    /// the background for `vod` waits meanwhile, so playing stays smooth.
+    /// An edit plays its pieces' VODs, so their work goes on: the edit's
+    /// timeline shows their storyboards. Its pieces are read as they are
+    /// now, since they change while it plays.
+    pub(crate) fn playing_other(&self, db: &Mutex<Db>, vod: i64) -> bool {
+        // The player's lock let go before the library's is taken.
+        let playing = self.open.lock().unwrap().as_ref().filter(|o| o.player.playing()).map(|o| o.doc);
+        match playing {
+            None => false,
+            Some(Doc::Vod(id)) => id != vod,
+            Some(Doc::Edit(id)) => {
+                !db.lock().unwrap().edit_pieces(id).is_ok_and(|pieces| pieces.iter().any(|p| p.vod_id == vod))
+            }
+        }
     }
 }
 
@@ -136,19 +147,6 @@ fn status(player: &Player) -> Status {
         shown: player.shown(),
         waiting: player.waiting_for_footage(),
         fps: player.fps_at(player.shown().unwrap_or_else(|| player.time())),
-    }
-}
-
-/// Tells the page where the player is, from the main thread, where Tauri
-/// sends it at once: while a drag out waits for its files in a main loop run
-/// inside an ask (clips.rs `start_drag`), what the player's own thread tells
-/// waits in Tauri's queue until that ends, and the time shown would stand.
-#[cfg(target_os = "linux")]
-pub(crate) fn retell(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let Ok(open) = state.player.open.try_lock() else { return };
-    if let Some(o) = open.as_ref() {
-        let _ = app.emit("player-time", status(&o.player));
     }
 }
 
@@ -375,7 +373,7 @@ async fn open_with(
                     // None when there's nothing to play: black.
                     crate::screen::show(&shown, open.player.frame());
                 }
-                let _ = told.emit("player-time", status(&open.player));
+                crate::page::emit(&told, "player-time", status(&open.player));
             }));
             let mut open = state.player.open.lock().unwrap();
             if state.player.asked.load(Ordering::Acquire) != asked {
@@ -397,7 +395,7 @@ async fn open_with(
             o.player.pause();
         }
         let now = status(&o.player);
-        let _ = app.emit("player-time", now);
+        crate::page::emit(&app, "player-time", now);
         opened.status = Some(now);
     }
     Ok(opened)
@@ -634,7 +632,7 @@ fn with(app: &AppHandle, f: impl FnOnce(&Player)) -> CmdResult<Status> {
     let open = open.as_ref().ok_or("No player is open.")?;
     f(&open.player);
     let status = status(&open.player);
-    let _ = app.emit("player-time", status);
+    crate::page::emit(app, "player-time", status);
     Ok(status)
 }
 
@@ -721,6 +719,8 @@ mod tests {
             url: "https://vimeo.com/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -734,7 +734,7 @@ mod tests {
         let player = Player::open(std::path::Path::new("ffmpeg"), Timeline::covering(60.0, Vec::new())).unwrap();
         player.set_waits_for_footage(true);
         // Meanwhile (the probe), the download ends: recorded, then refiled, with no player open yet.
-        let kept = std::env::temp_dir().join(format!("vodscribe-refile-{}.mp4", std::process::id()));
+        let kept = db.lock().unwrap().files().source_video(id, "mp4");
         db.lock().unwrap().set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
         refile_open(&native, id, &kept, 60.0);
         // The open is in place (open_with), and catches up.
@@ -744,6 +744,48 @@ mod tests {
         let player = &open.as_ref().unwrap().player;
         assert_eq!(player.timeline(), Timeline::file(&kept, 60.0), "the video kept, not the section it replaced");
         assert!(!player.waits_for_footage());
+    }
+
+    /// An edit playing holds back the storyboards of other VODs only: those
+    /// of its own pieces' VODs are made meanwhile, as the edit's timeline
+    /// shows them.
+    #[test]
+    fn an_edit_playing_holds_back_only_other_vods_work() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let vod = |id: &str| {
+            let info = VodInfo {
+                platform: "vimeo".into(),
+                platform_id: id.into(),
+                url: format!("https://vimeo.com/{id}"),
+                title: "t".into(),
+                channel: None,
+                channel_login: None,
+                channel_url: None,
+                duration: Some(60.0),
+                thumbnail: None,
+                published: None,
+                started_at: None,
+            };
+            db.add_vod(&info).unwrap().0.id
+        };
+        let (own, other, third) = (vod("a"), vod("b"), vod("c"));
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, own, (10.0, 20.0), "a", None).unwrap();
+        let native = Native::default();
+        let player = Player::open(std::path::Path::new("ffmpeg"), Timeline::covering(60.0, Vec::new())).unwrap();
+        player.play();
+        assert!(player.playing());
+        *native.open.lock().unwrap() = Some(Open { player, doc: Doc::Edit(edit), embed: None });
+        let db = Mutex::new(db);
+        assert!(!native.playing_other(&db, own), "the edit's own piece's VOD isn't held back");
+        assert!(native.playing_other(&db, other), "another VOD's is");
+        assert!(native.playing_other(&db, third), "and a third's");
+        // A piece of the other added while it plays: its work goes on too.
+        db.lock().unwrap().add_piece(edit, other, (0.0, 5.0), "b", None).unwrap();
+        assert!(!native.playing_other(&db, other), "a piece added since counts");
+        // Paused: nothing waits.
+        native.open.lock().unwrap().as_ref().unwrap().player.pause();
+        assert!(!native.playing_other(&db, third), "nothing waits while it's paused");
     }
 
     #[test]

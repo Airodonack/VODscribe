@@ -3,8 +3,9 @@
 //! has its own, `storyboards/<vod id>-<path's hash>.sb` (the VOD's id first,
 //! so all of a VOD's go with it). They're made one at a time on a queue of
 //! VODs, each job making those of the VOD's files that aren't made yet;
-//! the queue waits while the player plays something else, so playing stays
-//! smooth. A file's library picture is a frame of its storyboard.
+//! the queue waits while the player plays other footage (another VOD, or
+//! an edit not made of this one), so playing stays smooth. A file's library
+//! picture is a frame of its storyboard.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -77,14 +78,8 @@ fn dir(app: &AppHandle) -> PathBuf {
 }
 
 /// Where the storyboard of `source`, a file of VOD `vod_id`'s, is kept.
-fn file(dir: &Path, vod_id: i64, source: &Path) -> PathBuf {
-    dir.join(format!("{vod_id}-{:016x}.sb", hash(source.to_string_lossy().as_bytes())))
-}
-
-/// FNV-1a: the same for a path in every version and on every system, as
-/// file names kept from one run to the next must be.
-fn hash(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+fn file(app: &AppHandle, vod_id: i64, source: &Path) -> PathBuf {
+    app.state::<AppState>().paths.source_storyboard(vod_id, source)
 }
 
 /// The VOD a storyboard file is of, by its name.
@@ -103,7 +98,7 @@ fn files_of(app: &AppHandle, db: &Db, vod_id: i64) -> Vec<PathBuf> {
             files.push(path.into());
         }
     }
-    let footage = app.state::<AppState>().paths.local.join("footage");
+    let footage = app.state::<AppState>().paths.source_footage();
     files.extend(vodscribe_core::footage::sections(&footage, vod_id).into_iter().map(|(path, _, _)| path));
     files.retain(|f| f.is_file());
     files
@@ -125,16 +120,15 @@ fn make(app: &AppHandle, id: i64, stop: &AtomicBool) {
         (files_of(app, &db, id), db.vod(id).ok().flatten())
     };
     let Some(vod) = vod else { return };
-    let dir = dir(app);
     for source in files {
         let own = vod.source_path.as_deref().is_some_and(|p| Path::new(p) == source);
         let mut pictured = false;
-        let made = storyboard::make(&ffmpeg, &source, &file(&dir, id, &source), stop, |board| {
+        let made = storyboard::make(&ffmpeg, &source, &file(app, id, &source), stop, |board| {
             if own && !pictured {
                 pictured = picture(app, id, board);
             }
-            // Playing something else: it waits.
-            while !stop.load(Ordering::Relaxed) && state.player.playing_other(Doc::Vod(id)) {
+            // Playing something else (not this VOD, nor an edit of it): it waits.
+            while !stop.load(Ordering::Relaxed) && state.player.playing_other(&state.db, id) {
                 std::thread::sleep(Duration::from_millis(250));
             }
             !stop.load(Ordering::Relaxed)
@@ -157,7 +151,7 @@ fn make(app: &AppHandle, id: i64, stop: &AtomicBool) {
 fn has_picture(app: &AppHandle, id: i64) -> bool {
     let state = app.state::<AppState>();
     let thumb = state.db.lock().unwrap().vod(id).ok().flatten().and_then(|v| v.thumb);
-    thumb.is_some_and(|name| name.is_empty() || state.paths.thumbs().join(name).is_file())
+    thumb.is_some_and(|name| name.is_empty() || state.paths.source_thumb(&name).is_file())
 }
 
 /// Makes `board`'s frame an eighth of the way in VOD `id`'s picture, once
@@ -170,7 +164,10 @@ fn picture(app: &AppHandle, id: i64, board: &Storyboard) -> bool {
     thumbs::remove(&thumbs, id);
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let name = format!("{id}-{stamp}.jpg");
-    if std::fs::create_dir_all(&thumbs).and_then(|()| std::fs::write(thumbs.join(&name), jpeg)).is_err() {
+    if std::fs::create_dir_all(&thumbs)
+        .and_then(|()| std::fs::write(app.state::<AppState>().paths.source_thumb(&name), jpeg))
+        .is_err()
+    {
         return false;
     }
     set_picture(app, id, &name);
@@ -263,7 +260,7 @@ pub(crate) fn sweep(app: &AppHandle) {
     }
     for id in library {
         let files = files_of(app, &state.db.lock().unwrap(), id);
-        if files.iter().any(|f| !made(&file(&dir, id, f), f)) {
+        if files.iter().any(|f| !made(&file(app, id, f), f)) {
             state.storyboards.push(id);
         }
     }
@@ -347,7 +344,7 @@ fn find(app: &AppHandle, doc: Doc, time: f64) -> Option<Found> {
 fn frame_at(app: &AppHandle, doc: Doc, time: f64, within: f64) -> Option<(f64, Vec<u8>)> {
     let state = app.state::<AppState>();
     let found = find(app, doc, time)?;
-    let file = file(&dir(app), found.vod_id, &found.path);
+    let file = file(app, found.vod_id, &found.path);
     let fingerprint = Fingerprint::of(&found.path).ok()?;
     let mut boards = state.storyboards.boards.lock().unwrap();
     if boards.len() > BOARDS_KEPT && !boards.contains_key(&file) {
@@ -414,29 +411,30 @@ mod tests {
     fn a_video_deleted_while_its_storyboard_is_made_is_deleted() {
         use std::sync::atomic::AtomicU64;
         use std::sync::{Arc, mpsc};
-        use vodscribe_core::pipeline;
         static N: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "vodscribe-sb-delete-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
-        let work = root.join("work");
-        std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
-        let db = Db::open(Path::new(":memory:")).unwrap();
+        let paths = vodscribe_core::Paths::new(&root);
+        std::fs::create_dir_all(paths.media()).unwrap();
+        let db = Db::open(&paths.db()).unwrap();
         let info = vodscribe_core::fetch::VodInfo {
             platform: "youtube".into(),
             platform_id: "x".into(),
             url: "https://youtu.be/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
             started_at: None,
         };
         let id = db.add_vod(&info).unwrap().0.id;
-        let kept = pipeline::media_stem(&pipeline::media_dir(&work), id, "t").with_extension("mp4");
+        let kept = db.files().source_video(id, "mp4");
         std::fs::write(&kept, b"video").unwrap();
         db.set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
         let db = std::sync::Mutex::new(db);
@@ -464,8 +462,8 @@ mod tests {
         storyboards.push(id);
         is_reading.recv_timeout(Duration::from_secs(5)).unwrap();
 
-        let remove = |work: &Path, id| crate::vods::remove_kept(&storyboards, work, id);
-        crate::vods::delete_kept_video(&db, &videos, &work, id, remove).unwrap();
+        let remove = |paths: &vodscribe_core::Paths, id| crate::vods::remove_kept(&storyboards, paths, id);
+        crate::vods::delete_kept_video(&db, &videos, &paths, id, remove).unwrap();
         // Then `forget_gone`, as delete_video does.
         storyboards.stop(id);
         let deleted_under_it = has_ended.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -478,14 +476,15 @@ mod tests {
 
     #[test]
     fn a_files_storyboard_is_named_by_its_vod_and_path() {
-        let dir = Path::new("/data/storyboards");
-        let a = file(dir, 7, Path::new("/videos/a.mp4"));
-        assert_eq!(a, file(dir, 7, Path::new("/videos/a.mp4")), "the same each time");
-        assert_ne!(a, file(dir, 7, Path::new("/videos/b.mp4")));
+        let paths = vodscribe_core::Paths::new("/data");
+        let file = |p: &str| paths.source_storyboard(7, Path::new(p));
+        let a = file("/videos/a.mp4");
+        assert_eq!(a, file("/videos/a.mp4"), "the same each time");
+        assert_ne!(a, file("/videos/b.mp4"));
         let name = a.file_name().unwrap().to_str().unwrap();
         assert_eq!(vod_of(name), Some(7));
         // FNV-1a's own check value: the name mustn't change between versions.
-        assert_eq!(hash(b"a"), 0xaf63dc4c8601ec8c);
+        assert_eq!(paths.source_storyboard(7, Path::new("a")), paths.storyboards().join("7-af63dc4c8601ec8c.sb"));
         assert_eq!(vod_of("7-1.peaks"), None);
     }
 

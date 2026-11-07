@@ -1,6 +1,6 @@
 //! Clips: ranges of a VOD made into video files of their own, to drag into a
-//! video editor or keep. They're cut with ffmpeg and encoded again (H.264 and
-//! AAC in an MP4, which every editor and webview plays), so they start and end
+//! video editor or keep. They're cut with ffmpeg and encoded again (by default
+//! H.264 and AAC in an MP4, which every editor plays), so they start and end
 //! on the exact frame asked for, with a keyframe every second for stepping
 //! through them. Clips are short, so encoding takes seconds.
 
@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail};
 
-use crate::settings::ClipFormat;
+use crate::settings::{ClipCodec, ClipEncoding, ClipFormat, ClipQuality};
 use crate::tools;
 use crate::transcript::Word;
 
@@ -113,28 +113,72 @@ pub fn extension(audio_only: bool, format: ClipFormat) -> &'static str {
     }
 }
 
-/// ffmpeg's output options for `format`, after the streams are mapped: with a
-/// picture (`video`) or sound alone. H.264 has a keyframe a second, so editors
-/// seek it quickly; DNxHR is all keyframes.
-pub fn output_args(format: ClipFormat, video: bool) -> Vec<&'static str> {
+/// Whether `file`, a clip's or an edit's, was made as clips are made now
+/// (`now`): in its format and, with a picture, its codec and quality, as
+/// recorded (`made`), else as a file of its format was made before that was
+/// (`Settings::clip_encoding`). Sound alone is the same in every codec of its
+/// format. The page asks the same (dragout.ts `madeAsWanted`).
+pub fn made_as(file: &Path, made: Option<ClipEncoding>, now: ClipEncoding) -> bool {
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let format = if matches!(ext.as_str(), "mov" | "wav") { ClipFormat::Mov } else { ClipFormat::Mp4 };
+    if format != now.format() {
+        return false;
+    }
+    if matches!(ext.as_str(), "m4a" | "wav") {
+        return true;
+    }
+    let before = || crate::settings::Settings { clip_format: format, ..Default::default() }.clip_encoding();
+    made.unwrap_or_else(before) == now
+}
+
+/// ffmpeg's output options for `encoding`, after the streams are mapped: with
+/// a picture (`video`) or sound alone (AAC for MP4, PCM in a WAV for MOV).
+/// H.264 and H.265 have a keyframe a second, so editors seek them quickly;
+/// DNxHR and ProRes are all keyframes. Every picture's sides must be even
+/// (4:2:0 and 4:2:2 halve them): `cut` and the render make them so.
+pub fn output_args(encoding: ClipEncoding, video: bool) -> Vec<&'static str> {
+    use ClipQuality::{High, Proxy, Standard};
     // None of the source's tags or chapters: a phone's recording carries
     // where it was shot, a recorder's the account's name, and the file
     // is made to be shared.
     let mut args = vec!["-map_metadata", "-1", "-map_chapters", "-1"];
-    match format {
-        ClipFormat::Mp4 => {
+    let q = encoding.quality;
+    let pick = |proxy, standard, high| match q {
+        Proxy => proxy,
+        Standard => standard,
+        High => high,
+    };
+    if video {
+        match encoding.codec {
+            ClipCodec::H264 => {
+                args.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", pick("23", "18", "14")]);
+                args.extend(["-pix_fmt", "yuv420p"]);
+            }
+            ClipCodec::H265 => {
+                args.extend(["-c:v", "libx265", "-preset", "fast", "-crf", pick("26", "22", "18")]);
+                // hvc1: QuickTime and Final Cut refuse H.265 tagged otherwise.
+                // x265 writes its own notices unless told not to.
+                args.extend(["-pix_fmt", "yuv420p", "-tag:v", "hvc1", "-x265-params", "log-level=error"]);
+            }
+            ClipCodec::Dnxhr => {
+                let profile = pick("dnxhr_lb", "dnxhr_sq", "dnxhr_hq");
+                args.extend(["-c:v", "dnxhd", "-profile:v", profile, "-pix_fmt", "yuv422p"]);
+            }
+            ClipCodec::Prores => {
+                // Proxy, LT and HQ; prores_ks takes 10-bit 4:2:2 (8-bit in is fine).
+                args.extend(["-c:v", "prores_ks", "-profile:v", pick("0", "1", "3"), "-pix_fmt", "yuv422p10le"]);
+            }
+        }
+    }
+    match (encoding.format(), video) {
+        (ClipFormat::Mp4, _) => {
             if video {
-                args.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]);
                 args.extend(["-force_key_frames", "expr:gte(t,n_forced*1)"]);
             }
             args.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"]);
         }
-        ClipFormat::Mov if video => {
-            // DNxHR LB, 4:2:2 (its sides must be even: `cut` and the render make them so).
-            args.extend(["-c:v", "dnxhd", "-profile:v", "dnxhr_lb", "-pix_fmt", "yuv422p"]);
-            args.extend(["-c:a", "pcm_s16le", "-f", "mov"]);
-        }
-        ClipFormat::Mov => args.extend(["-c:a", "pcm_s16le", "-f", "wav"]),
+        (ClipFormat::Mov, true) => args.extend(["-c:a", "pcm_s16le", "-f", "mov"]),
+        (ClipFormat::Mov, false) => args.extend(["-c:a", "pcm_s16le", "-f", "wav"]),
     }
     args
 }
@@ -204,7 +248,7 @@ pub fn selector(height: u32) -> String {
 
 /// Cuts `start`..`end` seconds of `source` into `out` (replacing it, only
 /// once the new one is whole), reporting progress from 0 to 1. Sound alone
-/// (`audio_only`, and cover art is left out) makes an M4A.
+/// (`audio_only`, and cover art is left out) makes an M4A or a WAV.
 #[allow(clippy::too_many_arguments)]
 pub fn cut(
     ffmpeg: &Path,
@@ -212,7 +256,7 @@ pub fn cut(
     out: &Path,
     (start, end): (f64, f64),
     audio_only: bool,
-    format: ClipFormat,
+    encoding: ClipEncoding,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<()> {
@@ -238,11 +282,9 @@ pub fn cut(
         cmd.args(["-map", "0:a:0", "-vn"]);
     } else {
         cmd.args(["-map", "0:v:0", "-map", "0:a:0?"]);
-        if format == ClipFormat::Mov {
-            cmd.args(["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"]);
-        }
+        cmd.args(["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"]);
     }
-    cmd.args(output_args(format, !audio_only));
+    cmd.args(output_args(encoding, !audio_only));
     cmd.args(["-progress", "pipe:1", "-y"]);
     cmd.arg(&part);
     tools::encode(cmd, &part, out, length, cancel, progress, "the clip")
@@ -300,7 +342,36 @@ pub fn thumbnail(ffmpeg: &Path, clip: &Path, out: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// A codec or quality changed in Settings makes a file made otherwise
+    /// out of date, as a change of format does; one made before what with
+    /// was recorded reads as its format's file was made then.
+    #[test]
+    fn a_file_is_made_as_asked_only_in_its_codec_and_quality() {
+        use super::made_as;
+        let e = |codec, quality| ClipEncoding { codec, quality };
+        let h264 = e(ClipCodec::H264, ClipQuality::Standard);
+        let mp4 = Path::new("/c/1.mp4");
+        assert!(made_as(mp4, Some(h264), h264));
+        assert!(!made_as(mp4, Some(h264), e(ClipCodec::H265, ClipQuality::Standard)));
+        assert!(!made_as(mp4, Some(h264), e(ClipCodec::H264, ClipQuality::High)));
+        assert!(!made_as(mp4, Some(h264), e(ClipCodec::Dnxhr, ClipQuality::Proxy)));
+        let mov = Path::new("/c/1.mov");
+        assert!(!made_as(
+            mov,
+            Some(e(ClipCodec::Prores, ClipQuality::Standard)),
+            e(ClipCodec::Dnxhr, ClipQuality::Standard)
+        ));
+        assert!(made_as(mp4, None, h264));
+        assert!(!made_as(mp4, None, e(ClipCodec::H265, ClipQuality::Standard)));
+        assert!(made_as(mov, None, e(ClipCodec::Dnxhr, ClipQuality::Proxy)));
+        assert!(made_as(Path::new("/c/1.m4a"), Some(h264), e(ClipCodec::H265, ClipQuality::High)));
+        assert!(!made_as(Path::new("/c/1.wav"), None, h264));
+    }
+
     use super::*;
+
+    /// DNxHR LB, as MOV clips were made before quality was a choice.
+    const DNXHR: ClipEncoding = ClipEncoding { codec: ClipCodec::Dnxhr, quality: ClipQuality::Proxy };
 
     /// A Matroska file's streams copied into an MP4, as they were. Made with
     /// ffmpeg; skipped where ffmpeg isn't installed.
@@ -425,8 +496,10 @@ mod tests {
         assert!(ok.success());
         let out = dir.join("clips").join("clip.mp4");
         let mut seen = Vec::new();
-        cut(&ffmpeg, &source, &out, (2.5, 5.0), false, ClipFormat::Mp4, &AtomicBool::new(false), |p| seen.push(p))
-            .unwrap();
+        cut(&ffmpeg, &source, &out, (2.5, 5.0), false, ClipEncoding::default(), &AtomicBool::new(false), |p| {
+            seen.push(p)
+        })
+        .unwrap();
         assert_eq!(seen.last(), Some(&1.0));
         let probe = |args: &[&str]| {
             let out = std::process::Command::new(which::which("ffprobe").unwrap())
@@ -463,18 +536,20 @@ mod tests {
 
         // Sound alone, and a stop partway leaves nothing behind.
         let audio = dir.join("clips").join("clip.m4a");
-        cut(&ffmpeg, &source, &audio, (0.0, 1.0), true, ClipFormat::Mp4, &AtomicBool::new(false), |_| {}).unwrap();
+        cut(&ffmpeg, &source, &audio, (0.0, 1.0), true, ClipEncoding::default(), &AtomicBool::new(false), |_| {})
+            .unwrap();
         assert!(audio.is_file());
         let stop = AtomicBool::new(true);
-        let err = cut(&ffmpeg, &source, &dir.join("stopped.mp4"), (0.0, 9.0), false, ClipFormat::Mp4, &stop, |_| {})
-            .unwrap_err();
+        let err =
+            cut(&ffmpeg, &source, &dir.join("stopped.mp4"), (0.0, 9.0), false, ClipEncoding::default(), &stop, |_| {})
+                .unwrap_err();
         assert!(crate::is_canceled(&err));
         assert!(fs::read_dir(&*dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().contains("stopped")));
 
         // For editing (DaVinci Resolve on Linux): DNxHR and PCM in MOV, as long,
         // and sound alone as WAV.
         let mov = dir.join("clips").join("clip.mov");
-        cut(&ffmpeg, &source, &mov, (2.5, 5.0), false, ClipFormat::Mov, &AtomicBool::new(false), |_| {}).unwrap();
+        cut(&ffmpeg, &source, &mov, (2.5, 5.0), false, DNXHR, &AtomicBool::new(false), |_| {}).unwrap();
         let o = std::process::Command::new(which::which("ffprobe").unwrap())
             .args([
                 "-v",
@@ -492,9 +567,104 @@ mod tests {
         let seconds: f64 = info.lines().last().unwrap().rsplit(',').next().unwrap().parse().unwrap();
         assert!((seconds - 2.5).abs() < 0.05, "{info}");
         let wav = dir.join("clips").join("clip.wav");
-        cut(&ffmpeg, &source, &wav, (0.0, 1.0), true, ClipFormat::Mov, &AtomicBool::new(false), |_| {}).unwrap();
+        cut(&ffmpeg, &source, &wav, (0.0, 1.0), true, DNXHR, &AtomicBool::new(false), |_| {}).unwrap();
         assert!(fs::read(&wav).unwrap().starts_with(b"RIFF"));
         thumbnail(&ffmpeg, &mov, &png).unwrap();
+    }
+
+    /// What each codec and quality asks ffmpeg for: the encoder and the one
+    /// setting that makes the step, and the container and sound.
+    #[test]
+    fn encodings_ask_ffmpeg_for_their_codec_and_step() {
+        use ClipCodec::*;
+        use ClipQuality::*;
+        let args = |codec, quality, video| output_args(ClipEncoding { codec, quality }, video).join(" ");
+        let has = |codec, quality, wanted: &[&str]| {
+            let said = args(codec, quality, true);
+            for w in wanted {
+                assert!(said.contains(w), "{codec:?} {quality:?}: {said} lacks {w}");
+            }
+        };
+        let crf = |step: &str| format!("-crf {step} ");
+        let mp4 = "-c:a aac -b:a 192k -movflags +faststart -f mp4";
+        let mov = "-c:a pcm_s16le -f mov";
+        for (quality, step) in [(Proxy, "23"), (Standard, "18"), (High, "14")] {
+            has(H264, quality, &["-c:v libx264 -preset veryfast", &crf(step), "-pix_fmt yuv420p", "n_forced", mp4]);
+        }
+        for (quality, step) in [(Proxy, "26"), (Standard, "22"), (High, "18")] {
+            has(H265, quality, &["-c:v libx265 -preset fast", &crf(step), "-pix_fmt yuv420p -tag:v hvc1", mp4]);
+        }
+        for (quality, profile) in [(Proxy, "dnxhr_lb"), (Standard, "dnxhr_sq"), (High, "dnxhr_hq")] {
+            has(Dnxhr, quality, &[&format!("-c:v dnxhd -profile:v {profile} -pix_fmt yuv422p "), mov]);
+        }
+        for (quality, profile) in [(Proxy, "0"), (Standard, "1"), (High, "3")] {
+            has(Prores, quality, &[&format!("-c:v prores_ks -profile:v {profile} -pix_fmt yuv422p10le "), mov]);
+        }
+        // Today's clips as they were: H.264 at CRF 18, DNxHR LB.
+        assert_eq!(
+            args(H264, Standard, true),
+            "-map_metadata -1 -map_chapters -1 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
+             -force_key_frames expr:gte(t,n_forced*1) -c:a aac -b:a 192k -movflags +faststart -f mp4"
+        );
+        // Sound alone: no picture's settings, AAC or a WAV.
+        assert_eq!(
+            args(H265, High, false),
+            "-map_metadata -1 -map_chapters -1 -c:a aac -b:a 192k -movflags +faststart -f mp4"
+        );
+        assert_eq!(args(Prores, Proxy, false), "-map_metadata -1 -map_chapters -1 -c:a pcm_s16le -f wav");
+    }
+
+    /// A two-second clip in each codec, at two steps, as ffprobe reads it:
+    /// the codec, its profile, the pixels and (H.265) the tag Apple's
+    /// players need. Skipped where ffmpeg lacks an encoder.
+    #[test]
+    fn encodes_each_codec() {
+        let (Ok(ffmpeg), Ok(ffprobe)) = (which::which("ffmpeg"), which::which("ffprobe")) else {
+            eprintln!("skipped: no ffmpeg on PATH");
+            return;
+        };
+        let dir = crate::TempDir::new("clip-codecs");
+        let source = dir.join("source.mkv");
+        // Odd sides, which every codec here needs made even.
+        let made = std::process::Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=321x181:rate=30:duration=2"])
+            .args(["-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libvpx-vp9", "-c:a", "libopus"])
+            .arg(&source)
+            .status();
+        assert!(made.is_ok_and(|s| s.success()));
+        use ClipCodec::*;
+        use ClipQuality::*;
+        for (codec, quality, want) in [
+            (H264, Standard, "h264,High,yuv420p,avc1"),
+            (H265, Proxy, "hevc,Main,yuv420p,hvc1"),
+            (H265, High, "hevc,Main,yuv420p,hvc1"),
+            (Dnxhr, Standard, "dnxhd,DNXHR SQ,yuv422p,AVdh"),
+            (Dnxhr, High, "dnxhd,DNXHR HQ,yuv422p,AVdh"),
+            (Prores, Proxy, "prores,Proxy,yuv422p10le,apco"),
+            (Prores, High, "prores,HQ,yuv422p10le,apch"),
+        ] {
+            let encoding = ClipEncoding { codec, quality };
+            let out = dir.join(format!("{codec:?}-{quality:?}.{}", extension(false, encoding.format())));
+            if let Err(e) = cut(&ffmpeg, &source, &out, (0.5, 1.5), false, encoding, &AtomicBool::new(false), |_| {}) {
+                assert!(format!("{e:#}").contains("Unknown encoder"), "{codec:?} {quality:?}: {e:#}");
+                eprintln!("skipped {codec:?}: this ffmpeg lacks its encoder");
+                continue;
+            }
+            let o = std::process::Command::new(&ffprobe)
+                .args(["-v", "error", "-select_streams", "v", "-show_entries"])
+                .args(["stream=codec_name,profile,pix_fmt,codec_tag_string,width,height", "-of", "default=nw=1"])
+                .arg(&out)
+                .output()
+                .unwrap();
+            let info = String::from_utf8(o.stdout).unwrap();
+            let field = |key: &str| {
+                let line = info.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('='));
+                line.unwrap_or_else(|| panic!("no {key} in {info}"))
+            };
+            let got = ["codec_name", "profile", "pix_fmt", "codec_tag_string"].map(field).join(",");
+            assert_eq!(got, want, "{codec:?} {quality:?}");
+            assert_eq!((field("width"), field("height")), ("320", "180"), "{codec:?} {quality:?}");
+        }
     }
 
     #[test]

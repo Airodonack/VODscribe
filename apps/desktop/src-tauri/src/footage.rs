@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
@@ -72,11 +72,11 @@ struct Fetched {
 pub(crate) fn remove(app: &AppHandle, vod_id: i64) {
     footage::remove(&dir(app), vod_id);
     // And what the site said of it, kept for its sections.
-    let _ = std::fs::remove_file(app.state::<AppState>().paths.work().join(format!("footage-{vod_id}.info.json")));
+    let _ = std::fs::remove_file(app.state::<AppState>().paths.source_footage_info(vod_id));
 }
 
 fn dir(app: &AppHandle) -> PathBuf {
-    app.state::<AppState>().paths.local.join("footage")
+    app.state::<AppState>().paths.source_footage()
 }
 
 /// Whether VOD `vod_id`'s footage is gone for good: it was deleted without
@@ -258,7 +258,7 @@ impl Footage {
                 if let Some(e) = &error {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
                 }
-                let _ = app.emit("footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
+                crate::page::emit(&app, "footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
             }
         })?;
         Ok(())
@@ -354,7 +354,7 @@ pub(crate) fn ensure_as(
     // each section (a VOD playing asks for one every two minutes): kept
     // beside, outside this section's files. A download it no longer
     // serves asks again (`download_or_reprobe`).
-    let info = work.join(format!("footage-{vod_id}.info.json"));
+    let info = paths.source_footage_info(vod_id);
     let fresh = std::fs::metadata(&info)
         .and_then(|m| m.modified())
         .is_ok_and(|at| at.elapsed().is_ok_and(|age| age < INFO_FOR));
@@ -394,7 +394,7 @@ pub(crate) fn ensure_as(
                         crate::player::footage_grew(app, vod_id);
                     }
                     last = Some((usable, progress));
-                    let _ = app.emit("footage-progress", Fetching { vod_id, from, to, progress, usable });
+                    crate::page::emit(app, "footage-progress", Fetching { vod_id, from, to, progress, usable });
                 }
                 let wait = Instant::now();
                 while wait.elapsed() < PROGRESS_EVERY {
@@ -413,8 +413,15 @@ pub(crate) fn ensure_as(
                 guess.store(p.to_bits(), Ordering::Relaxed);
                 progress(p);
             };
-            let file =
-                fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, report)?;
+            let file = fetch::download_or_reprobe(
+                &yt_dlp,
+                &vod.info.url,
+                &info,
+                &paths.source_footage_download(&name),
+                wanted,
+                stop,
+                report,
+            )?;
             let dir = dir(app);
             std::fs::create_dir_all(&dir)?;
             let out = dir.join(format!("{name}.mkv"));
@@ -439,6 +446,12 @@ pub(crate) fn ensure_as(
     *state.footage.growing.lock().unwrap() = None;
     // Now played from where it went (or no further).
     crate::player::footage_grew(app, vod_id);
+    // The page's last word on it: all of it plays now, or none of it does
+    // (failed or stopped, its files go). A VOD's video streamed this way
+    // (videos.rs) is copied into its kept file before the download's over.
+    let usable = result.is_ok().then_some(to);
+    let progress = if result.is_ok() { 1.0 } else { 0.0 };
+    crate::page::emit(app, "footage-progress", Fetching { vod_id, from, to, progress, usable });
     // Failed (not stopped), the next asks the site afresh.
     if result.as_ref().is_err_and(|e| !vodscribe_core::is_canceled(e)) {
         let _ = std::fs::remove_file(&info);

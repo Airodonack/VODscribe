@@ -16,6 +16,8 @@ export default {
   expects: {
     "captions-on":
       "A video is open and paused, its picture showing, and one line of caption text sits over the lower part of the picture, light text on a dark band, whole and readable, matching the transcript line below.",
+    fullscreen:
+      "The player alone fills the whole screen: no library, search bar or transcript; the colour-bar video fills almost all of it with one caption line on a dark band near the bottom of the picture, and under the picture its timeline and one bar of buttons ending in the leave-full-screen icon at the right.",
   },
   async run(app, ctx) {
     const why = os.unavailable();

@@ -25,7 +25,7 @@ use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
 
-use crate::file_drag::{Ending, ReleasedEarly};
+use crate::drag_source::{Ending, ReleasedEarly};
 use crate::files::{delete_file, delete_leftovers, writing};
 use crate::history::{self, Doc};
 use crate::jobs::Jobs;
@@ -99,15 +99,18 @@ impl Cutter {
         let unfinished = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
-            // Clips made only to be dragged out: their files are someone else's now.
-            db.forget_hidden_clips()?;
+            // Clips made only to be dragged out: forgotten, the names they
+            // were handed out by kept for whoever took them (`let_go_files`).
+            for (id, file, handed_out) in db.forget_hidden_clips()? {
+                let_go_files(&state.paths, id, file.as_deref(), handed_out);
+            }
             // Edits left rendering when the app stopped wait to be asked again.
             db.reset_renders()?;
             db.unfinished_clips()?
         };
         {
             // Pictures of clips no longer there (deleted with their VOD).
-            let thumbs = thumbs_dir(&app);
+            let thumbs = app.state::<AppState>().paths.clip_thumbs();
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
             for entry in std::fs::read_dir(&thumbs).into_iter().flatten().flatten() {
@@ -234,7 +237,7 @@ impl Cutter {
     /// waiting, once its job has ended if it was running.
     pub(crate) fn cancel_job(&self, app: &AppHandle, id: i64) {
         let taken = !self.jobs.take_waiting(|&j| j == id).is_empty();
-        let running = self.jobs.stop_running_then(
+        let running = self.jobs.stop_running_and_mark(
             |&j| j == id,
             |&j| {
                 self.canceled.lock().unwrap().insert(j);
@@ -299,7 +302,7 @@ fn settle_canceled(app: &AppHandle, id: i64) {
         {
             emit(app, &db, id);
         }
-    } else if let Ok(Some(edit)) = db.edit(id)
+    } else if let Ok(Some(edit)) = db.edit(id, crate::edits::made_now(app))
         && unmade(edit.status)
         && db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok()
     {
@@ -310,22 +313,103 @@ fn settle_canceled(app: &AppHandle, id: i64) {
 /// The error a clip canceled from the list of jobs shows.
 pub(crate) const CANCELED: &str = "Canceled";
 
-/// Where clip files go: VODscribe in the Videos folder, or in the app's data
-/// where there's no Videos folder.
-pub(crate) fn clips_dir(app: &AppHandle) -> PathBuf {
-    match app.path().video_dir() {
-        Ok(videos) => videos.join("VODscribe"),
-        Err(_) => app.state::<AppState>().paths.local.join("clips"),
-    }
-}
-
-/// Each clip's first frame, shown while it's dragged out (`<clip id>.png`).
-fn thumbs_dir(app: &AppHandle) -> PathBuf {
-    app.state::<AppState>().paths.local.join("clip-thumbs")
-}
-
+/// Clip `id`'s first frame, shown while it's dragged out.
 pub(crate) fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
-    thumbs_dir(app).join(format!("{id}.png"))
+    app.state::<AppState>().paths.clip_thumb(id)
+}
+
+/// Clip `id`'s file `file` as it's handed out (dragged to another app,
+/// shown in its folder): under `name`, the name a user knows it by (its
+/// VOD's title and range, or its edit's title), beside the clip's own file
+/// (`Paths::clip_names`). A hard link, the same file under a second name,
+/// where the disk allows (no space taken); a copy where it doesn't; never a
+/// symbolic link, which would break when the clip's file is made again. One
+/// handed out before under that name is given again while it's still this
+/// file; once the clip is made again (a new file) or retitled, the old name
+/// stays as it was, for the editor whose project uses it, and the next hand
+/// out gets a name of its own. The clip's own file if none can be made.
+pub(crate) fn handed_out(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> PathBuf {
+    named(paths, id, file, name, true).unwrap_or_else(|e| {
+        eprintln!("clip {id}: handing out its file as {name}: {e}");
+        file.to_path_buf()
+    })
+}
+
+/// `handed_out`, but never a copy: where the disk takes no hard link, the
+/// clip's own file. For a drag, whose receiver asks on the main thread: a
+/// copy of the whole clip there froze the window till it was written.
+fn linked_out(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> PathBuf {
+    named(paths, id, file, name, false).unwrap_or_else(|e| {
+        eprintln!("clip {id}: handing out its file as {name}: {e}");
+        file.to_path_buf()
+    })
+}
+
+fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str, may_copy: bool) -> std::io::Result<PathBuf> {
+    let dir = paths.clip_names(id);
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    let names = std::iter::once(name.to_string()).chain((2..).map(|n| format!("{stem} ({n}).{ext}")));
+    for candidate in names {
+        let at = dir.join(candidate);
+        if std::fs::symlink_metadata(&at).is_ok() {
+            if same_file(&at, file) {
+                return Ok(at);
+            }
+            continue;
+        }
+        std::fs::create_dir_all(&dir)?;
+        if let Err(e) = std::fs::hard_link(file, &at) {
+            if !may_copy {
+                // (The folder only if it's empty: made for this name alone.)
+                let _ = std::fs::remove_dir(&dir);
+                return Err(e);
+            }
+            // Copied under a name of its own first, so a copy cut short is
+            // never handed out; its time kept, so it's known as this file.
+            let part = dir.join(format!(".{}.part", at.file_name().unwrap_or_default().to_string_lossy()));
+            std::fs::copy(file, &part)?;
+            if let Ok(modified) = std::fs::metadata(file).and_then(|m| m.modified()) {
+                std::fs::File::options().write(true).open(&part)?.set_modified(modified)?;
+            }
+            std::fs::rename(&part, &at)?;
+        }
+        return Ok(at);
+    }
+    unreachable!("names never run out")
+}
+
+/// Whether `a` and `b` are the same file, or copies of it as it is: the
+/// same length and time changed (a link shares both).
+fn same_file(a: &Path, b: &Path) -> bool {
+    let stat = |p: &Path| std::fs::metadata(p).ok().map(|m| (m.len(), m.modified().ok()));
+    stat(a).is_some_and(|a| Some(a) == stat(b))
+}
+
+/// Whether `file`, a clip's or an edit's, is the library's own, which goes
+/// with it: not one read from 0.7.1's clip folder (`Paths::old_clips`),
+/// which stays there.
+pub(crate) fn own_file(paths: &vodscribe_core::Paths, file: &str) -> bool {
+    Path::new(file).starts_with(paths.clips())
+}
+
+/// What's left of clip `id`'s files once it's gone: its own file (`file`)
+/// deleted; the names it was handed out by kept if another app took them
+/// (`handed_out`), as its project may use them, else deleted with it.
+pub(crate) fn let_go_files(paths: &vodscribe_core::Paths, id: i64, file: Option<&str>, handed_out: bool) {
+    let dir = paths.clip_names(id);
+    if let Some(file) = file.filter(|f| own_file(paths, f)) {
+        if !handed_out {
+            // Only those that are this clip's file: a clip before it with its
+            // id (ids are given again) may have left names another app took.
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                if same_file(&entry.path(), Path::new(file)) {
+                    delete_file(entry.path());
+                }
+            }
+        }
+        delete_file(file);
+    }
+    let _ = std::fs::remove_dir(&dir);
 }
 
 #[derive(Serialize, Clone)]
@@ -336,7 +420,7 @@ struct Progress {
 
 pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(clip)) = db.clip(id) {
-        let _ = app.emit("clip", clip);
+        crate::page::emit(app, "clip", clip);
     }
 }
 
@@ -367,22 +451,10 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
-    let format = Settings::load(&state.paths.settings()).clip_format;
-    // Named for its range: one already made for this range is made again in
-    // place; a range moved gets a new file, and the old one stays where it is.
-    let (folder, name) = clips::file_path(
-        vod.info.channel.as_deref(),
-        vod.info.published.as_deref(),
-        &vod.info.title,
-        range,
-        vod.audio_only,
-        format,
-    );
-    let dir = folder.map_or_else(|| clips_dir(app), |f| clips_dir(app).join(f));
-    let out = match &clip.file_path {
-        Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
-        _ => clips::unique_path(&dir, &name),
-    };
+    let encoding = Settings::load(&state.paths.settings()).clip_encoding();
+    // Made again in place (a new file under its name: those it was handed
+    // out by keep the one they had).
+    let out = state.paths.clip_file(id, clips::extension(vod.audio_only, encoding.format()));
     writing(&out);
     {
         let db = state.db.lock().unwrap();
@@ -396,7 +468,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         let mut last = last.lock().unwrap();
         if last.elapsed() >= PROGRESS_EVERY {
             *last = Instant::now();
-            let _ = app.emit("clip-progress", Progress { id, progress });
+            crate::page::emit(app, "clip-progress", Progress { id, progress });
             crate::job_list::progressed(app, id, progress);
         }
     };
@@ -414,7 +486,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         };
         let within = (range.0 - source.offset, range.1 - source.offset);
         let report = |p: f64| report(cut_from + p * (1.0 - cut_from));
-        clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, format, stop, report)
+        clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, encoding, stop, report)
     })();
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
@@ -422,9 +494,11 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         Ok(()) => {
             let recorded = db.set_clip_file(id, range.0, range.1, ClipStatus::Ready, Some(&path), None)?;
             // What it's made of, so a change that leaves that as it was (a
-            // chapter, which a cut file hasn't) doesn't make it again.
+            // chapter, which a cut file hasn't) doesn't make it again; and
+            // what with, so a change of codec or quality does (dragout.ts).
             if recorded {
                 db.set_made_now(id)?;
+                db.set_made_as(id, Some(encoding))?;
             }
             recorded
         }
@@ -436,14 +510,10 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         // Deleted while it was being cut.
         delete_file(&out);
     }
-    // Its file for the range before goes, unless another app took it (then
-    // it stays there, and the new one is the app's own).
-    if let Some(old) = clip.file_path.as_deref().filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
-        if db.clip_handed_out(id)? {
-            db.take_back_clip(id)?;
-        } else {
-            delete_file(old);
-        }
+    // Its file in the format before goes (those it was handed out by stay).
+    let old = clip.file_path.as_deref().filter(|p| own_file(&state.paths, p));
+    if let Some(old) = old.filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
+        delete_file(old);
     }
     if recorded && result.is_ok() && !vod.audio_only {
         drop(db);
@@ -773,24 +843,30 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
     Ok(())
 }
 
-/// What's left of clip `id` once it's gone from the library: its file
-/// (unless it was dragged out of the app, `handed_out`: another app's then)
-/// and its thumbnail deleted, and the page told.
+/// What's left of clip `id` once it's gone from the library: its files
+/// (`let_go_files`) and its thumbnail deleted, and the page told.
 pub(crate) fn after_delete(app: &AppHandle, id: i64, file: Option<String>, handed_out: bool) {
-    if let Some(path) = file.filter(|_| !handed_out) {
-        delete_file(path);
-    }
+    let_go_files(&app.state::<AppState>().paths, id, file.as_deref(), handed_out);
     let _ = std::fs::remove_file(thumb_path(app, id));
-    let _ = app.emit("clip-removed", id);
+    crate::page::emit(app, "clip-removed", id);
 }
 
-/// Shows clip `id`'s file in the system file manager.
+/// Shows clip `id`'s file in the system file manager, under the name it's
+/// handed out by (`handed_out`): from there it's the user's to take.
 #[tauri::command]
 pub(crate) async fn show_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let clip = state.db.lock().unwrap().clip(id).map_err(err)?;
-    let path = clip.and_then(|c| c.file_path).filter(|p| Path::new(p).is_file());
-    app.opener().reveal_item_in_dir(path.ok_or("That clip's file isn't made yet.")?).map_err(err)
+    let path = {
+        let db = state.db.lock().unwrap();
+        let clip = db.clip(id).map_err(err)?;
+        let path = clip.and_then(|c| c.file_path).filter(|p| Path::new(p).is_file());
+        let path = PathBuf::from(path.ok_or("That clip's file isn't made yet.")?);
+        let format = Settings::load(&state.paths.settings()).clip_encoding().format();
+        let shown = handed_out(&state.paths, id, &path, &drag_name(&db, format, id));
+        db.hand_out_clip(id).map_err(err)?;
+        shown
+    };
+    app.opener().reveal_item_in_dir(path).map_err(err)
 }
 
 /// VOD `vod_id`'s marks on its timeline, in time order.
@@ -943,13 +1019,6 @@ pub(crate) async fn cancel_mark(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Whether DaVinci Resolve is installed where its Linux installer puts it:
-/// it can't read MP4 clips there, so the interface points to the setting.
-#[tauri::command]
-pub(crate) fn resolve_installed() -> bool {
-    cfg!(target_os = "linux") && Path::new("/opt/resolve/bin/resolve").is_file()
-}
-
 /// Clip `id`'s file, if it's made.
 fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;
@@ -994,18 +1063,37 @@ pub(crate) enum Made {
 /// elsewhere, `made_in`).
 fn made(app: &AppHandle, id: i64) -> Option<Made> {
     let state = app.state::<AppState>();
+    let db = briefly(&state.db)?;
+    Some(made_in(&db, id))
+}
+
+/// The library, unless it's busy for more than a moment (`made`).
+fn briefly(db: &Mutex<Db>) -> Option<std::sync::MutexGuard<'_, Db>> {
     let end = Instant::now() + Duration::from_millis(50);
-    let db = loop {
-        match state.db.try_lock() {
-            Ok(db) => break db,
-            Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+    loop {
+        match db.try_lock() {
+            Ok(db) => return Some(db),
+            Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
             Err(std::sync::TryLockError::WouldBlock) if Instant::now() < end => {
                 std::thread::sleep(Duration::from_millis(2))
             }
             Err(std::sync::TryLockError::WouldBlock) => return None,
         }
-    };
-    Some(made_in(&db, id))
+    }
+}
+
+/// Clip `id`'s file as a drag hands it out, under `name` (`linked_out`), if
+/// it's made; still being made while the library is busy (`made`). Named
+/// under the library's lock: a delete lets go of the clip's names under it
+/// too (`remove`), so it comes wholly before or after. Between them, a name
+/// linked after the delete had looked for them stayed, a full-size file that
+/// no clip named and nothing removed.
+fn hand_out_made(db: &Mutex<Db>, paths: &vodscribe_core::Paths, id: i64, name: &str) -> Made {
+    let Some(db) = briefly(db) else { return Made::Making };
+    match made_in(&db, id) {
+        Made::Ready(file) => Made::Ready(linked_out(paths, id, &file, name)),
+        other => other,
+    }
 }
 
 /// Where clip `id`'s file is, as `db` has it.
@@ -1074,15 +1162,26 @@ pub(crate) async fn drag_clip(
     // PNG of reasonable size; else the first clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
     let image = drawn.or_else(|| std::fs::read(thumb_path(&app, ids[0])).ok());
-    let names = {
+    let (names, resolve) = {
         let state = app.state::<AppState>();
-        let format = Settings::load(&state.paths.settings()).clip_format;
+        let settings = Settings::load(&state.paths.settings());
+        let format = settings.clip_encoding().format();
         let db = state.db.lock().unwrap();
-        ids.iter().map(|&id| Outgoing { name: drag_name(&db, format, id), job: Some(id) }).collect()
+        let names: Vec<_> =
+            ids.iter().map(|&id| Outgoing { name: drag_name(&db, format, id), job: Some(id) }).collect();
+        let named: Vec<_> = names.iter().map(|o| o.name.as_str()).collect();
+        let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &named));
+        (names, resolve)
     };
     let asking = app.clone();
-    let listed = ids.clone();
-    let files = move || listed.iter().map(|&id| made(&asking, id).unwrap_or(Made::Making)).collect();
+    let listed: Vec<(i64, String)> = names.iter().zip(&ids).map(|(o, &id)| (id, o.name.clone())).collect();
+    // Each under the name it goes by (`handed_out`), for an app that takes
+    // the file itself (Linux's addresses, Windows' CF_HDROP, macOS's file
+    // address); one that copies it names its copy so anyway.
+    let files = move || {
+        let paths = &asking.state::<AppState>().paths;
+        listed.iter().map(|(id, name)| hand_out_made(&asking.state::<AppState>().db, paths, *id, name)).collect()
+    };
     // Another app's once one takes them (not when the drag begins: called
     // off, or dropped on nothing, the files are still the app's to delete).
     let out = ids.clone();
@@ -1108,17 +1207,16 @@ pub(crate) async fn drag_clip(
     };
     // The app they were let go on waits for some still being made: the page
     // says so ("drag-making"), once, as that app may show nothing till they
-    // come. Told at once: on Linux this runs on the main thread, inside the
-    // drag's wait, which holds what other threads send (`start_drag`).
+    // come.
     let told = AtomicBool::new(false);
     let waited = move || {
         // (The library busy: taken as still being made, as the drag does.)
         let making = asked.iter().filter(|&&id| matches!(made(&telling, id), None | Some(Made::Making))).count();
         if making > 0 && !told.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            let _ = telling.emit("drag-making", DragMaking { drag: number, making });
+            crate::page::emit(&telling, "drag-making", DragMaking { drag: number, making });
         }
     };
-    drag_file(window, number, names, files, image, taken, dropped, waited).await
+    drag_file(window, number, names, files, image, resolve, taken, dropped, waited).await
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
@@ -1136,6 +1234,9 @@ pub(crate) struct DragEnded {
     pub(crate) failed: Option<String>,
     pub(crate) finished_only: bool,
     pub(crate) receiver: Option<String>,
+    /// Let go on DaVinci Resolve, or perhaps (`resolve`): the page asks
+    /// whether to make clips as MOV.
+    pub(crate) resolve: Option<crate::resolve::ResolveDrop>,
 }
 
 /// A drag of clips' files out of the window let go on another app before
@@ -1150,28 +1251,26 @@ pub(crate) struct DragMaking {
 /// A file in a drag out of the window: the name it goes by where it's
 /// dropped, known before it's made (macOS names a file promised then), and
 /// the job making it, whose progress is shown there meanwhile.
-// (macOS's drag reads both, Windows' the name, Linux's neither.)
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct Outgoing {
     pub(crate) name: String,
     pub(crate) job: Option<i64>,
 }
 
-/// The name clip `id`'s file goes by, as it's made in `format` (`cut`, or
-/// `edits::render_edit` for one changed in the editor): its file's own, if
-/// it's made.
-fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> String {
+/// The name clip `id`'s file goes by where it's handed out: an edit's (or a
+/// snippet changed in the editor) its title, a clip its VOD's date, title
+/// and range (`clips::file_path`). With its file's extension if it's made,
+/// else the one it will have, made in `format`.
+pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> String {
     let named = || -> Result<Option<String>> {
         let Some(clip) = db.clip(id)? else { return Ok(None) };
         let own = clip.file_path.as_deref().filter(|_| clip.status == ClipStatus::Ready);
-        if let Some(name) = own.and_then(|p| Path::new(p).file_name()) {
-            return Ok(Some(name.to_string_lossy().into_owned()));
-        }
+        let made = own.and_then(|p| Path::new(p).extension()).map(|e| e.to_string_lossy().into_owned());
         let pieces = db.edit_pieces(id)?;
         if !vodscribe_core::edits::cut_whole(&pieces) {
             let audio_only = pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
-            let title = db.edit(id)?.map(|e| e.title).unwrap_or_default();
-            return Ok(Some(format!("{}.{}", clips::safe_name(&title), clips::extension(audio_only, format))));
+            let title = db.clip_title(id)?.unwrap_or_default();
+            let ext = made.unwrap_or_else(|| clips::extension(audio_only, format).into());
+            return Ok(Some(format!("{}.{ext}", clips::safe_name(&title))));
         }
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(None) };
         let (_, name) = clips::file_path(
@@ -1182,7 +1281,10 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
             vod.audio_only,
             format,
         );
-        Ok(Some(name))
+        Ok(Some(match made {
+            Some(ext) => format!("{}.{ext}", name.rsplit_once('.').map_or(&*name, |(stem, _)| stem)),
+            None => name,
+        }))
     };
     named().ok().flatten().unwrap_or_else(|| format!("Clip.{}", clips::extension(false, format)))
 }
@@ -1193,7 +1295,8 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
 /// it's over (once the files went where they were dropped, or couldn't),
 /// `taken` runs if another app took them, then the page hears "drag-ended"
 /// (`DragEnded`, with the page's `number` for the drag), so what it does next
-/// (deleting a clip made only for the drag) knows. `dropped(true)` once it's
+/// (deleting a clip made only for the drag) knows. `resolve` watches it for
+/// DaVinci Resolve (resolve.rs). `dropped(true)` once it's
 /// let go on another app, `dropped(false)` once it's over; `waited()` once
 /// that app waits for a file still being made (it may be called again). False
 /// if none began, the button up before it could (`ReleasedEarly`).
@@ -1204,6 +1307,7 @@ pub(crate) async fn drag_file(
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Option<Vec<u8>>,
+    resolve: crate::resolve::Watch,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
     waited: impl Fn() + Send + Sync + 'static,
@@ -1213,7 +1317,7 @@ pub(crate) async fn drag_file(
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let started = start_drag(&on_main, number, names, files, image, taken, dropped, waited);
+            let started = start_drag(&on_main, number, names, files, image, resolve, taken, dropped, waited);
             let _ = tx.send(began(started));
         })
         .map_err(err)?;
@@ -1258,784 +1362,16 @@ fn drag_outcome(
     }
 }
 
-/// The files `made` says are where, if all are made: their paths; else, if
-/// one won't be, why; else (some still being made) None. (Linux's drag; the
-/// others ask each file's.)
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn settled(made: Vec<Made>) -> Option<Result<Vec<PathBuf>, String>> {
-    let mut paths = Vec::new();
-    let mut making = false;
-    for m in made {
-        match m {
-            Made::Ready(path) => paths.push(path),
-            Made::Making => making = true,
-            Made::Failed(why) => return Some(Err(why)),
-        }
-    }
-    (!making).then_some(Ok(paths))
-}
-
-/// How often a drag waiting for its files looks at them.
-#[cfg(target_os = "linux")]
-const HOLD_TICK: Duration = Duration::from_millis(100);
-
-#[cfg(target_os = "linux")]
-thread_local! {
-    /// Asks for a drag's files being held (`start_drag`), one inside another.
-    static HOLDING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// A line about a drag's progress, in the tests' builds only.
-#[cfg(all(any(target_os = "linux", windows), feature = "e2e"))]
-fn trace(what: &str) {
-    eprintln!("drag: {what}");
-}
-#[cfg(all(any(target_os = "linux", windows), not(feature = "e2e")))]
-fn trace(_: &str) {}
-
-/// The window a drag is over, asking for its data or let go on (`context`'s
-/// destination), if it's another app's: X11 says; Wayland doesn't.
-#[cfg(target_os = "linux")]
-fn other_window(context: &gtk::gdk::DragContext) -> Option<gtk::gdk::Window> {
-    use gtk::glib::translate::{FromGlibPtrNone, ToGlibPtr};
-    // SAFETY: the context is alive for the call; the window it gives may be
-    // null (none known), checked before it's taken.
-    let window = unsafe {
-        let window = gtk::gdk::ffi::gdk_drag_context_get_dest_window(context.to_glib_none().0);
-        if window.is_null() {
-            return None;
-        }
-        gtk::gdk::Window::from_glib_none(window)
-    };
-    (window.window_type() == gtk::gdk::WindowType::Foreign).then_some(window)
-}
-
-/// Whether the window asking a drag for its data (`context`'s destination)
-/// is one of the app's own (X11 says; elsewhere there may be none).
-#[cfg(target_os = "linux")]
-fn asked_by_own_window(context: &gtk::gdk::DragContext) -> bool {
-    use gtk::glib::translate::ToGlibPtr;
-    // SAFETY: the context is alive for the call; the window it gives may be
-    // null (none known), checked before its type is read.
-    unsafe {
-        let window = gtk::gdk::ffi::gdk_drag_context_get_dest_window(context.to_glib_none().0);
-        !window.is_null() && gtk::gdk::ffi::gdk_window_get_window_type(window) != gtk::gdk::ffi::GDK_WINDOW_FOREIGN
-    }
-}
-
-/// Whether an ask for a drag's files (from `context`'s destination, before
-/// the drop if not `dropped`) waits for them, while they're still being made:
-/// held until they are, or answered at once with none. Apps ask in three
-/// ways. Nautilus 43 and later (GTK 4) asks as the drag goes over it and
-/// keeps that answer for the drop, asking no more: that ask is held. Qt's
-/// apps give up on an answer that waits (after 5 s on X11, 1 on Wayland), and
-/// Dolphin, which asks as the drag goes over it, then refuses the drop (so
-/// never takes KDE's promise, `ark`): never held. The others (GTK 3's, as
-/// Nautilus 42, which asks at each move and takes the drop only once
-/// answered) ask again once it's let go there: held only then. Where X11
-/// names the window asking, by the toolkit its process runs; where it
-/// doesn't (Wayland), as Nautilus 43 is answered, unless the session is
-/// KDE's, whose apps are Qt's.
-#[cfg(target_os = "linux")]
-fn holds_ask(context: &gtk::gdk::DragContext, dropped: bool) -> bool {
-    let toolkit = match other_window(context) {
-        Some(window) => window_pid(&window).and_then(toolkit_of),
-        None if kde_session() => Some(Toolkit::Qt),
-        None => Some(Toolkit::Gtk4),
-    };
-    match toolkit {
-        Some(Toolkit::Qt) => false,
-        Some(Toolkit::Gtk4) | None => true,
-        Some(Toolkit::Other) => dropped,
-    }
-}
-
-/// The toolkit an app asking for a drag's files is made with, as it asks
-/// (`holds_ask`).
-#[cfg(target_os = "linux")]
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Toolkit {
-    Qt,
-    Gtk4,
-    Other,
-}
-
-/// Whether this is a KDE session.
-#[cfg(target_os = "linux")]
-fn kde_session() -> bool {
-    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("kde")))
-}
-
-/// The process another app's window `window` is of, as it says (_NET_WM_PID).
-#[cfg(target_os = "linux")]
-fn window_pid(window: &gtk::gdk::Window) -> Option<u32> {
-    let atom = gtk::gdk::Atom::intern;
-    let (_, _, bytes) = gtk::gdk::property_get(window, &atom("_NET_WM_PID"), &atom("CARDINAL"), 0, 1, 0)?;
-    // A 32-bit property comes as the machine's longs.
-    match bytes.len() {
-        8.. => u64::from_ne_bytes(bytes[..8].try_into().ok()?).try_into().ok(),
-        4.. => Some(u32::from_ne_bytes(bytes[..4].try_into().ok()?)),
-        _ => None,
-    }
-}
-
-/// The toolkit process `pid` runs, by the libraries it has loaded; None if
-/// that can't be read (another user's, or in a sandbox of its own).
-#[cfg(target_os = "linux")]
-fn toolkit_of(pid: u32) -> Option<Toolkit> {
-    let maps = std::fs::read_to_string(format!("/proc/{pid}/maps")).ok()?;
-    Some(if maps.contains("/libQt") {
-        Toolkit::Qt
-    } else if maps.contains("/libgtk-4") {
-        Toolkit::Gtk4
-    } else {
-        Toolkit::Other
-    })
-}
-
-/// Another app's window `window`'s class (WM_CLASS's second part: "dolphin",
-/// "org.gnome.Nautilus").
-#[cfg(target_os = "linux")]
-fn window_class(window: &gtk::gdk::Window) -> Option<String> {
-    let atom = gtk::gdk::Atom::intern;
-    let (_, _, bytes) = gtk::gdk::property_get(window, &atom("WM_CLASS"), &atom("STRING"), 0, 1024, 0)?;
-    let class = bytes.split(|&b| b == 0).nth(1).filter(|c| !c.is_empty())?;
-    Some(String::from_utf8_lossy(class).into_owned())
-}
-
-/// The name an app whose windows are of class `class` goes by: its desktop
-/// entry's (the one naming that class, or named for it: "Files" for
-/// org.gnome.Nautilus), else the class (its last part, if it's a reverse
-/// domain name).
-#[cfg(target_os = "linux")]
-fn app_name(class: &str) -> String {
-    let home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    let dirs = home.into_iter().chain(dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from));
-    let entries = dirs.flat_map(|d| std::fs::read_dir(d.join("applications")).into_iter().flatten().flatten());
-    let mut named = None;
-    for entry in entries {
-        let path = entry.path();
-        let Some(stem) =
-            path.file_stem().and_then(|s| s.to_str()).filter(|_| path.extension().is_some_and(|e| e == "desktop"))
-        else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let (name, wm_class) = desktop_entry(&text);
-        let Some(name) = name else { continue };
-        if wm_class.is_some_and(|c| c.eq_ignore_ascii_case(class)) {
-            return name;
-        }
-        let stem = stem.to_ascii_lowercase();
-        let class = class.to_ascii_lowercase();
-        if named.is_none() && (stem == class || stem.ends_with(&format!(".{class}"))) {
-            named = Some(name);
-        }
-    }
-    named.unwrap_or_else(|| match class.matches('.').count() {
-        2.. => class.rsplit('.').next().unwrap_or(class).to_string(),
-        _ => class.to_string(),
-    })
-}
-
-/// A desktop entry's name and the window class it says its windows have (its
-/// [Desktop Entry] group's Name and StartupWMClass).
-#[cfg(target_os = "linux")]
-fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
-    let (mut name, mut class) = (None, None);
-    let mut main = false;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            main = line == "[Desktop Entry]";
-        } else if main && let Some(v) = line.strip_prefix("Name=") {
-            name = Some(v.trim().to_string());
-        } else if main && let Some(v) = line.strip_prefix("StartupWMClass=") {
-            class = Some(v.trim());
-        }
-    }
-    (name.filter(|n| !n.is_empty()), class)
-}
-
-/// The system's drag (GTK's) of the files `files` says are where. Each is
-/// offered two ways, both answered as they're asked for, so the app it's let
-/// go on chooses: their addresses (text/uri-list, any app that takes files),
-/// and KDE's promise (`ark`, Dolphin's: it asks the app to put them in its
-/// folder, and they're copied there as they're made). An app asks for their
-/// addresses as the drag goes over it (a file manager) or once it's let go
-/// there. Answered at once when they're all made, and always to the app's own
-/// window (the drag brought back over it: it needs no files, and its ask
-/// comes inside its own handling of the drag); at once with none to an app
-/// that gives up on an answer that waits, or asks again at the drop, until
-/// then (`holds_ask`: Qt's; Dolphin then takes the promise); else the answer
-/// waits for them, the app going on
-/// meanwhile in a main loop run inside the ask (`HOLDING`): a file manager
-/// waits as long as it takes. (Meanwhile what other threads send the page,
-/// and closures run on the main thread through Tauri, wait for the end of it:
-/// Tauri's event loop takes them only between its own turns, not in a loop
-/// run inside one; the player's time and the list of jobs are told from the
-/// wait itself.) The wait ends when they're made (answered), one fails or
-/// goes (no answer: nothing lands), the drag is called off or dropped on
-/// nothing, or the app it was let go on gives up waiting (its drop over with
-/// nothing taken), with no limit of its own. The drag's end comes only after
-/// that (GTK waits for the answer), so the page hears "drag-ended" once the
-/// files went, or didn't; for Dolphin, once its copies are written. Let go
-/// on an app that took nothing because they weren't made yet, the page hears
-/// that it takes finished files only, and its name where X11 gives it.
-#[cfg(target_os = "linux")]
-#[allow(clippy::too_many_arguments)]
-fn start_drag(
-    window: &tauri::WebviewWindow,
-    number: Option<u64>,
-    _names: Vec<Outgoing>,
-    files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
-    image: Vec<u8>,
-    taken: impl Fn() + Send + Sync + 'static,
-    dropped: impl Fn(bool) + Send + Sync + 'static,
-    waited: impl Fn() + Send + Sync + 'static,
-) -> Result<()> {
-    use gtk::prelude::*;
-    use std::cell::{Cell, RefCell};
-    use std::rc::Rc;
-
-    // A drag begun while the last one's answer waits would run inside it.
-    if HOLDING.with(Cell::get) > 0 {
-        anyhow::bail!("Still handing over the last drag.");
-    }
-    /// What's known of the drag as it goes.
-    #[derive(Default)]
-    struct Drag {
-        /// Another app was given all the files' addresses.
-        given: Cell<bool>,
-        /// Called off, or dropped where nothing took it.
-        failed: Cell<bool>,
-        /// Called off (Escape).
-        called_off: Cell<bool>,
-        /// Over (GTK's drag-end), its end put off while an answer waits.
-        ended: Cell<bool>,
-        /// Answers waiting (`hold`), one inside another.
-        holding: Cell<u32>,
-        /// Why the files never came, if one couldn't be made.
-        failure: RefCell<Option<String>>,
-        /// The drag is over the app's own page (its drag-motion, drag-drop).
-        over_page: Cell<bool>,
-        /// The class of the other app's window it was let go on, where X11 says.
-        receiver: RefCell<Option<String>>,
-        /// The files were all made as it ended.
-        made: Cell<bool>,
-        /// Let go (GTK's drop-performed), anywhere.
-        dropped: Cell<bool>,
-    }
-    let drag = Rc::new(Drag::default());
-    let source = window.gtk_window()?;
-    let page = crate::webview::page(window).ok();
-    let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
-    let dropped = Arc::new(dropped);
-    let waited: Arc<dyn Fn() + Send + Sync> = Arc::new(waited);
-    let targets = gtk::TargetList::new(&[]);
-    targets.add_uri_targets(0);
-    // (Apps that don't know it never ask: Nautilus asks only for the addresses.)
-    let ark = ark::Offer::new(files.clone(), waited.clone());
-    if ark.is_some() {
-        let other = gtk::TargetFlags::OTHER_APP.bits();
-        targets.add(&gtk::gdk::Atom::intern("application/x-kde-ark-dndextract-service"), other, ark::SERVICE);
-        targets.add(&gtk::gdk::Atom::intern("application/x-kde-ark-dndextract-path"), other, ark::OBJECT);
-    }
-    let handlers: Rc<RefCell<Vec<(gtk::Widget, glib::SignalHandlerId)>>> = Rc::default();
-    let widget: gtk::Widget = source.clone().upcast();
-    // Escaped, so names with spaces and other characters arrive whole; one
-    // address for each file, as a list of them.
-    let answer = |data: &gtk::SelectionData, paths: &[PathBuf]| {
-        let uris: Vec<_> = paths.iter().filter_map(|p| glib::filename_to_uri(p, None).ok()).collect();
-        data.set_uris(&uris.iter().map(|u| u.as_str()).collect::<Vec<_>>());
-    };
-    // Waits, running the app's main loop, until the files are all made or
-    // one won't be, or the drag is over.
-    let hold = {
-        let (drag, files, app) = (drag.clone(), files.clone(), window.app_handle().clone());
-        move || {
-            HOLDING.with(|h| h.set(h.get() + 1));
-            drag.holding.set(drag.holding.get() + 1);
-            let main = glib::MainLoop::new(None, false);
-            let (quit, looked, watched, app) = (main.clone(), files.clone(), drag.clone(), app.clone());
-            let ticks = Cell::new(0u32);
-            // (The tick ends itself as it ends the wait.)
-            glib::timeout_add_local(HOLD_TICK, move || {
-                if watched.failed.get() || watched.ended.get() || settled(looked()).is_some() {
-                    quit.quit();
-                    return glib::ControlFlow::Break;
-                }
-                crate::player::retell(&app);
-                ticks.set(ticks.get() + 1);
-                if ticks.get().is_multiple_of(5) {
-                    crate::job_list::retell(&app);
-                }
-                glib::ControlFlow::Continue
-            });
-            main.run();
-            drag.holding.set(drag.holding.get() - 1);
-            HOLDING.with(|h| h.set(h.get() - 1));
-        }
-    };
-    let asks = Rc::new(Cell::new(0u32));
-    let data = {
-        let (drag, files, ark, waited) = (drag.clone(), files.clone(), ark.clone(), waited.clone());
-        source.connect_drag_data_get(move |_, context, data, info, _| {
-            asks.set(asks.get() + 1);
-            let n = asks.get();
-            if drag.failed.get() || drag.ended.get() {
-                return;
-            }
-            if let Some(ark) = ark.as_ref().filter(|_| info == ark::SERVICE || info == ark::OBJECT) {
-                let named = if info == ark::SERVICE { &ark.service } else { &ark.path };
-                data.set(&data.target(), 8, named.as_bytes());
-                return;
-            }
-            // The app's own page: what's made so far, at once.
-            if drag.over_page.get() || asked_by_own_window(context) {
-                let ready: Vec<_> =
-                    files().into_iter().filter_map(|m| if let Made::Ready(p) = m { Some(p) } else { None }).collect();
-                trace(&format!(
-                    "ask {n} ({}) by the app's own window: answered with the {} made",
-                    data.target().name(),
-                    ready.len()
-                ));
-                answer(data, &ready);
-                return;
-            }
-            let mut now = settled(files());
-            if now.is_none() && !holds_ask(context, drag.dropped.get()) {
-                trace(&format!("ask {n} ({}) answered at once with none: not one to hold", data.target().name()));
-                answer(data, &[]);
-                return;
-            }
-            if now.is_none() {
-                trace(&format!("ask {n} ({}): held until the files are made", data.target().name()));
-                // Asked once let go there (GTK 3's): it waits for them.
-                if drag.dropped.get() {
-                    waited();
-                }
-                hold();
-                now = if drag.failed.get() || drag.ended.get() { None } else { settled(files()) };
-            }
-            match now {
-                Some(Ok(paths)) => {
-                    trace(&format!("ask {n} ({}): answered with {} files", data.target().name(), paths.len()));
-                    answer(data, &paths);
-                    drag.given.set(true);
-                }
-                Some(Err(why)) => {
-                    trace(&format!("ask {n}: not answered, a file couldn't be made: {why}"));
-                    *drag.failure.borrow_mut() = Some(why);
-                }
-                None => trace(&format!("ask {n}: not answered, the drag is over")),
-            }
-        })
-    };
-    handlers.borrow_mut().push((widget.clone(), data));
-    // Over the app's own page: an ask then is its own (as X11 tells by the
-    // window asking; Wayland doesn't). GTK leaves the page just before a drop
-    // on it, so the drop says so again.
-    if let Some(page) = &page {
-        let over = drag.clone();
-        let motion = page.connect_drag_motion(move |_, _, _, _, _| {
-            over.over_page.set(true);
-            false
-        });
-        let over = drag.clone();
-        let dropped = page.connect_drag_drop(move |_, _, _, _, _| {
-            over.over_page.set(true);
-            false
-        });
-        let over = drag.clone();
-        let left = page.connect_drag_leave(move |_, _, _| over.over_page.set(false));
-        handlers.borrow_mut().extend([(page.clone(), motion), (page.clone(), dropped), (page.clone(), left)]);
-    }
-    // Dropped where nothing takes it: no animation of it flying back, which
-    // holds on to the pointer (losing the next press) until it's done.
-    let failing = drag.clone();
-    let on_failed = source.connect_drag_failed(move |_, _, result| {
-        trace(&format!("failed: {result:?}"));
-        failing.failed.set(true);
-        failing.called_off.set(result == gtk::DragResult::UserCancelled);
-        glib::Propagation::Stop
-    });
-    handlers.borrow_mut().push((widget.clone(), on_failed));
-    // Once it's over, dropped or not, the window stops answering for it,
-    // the files went (`taken`), and the page is told.
-    let finish = {
-        let (drag, handlers, told, ark) = (drag.clone(), handlers.clone(), window.clone(), ark.clone());
-        let dropped = dropped.clone();
-        let taken = Arc::new(taken);
-        move || {
-            for (widget, handler) in handlers.borrow_mut().drain(..) {
-                widget.disconnect(handler);
-            }
-            let page = crate::webview::page(&told);
-            let ending = match () {
-                _ if drag.called_off.get() => Ending::CalledOff,
-                _ if drag.over_page.get() => Ending::Back,
-                _ if drag.failed.get() => Ending::Nowhere,
-                _ => Ending::Elsewhere,
-            };
-            // Dolphin asked for them (`ark`): the page told once its copies
-            // are written. They're its own: the app's aren't handed out.
-            let copying = ark.as_ref().is_some_and(|ark| {
-                let (told, dropped) = (told.clone(), dropped.clone());
-                ark.ended(move |failed| {
-                    let failed = failed.filter(|why| why != CANCELED);
-                    trace(&format!("over: copied for Dolphin, failed {failed:?}"));
-                    dropped(false);
-                    let ended = DragEnded { drag: number, delivered: failed.is_none(), failed, ..Default::default() };
-                    let _ = told.emit("drag-ended", ended);
-                })
-            });
-            if !copying {
-                let (given, failure) = (drag.given.get(), drag.failure.borrow_mut().take());
-                let (receiver, made) = (drag.receiver.borrow_mut().take(), drag.made.get());
-                // Taken (above), then the page told, so a drag of its own
-                // coming back in isn't taken for one to add. Off the main
-                // thread, for the library's lock.
-                let (taken, told, dropped) = (taken.clone(), told.clone(), dropped.clone());
-                std::thread::spawn(move || {
-                    let outcome = drag_outcome(ending, given, failure, made, receiver.as_deref().map(app_name));
-                    let ended = DragEnded { drag: number, ..outcome };
-                    trace(&format!("over: {ended:?}"));
-                    if ended.delivered {
-                        taken();
-                    }
-                    dropped(false);
-                    let _ = told.emit("drag-ended", ended);
-                });
-            }
-            // The press that started the drag never comes back up in the page:
-            // the drag took the release. Without one, its next press is lost.
-            if let Ok(page) = page {
-                release_button(&page);
-            }
-        }
-    };
-    let finish = Rc::new(finish);
-    let ending = (drag.clone(), finish.clone(), files.clone());
-    let end = source.connect_drag_end(move |_, context| {
-        let (drag, finish, files) = (&ending.0, &ending.1, &ending.2);
-        drag.ended.set(true);
-        // The app it was let go on, while the drag still says; and whether
-        // the files were made by then (taken, or not, as they were).
-        if !drag.failed.get() && !drag.over_page.get() {
-            *drag.receiver.borrow_mut() = other_window(context).and_then(|w| window_class(&w));
-            drag.made.set(settled(files()).is_some_and(|r| r.is_ok()));
-        }
-        if drag.holding.get() == 0 {
-            finish();
-        } else {
-            // Over while an answer waits (called off during it, or the app it
-            // was let go on gave up): finished once that wait is, outside it.
-            let (drag, finish) = (drag.clone(), finish.clone());
-            glib::timeout_add_local(HOLD_TICK, move || {
-                if drag.holding.get() > 0 {
-                    return glib::ControlFlow::Continue;
-                }
-                finish();
-                glib::ControlFlow::Break
-            });
-        }
-    });
-    handlers.borrow_mut().push((widget.clone(), end));
-    // Its picture, set as it begins: else GTK sets its own icon then, loading
-    // it from the icon theme through gdk-pixbuf, and aborts the app if no
-    // loader can read it (an SVG, where the loaders are sandboxed away).
-    // (One that can't be decoded: none to see, rather than a theme icon.)
-    let picture =
-        drag_picture(&image).or_else(|| gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 1, 1).ok());
-    let over = drag.clone();
-    let begin = source.connect_drag_begin(move |_, context| {
-        if let Some(surface) = &picture {
-            context.drag_set_icon_surface(surface);
-        }
-        // Let go on another app: listed with the jobs from now (`dropped`);
-        // one whose ask is held already (asked as the drag went over it,
-        // Nautilus 43's) waits for the files.
-        let (over, dropped, waited) = (over.clone(), dropped.clone(), waited.clone());
-        context.connect_drop_performed(move |context, _| {
-            over.dropped.set(true);
-            if !over.over_page.get() && !asked_by_own_window(context) {
-                dropped(true);
-                if over.holding.get() > 0 {
-                    waited();
-                }
-            }
-        });
-    });
-    handlers.borrow_mut().push((widget, begin));
-    let undo = || {
-        for (widget, handler) in handlers.borrow_mut().drain(..) {
-            widget.disconnect(handler);
-        }
-        // Never asked for: off the bus.
-        if let Some(ark) = &ark {
-            ark.ended(|_| {});
-        }
-    };
-    // A drag begun with no button held never ends (nothing releases it), and
-    // the file it was for is never forgotten: the release may have come in
-    // the moment between the page asking and this. Refused, so the page
-    // treats it as a drag that didn't happen.
-    let held = source.window().and_then(|w| {
-        let pointer = w.display().default_seat()?.pointer()?;
-        let (_, _, _, state) = w.device_position(&pointer);
-        Some(state.contains(gtk::gdk::ModifierType::BUTTON1_MASK))
-    });
-    if held == Some(false) {
-        undo();
-        return Err(ReleasedEarly.into());
-    }
-    if source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1).is_none() {
-        undo();
-        anyhow::bail!("The drag couldn't start.");
-    }
-    Ok(())
-}
-
-/// KDE's way of taking files not made yet (Ark's, which Dolphin takes): the
-/// drag names a D-Bus object of the app's (two more targets: the app's name
-/// on the session bus, the object's path); let go on Dolphin, it asks the
-/// object to put the files in its folder (`extractSelectedFilesTo`), its
-/// drop done at once, and the app copies each file there as it's made, one
-/// by one. Offered in every drag: apps that don't know it never ask for it.
-#[cfg(target_os = "linux")]
-mod ark {
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::{Arc, Mutex};
-
-    use gtk::gio;
-
-    use super::{HOLD_TICK, Made};
-
-    /// The drag's targets for it, by their `info`.
-    pub(super) const SERVICE: u32 = 1;
-    pub(super) const OBJECT: u32 = 2;
-
-    const INTERFACE: &str = r#"<node><interface name="org.kde.ark.DndExtract"><method name="extractSelectedFilesTo"><arg type="s" name="path" direction="in"/></method></interface></node>"#;
-
-    /// What the copies came to, once they're over: why not, if one failed.
-    type Then = Box<dyn FnOnce(Option<String>) + Send>;
-
-    #[derive(Default)]
-    struct State {
-        /// The receiver asked for the files.
-        asked: bool,
-        /// The copies are over (why not, if they failed), and nobody told yet.
-        over: Option<Option<String>>,
-        /// What to do once they are (the drag over by then).
-        then: Option<Then>,
-    }
-
-    /// One drag's object on the bus, while it's offered.
-    pub(super) struct Offer {
-        conn: gio::DBusConnection,
-        id: Mutex<Option<gio::RegistrationId>>,
-        /// The app's name on the session bus.
-        pub(super) service: String,
-        /// The object's path, this drag's own.
-        pub(super) path: String,
-        state: Arc<Mutex<State>>,
-    }
-
-    impl Offer {
-        /// Puts the drag's object on the bus: asked, it copies what `files` says
-        /// is made into the folder named, one by one, `waited()` told as it's
-        /// asked (it waits for those not made). None without a bus.
-        pub(super) fn new(
-            files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
-            waited: Arc<dyn Fn() + Send + Sync>,
-        ) -> Option<Arc<Offer>> {
-            static DRAGS: AtomicU32 = AtomicU32::new(0);
-            let conn = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok()?;
-            let service = conn.unique_name()?.to_string();
-            let path = format!("/DndExtract/{}", DRAGS.fetch_add(1, Ordering::Relaxed) + 1);
-            let node = gio::DBusNodeInfo::for_xml(INTERFACE).ok()?;
-            let interface = node.lookup_interface("org.kde.ark.DndExtract")?;
-            let state = Arc::new(Mutex::new(State::default()));
-            let asked = state.clone();
-            let id = conn
-                .register_object(
-                    &path,
-                    &interface,
-                    move |_, _, _, _, _, params, invocation| {
-                        let folder: String = params.child_value(0).get().unwrap_or_default();
-                        // Once: a second call would copy them all again.
-                        let first = !std::mem::replace(&mut asked.lock().unwrap().asked, true);
-                        invocation.return_value(None);
-                        if first {
-                            super::trace(&format!("Ark: asked to put them in {folder}"));
-                            waited();
-                            let (files, state) = (files.clone(), asked.clone());
-                            std::thread::spawn(move || {
-                                let result = copy_all(&*files, Path::new(&folder));
-                                let mut s = state.lock().unwrap();
-                                match s.then.take() {
-                                    Some(then) => {
-                                        drop(s);
-                                        then(result.err());
-                                    }
-                                    None => s.over = Some(result.err()),
-                                }
-                            });
-                        }
-                    },
-                    |_, _, _, _, _| glib::Variant::from(""),
-                    |_, _, _, _, _, _| false,
-                )
-                .ok()?;
-            Some(Arc::new(Offer { conn, id: Mutex::new(Some(id)), service, path, state }))
-        }
-
-        /// The drag is over: `then` runs once the files went (why not, if they
-        /// didn't), if the receiver asked for them, and true; else false, and
-        /// the object goes from the bus.
-        pub(super) fn ended(self: &Arc<Self>, then: impl FnOnce(Option<String>) + Send + 'static) -> bool {
-            let mut s = self.state.lock().unwrap();
-            if !s.asked {
-                drop(s);
-                self.withdraw();
-                return false;
-            }
-            let me = self.clone();
-            let then = move |failed| {
-                me.withdraw();
-                then(failed);
-            };
-            match s.over.take() {
-                Some(failed) => {
-                    drop(s);
-                    then(failed);
-                }
-                None => s.then = Some(Box::new(then)),
-            }
-            true
-        }
-
-        /// Takes the object off the bus.
-        fn withdraw(&self) {
-            if let Some(id) = self.id.lock().unwrap().take() {
-                let _ = self.conn.unregister_object(id);
-            }
-        }
-    }
-
-    /// Copies each of the files `files` says are where into `folder` once it's
-    /// made, in their order, each written beside and renamed, named as the
-    /// app's (another name if one's there); stops at one that can't be.
-    fn copy_all(files: &dyn Fn() -> Vec<Made>, folder: &Path) -> Result<(), String> {
-        let mut done = 0;
-        loop {
-            let now = files();
-            let count = now.len();
-            for made in now.into_iter().skip(done) {
-                match made {
-                    Made::Ready(path) => {
-                        copy_one(&path, folder).map_err(|e| format!("Couldn't put it in {}: {e}", folder.display()))?;
-                        done += 1;
-                    }
-                    Made::Failed(why) => return Err(why),
-                    Made::Making => break,
-                }
-            }
-            if done == count {
-                return Ok(());
-            }
-            std::thread::sleep(HOLD_TICK);
-        }
-    }
-
-    fn copy_one(from: &Path, folder: &Path) -> std::io::Result<PathBuf> {
-        let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "clip".into());
-        let part = folder.join(format!(".{name}.part"));
-        std::fs::copy(from, &part)?;
-        let to = vodscribe_core::clips::unique_path(folder, &name);
-        std::fs::rename(&part, &to).inspect_err(|_| {
-            let _ = std::fs::remove_file(&part);
-        })?;
-        super::trace(&format!("Ark: {} put in the folder", to.display()));
-        Ok(to)
-    }
-}
-
-/// The PNG `png` as a cairo surface for a drag's picture, decoded here.
-#[cfg(target_os = "linux")]
-fn drag_picture(png: &[u8]) -> Option<gtk::cairo::ImageSurface> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
-    decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
-    let mut reader = decoder.read_info().ok()?;
-    let mut pixels = vec![0; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut pixels).ok()?;
-    let channels = match info.color_type {
-        png::ColorType::Rgba => 4,
-        png::ColorType::GrayscaleAlpha => 2,
-        _ => return None,
-    };
-    let (width, height) = (i32::try_from(info.width).ok()?, i32::try_from(info.height).ok()?);
-    let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height).ok()?;
-    let stride = surface.stride() as usize;
-    {
-        let mut data = surface.data().ok()?;
-        for (y, row) in pixels.chunks(info.line_size).take(info.height as usize).enumerate() {
-            for (x, px) in row.chunks(channels).take(info.width as usize).enumerate() {
-                let (r, g, b, a) =
-                    if channels == 4 { (px[0], px[1], px[2], px[3]) } else { (px[0], px[0], px[0], px[1]) };
-                // Cairo's ARGB32: premultiplied, in the machine's byte order (little-endian here: B, G, R, A).
-                let pre = |c: u8| (u16::from(c) * u16::from(a) / 255) as u8;
-                let at = y * stride + x * 4;
-                data[at..at + 4].copy_from_slice(&[pre(b), pre(g), pre(r), a]);
-            }
-        }
-    }
-    Some(surface)
-}
-
-/// Sends `page` the release of the first mouse button, where the pointer is.
-#[cfg(target_os = "linux")]
-fn release_button(page: &gtk::Widget) {
-    use gtk::glib::translate::{ToGlibPtr, ToGlibPtrMut};
-    use gtk::prelude::*;
-    let (Some(window), Some(device)) = (page.window(), page.display().default_seat().and_then(|s| s.pointer())) else {
-        return;
-    };
-    let (_, x, y, _) = window.device_position_double(&device);
-    let (_, root_x, root_y) = device.position_double();
-    let mut event = gtk::gdk::Event::new(gtk::gdk::EventType::ButtonRelease);
-    // SAFETY: a button event just made, of the type its fields are written as;
-    // the window is referenced for the event, which unreferences it when freed.
-    unsafe {
-        let button = ToGlibPtrMut::<*mut gtk::gdk::ffi::GdkEvent>::to_glib_none_mut(&mut event).0
-            as *mut gtk::gdk::ffi::GdkEventButton;
-        (*button).window = ToGlibPtr::<*mut gtk::gdk::ffi::GdkWindow>::to_glib_full(&window);
-        (*button).send_event = 1;
-        (*button).time = gtk::gdk::ffi::GDK_CURRENT_TIME as u32;
-        (*button).x = x;
-        (*button).y = y;
-        (*button).x_root = root_x;
-        (*button).y_root = root_y;
-        (*button).button = 1;
-        (*button).state = gtk::gdk::ffi::GDK_BUTTON1_MASK;
-    }
-    event.set_device(Some(&device));
-    gtk::main_do_event(&mut event);
-}
-
-/// The system's drag (OLE's) of the files `files` says are where, made or
-/// not (`drag_source`): it begins at once, each file offered as a virtual
-/// file (Explorer copies it once it's made, showing its own dialog) and as
-/// itself (given to an app that takes only that once all are made). The page
-/// hears "drag-ended" once they went (for Explorer, once its copies are
-/// written), or didn't; let go on an app that asked for the files themselves
-/// while one was still being made, that it takes finished files only, named
-/// as its program describes itself.
-#[cfg(windows)]
+/// The system's drag (`drag_source`) of the files `files` says are where,
+/// made or being made, each offered as the system's receivers take a file
+/// not made yet (`dragndrop_source`): a file manager waits for it, an app that
+/// takes files already made gets them if they are. Once it's over, `taken`
+/// runs if another app was given the app's own files (not copies written for
+/// it), then the page hears "drag-ended" (`drag_outcome`); let go on an app
+/// that took nothing because they weren't made yet, that it takes finished
+/// files only, and its name where the system says. On Linux, `resolve`
+/// refuses them to DaVinci Resolve as it asks, and the page hears that it
+/// did (resolve.rs).
 #[allow(clippy::too_many_arguments)]
 fn start_drag(
     window: &tauri::WebviewWindow,
@@ -2043,100 +1379,13 @@ fn start_drag(
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
+    resolve: crate::resolve::Watch,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
     waited: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
-    use crate::drag_source::{self, State};
+    use crate::drag_source::{self, Event, Failure};
 
-    /// One of the drag's files, the `at`th that `files` says is where.
-    struct Polled {
-        files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
-        at: usize,
-        name: String,
-        waited: Arc<dyn Fn() + Send + Sync>,
-    }
-    impl drag_source::Item for Polled {
-        fn name(&self) -> String {
-            self.name.clone()
-        }
-        fn state(&self) -> State {
-            match (self.files)().into_iter().nth(self.at) {
-                Some(Made::Ready(path)) => State::Ready(path),
-                Some(Made::Making) => State::Making,
-                Some(Made::Failed(why)) => State::Failed(why),
-                None => State::Failed("That clip is gone.".into()),
-            }
-        }
-        // (Explorer's Cancel stops nothing here: the page forgets a clip
-        // made only for the drag once it hears it went nowhere.)
-        fn waited_for(&self) {
-            (self.waited)();
-        }
-    }
-    let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
-    let waited: Arc<dyn Fn() + Send + Sync> = Arc::new(waited);
-    let items = (names.into_iter().enumerate())
-        .map(|(at, Outgoing { name, .. })| {
-            let waited = waited.clone();
-            Box::new(Polled { files: files.clone(), at, name, waited }) as Box<dyn drag_source::Item>
-        })
-        .collect();
-    let hwnd = window.hwnd()?.0 as isize;
-    let told = window.clone();
-    drag_source::run(
-        hwnd,
-        items,
-        &image,
-        // Let go on another app: listed with the jobs from now, until it's over.
-        dropped,
-        move |outcome| {
-            // Taken, then the page told (so a drag of its own coming back in
-            // isn't taken for one to add), off the UI thread (the library's lock).
-            std::thread::spawn(move || {
-                let made = !outcome.refused_unmade;
-                let ended = drag_outcome(outcome.ending, outcome.delivered, outcome.failure, made, outcome.receiver);
-                let ended = DragEnded { drag: number, ..ended };
-                trace(&format!("ended: {ended:?}"));
-                if ended.delivered && outcome.taken {
-                    taken();
-                }
-                let _ = told.emit("drag-ended", ended);
-            });
-        },
-        trace,
-    )
-}
-
-/// The system's drag (AppKit's) of the files `files` says are where, made or
-/// being made (`file_drag`): Finder, and any app that takes a file promise,
-/// gets each file written where it was dropped once it's made, with its
-/// progress and cancel meanwhile; an app that takes files already made gets
-/// those that are. Once it's over, `taken` runs if another app was given the
-/// app's own files (not copies written for it), then the page is told
-/// (`drag_outcome`, as on Linux).
-#[cfg(target_os = "macos")]
-#[allow(clippy::too_many_arguments)]
-fn start_drag(
-    window: &tauri::WebviewWindow,
-    number: Option<u64>,
-    names: Vec<Outgoing>,
-    files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
-    image: Vec<u8>,
-    taken: impl Fn() + Send + Sync + 'static,
-    dropped: impl Fn(bool) + Send + Sync + 'static,
-    waited: impl Fn() + Send + Sync + 'static,
-) -> Result<()> {
-    use crate::file_drag::{self, Event, Failure};
-
-    // The window itself (not its web view) takes file drops in tao, which
-    // unwraps the dropped files' names: a file not made yet has none, and the
-    // app panicked as the drag crossed the window's edge (tao 0.37.1's
-    // draggingEntered). Tauri hears drops from the web view, which stays
-    // registered for them.
-    let ns_window = window.ns_window()? as *const objc2_app_kit::NSWindow;
-    // SAFETY: Tauri's window, alive through this call on the main thread.
-    unsafe { (*ns_window).unregisterDraggedTypes() };
     let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
     let waited: Arc<dyn Fn() + Send + Sync> = Arc::new(waited);
     let items = names
@@ -2144,47 +1393,84 @@ fn start_drag(
         .enumerate()
         .map(|(index, Outgoing { name, job })| {
             let (app, files, waited) = (window.app_handle().clone(), files.clone(), waited.clone());
-            let file = DragFile { app, index, name, job, files, waited };
-            Arc::new(file) as Arc<dyn file_drag::Item>
+            Box::new(DragFile { app, index, name, job, files, waited }) as Box<dyn drag_source::Item>
         })
         .collect();
-    let told = window.clone();
-    file_drag::start(window, items, &image, move |event| match event {
+    let told = window.app_handle().clone();
+    let resolve = Arc::new(resolve);
+    let watched = resolve.clone();
+    let on = move |event| match event {
+        // Let go on another app: listed with the jobs from now, until it's over.
         Event::LetGo => dropped(true),
+        // (Off the main thread: the library's lock.)
         Event::Ended(ended) => {
             let failure = ended.failure.map(|failure| match failure {
                 Failure::Cancelled => CANCELED.to_string(),
                 Failure::Failed(why) => why,
             });
-            let outcome = drag_outcome(ended.ending, ended.given, failure, ended.made, ended.receiver);
-            // Copies written where it was dropped are the other app's own:
-            // the app's files aren't handed out.
-            if outcome.delivered && !ended.written {
+            // Refused to Resolve: nothing else to say of it.
+            let outcome = match watched.heard(ended.ending, ended.delivered) {
+                Some(heard @ crate::resolve::ResolveDrop::Refused) => {
+                    DragEnded { resolve: Some(heard), ..Default::default() }
+                }
+                heard => DragEnded {
+                    resolve: heard,
+                    ..drag_outcome(ended.ending, ended.delivered, failure, ended.made, ended.receiver)
+                },
+            };
+            let outcome = DragEnded { drag: number, ..outcome };
+            drag_source::trace(&format!("ended: {outcome:?}"));
+            // Taken, then the page told, so a drag of its own coming back in
+            // isn't taken for one to add. Copies written where it was dropped
+            // are the other app's own: the app's files aren't handed out.
+            if outcome.delivered && !ended.copied {
                 taken();
             }
             dropped(false);
-            let _ = told.emit("drag-ended", DragEnded { drag: number, ..outcome });
+            // Through Tauri's own queue, not `page::emit`: brought back and
+            // let go on the window, the web view's drop is in that queue
+            // already, and the page must hear it first, while it still knows
+            // where the drag would go. On Linux `page::emit` would overtake
+            // it, and the drop would land nowhere. The drag is over, so
+            // nothing holds that queue now.
+            let _ = told.emit("drag-ended", outcome);
         }
-    })
+    };
+    #[cfg(target_os = "linux")]
+    return drag_source::start(window, items, &image, resolve, on);
+    #[cfg(not(target_os = "linux"))]
+    {
+        drop(resolve);
+        drag_source::start(window, items, &image, on)
+    }
 }
 
-/// A clip's (or an edit's) file in a drag out of the window, as macOS's drag
-/// asks after it (`file_drag::Item`).
-#[cfg(target_os = "macos")]
+/// A clip's (or an edit's) file in a drag out of the window, the `index`th
+/// that `files` says is where, as the drag asks after it.
 struct DragFile {
     app: AppHandle,
     index: usize,
     name: String,
+    /// The job making it, whose progress macOS shows where it's dropped.
     job: Option<i64>,
     files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
     /// Told when the receiver waits for the file still being made.
     waited: Arc<dyn Fn() + Send + Sync>,
 }
 
-#[cfg(target_os = "macos")]
-impl crate::file_drag::Item for DragFile {
-    fn file_name(&self) -> String {
+impl crate::drag_source::Item for DragFile {
+    fn name(&self) -> String {
         self.name.clone()
+    }
+
+    fn state(&self) -> crate::drag_source::State {
+        use crate::drag_source::State;
+        match (self.files)().into_iter().nth(self.index) {
+            Some(Made::Ready(path)) => State::Ready(path),
+            Some(Made::Making) => State::Making(self.job.and_then(|id| crate::job_list::progress_of(&self.app, id))),
+            Some(Made::Failed(why)) => State::Failed(why),
+            None => State::Failed("That clip is gone.".into()),
+        }
     }
 
     fn file_type(&self) -> String {
@@ -2199,15 +1485,8 @@ impl crate::file_drag::Item for DragFile {
         .into()
     }
 
-    fn state(&self) -> crate::file_drag::State {
-        use crate::file_drag::State;
-        match (self.files)().into_iter().nth(self.index) {
-            Some(Made::Ready(path)) => State::Ready(path),
-            Some(Made::Making) => State::Making(self.job.and_then(|id| crate::job_list::progress_of(&self.app, id))),
-            Some(Made::Failed(why)) => State::Failed(why),
-            None => State::Failed("That clip is gone.".into()),
-        }
-    }
+    // (The receiver's cancel stops nothing here: the page forgets a clip
+    // made only for the drag once it hears it went nowhere.)
 
     fn waited_for(&self) {
         (self.waited)();
@@ -2246,6 +1525,25 @@ pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: 
 mod tests {
     use super::*;
 
+    /// A clip whose file is read from 0.7.1's clip folder (it couldn't be
+    /// linked in) leaves that file there when it goes; its own goes.
+    #[test]
+    fn a_clip_going_leaves_files_outside_the_library() {
+        let root = std::env::temp_dir().join(format!("vodscribe-let-go-{}", std::process::id()));
+        let paths = vodscribe_core::Paths::new(root.join("lib"));
+        let old = root.join("Videos/VODscribe/A talk.mp4");
+        let own = paths.clip_file(4, "mp4");
+        for file in [&old, &own] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"clip").unwrap();
+        }
+        let_go_files(&paths, 3, Some(&old.to_string_lossy()), false);
+        assert!(old.is_file(), "0.7.1's file deleted");
+        let_go_files(&paths, 4, Some(&own.to_string_lossy()), false);
+        assert!(!own.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// A clip made only to be dragged out was queued last, behind every clip
     /// and edit render waiting, and the drag waited for all of them.
     #[test]
@@ -2273,16 +1571,6 @@ mod tests {
         assert_eq!(next, [8, 9, 2, 3], "the drag's in the order picked, then the rest as they were");
     }
 
-    /// A drag's answer waits while any of its files is still being made,
-    /// and is none once one can't be: all or nothing, as one drop.
-    #[test]
-    fn a_drag_is_answered_once_all_its_files_are_made() {
-        let ready = |p: &str| Made::Ready(PathBuf::from(p));
-        assert!(settled(vec![ready("/a"), Made::Making]).is_none());
-        assert_eq!(settled(vec![ready("/a"), ready("/b")]), Some(Ok(vec![PathBuf::from("/a"), PathBuf::from("/b")])));
-        assert_eq!(settled(vec![Made::Making, Made::Failed("no".into())]), Some(Err("no".into())));
-    }
-
     /// What a drag out of the window comes to, by what was seen of it: let go
     /// on an app that took nothing while the files were still being made, it
     /// takes finished files only (named, where the system says); one that
@@ -2299,6 +1587,7 @@ mod tests {
             failed: failed.map(String::from),
             finished_only,
             receiver: receiver.map(String::from),
+            resolve: None,
         };
         assert_eq!(drag_outcome(Elsewhere, true, None, true, named()), ended(true, None, false, None), "given");
         assert_eq!(
@@ -2320,18 +1609,6 @@ mod tests {
                 assert_eq!(drag_outcome(ending, given, failure, false, named()), DragEnded::default(), "{ending:?}");
             }
         }
-    }
-
-    /// The receiving app is named as its desktop entry names it: the entry
-    /// naming its window's class, else the class.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn an_app_is_named_by_its_desktop_entry() {
-        let entry = "[Desktop Entry]\nName=Kdenlive\nStartupWMClass=kdenlive\n[Desktop Action new]\nName=New\n";
-        assert_eq!(desktop_entry(entry), (Some("Kdenlive".into()), Some("kdenlive")));
-        assert_eq!(desktop_entry("[Desktop Entry]\nExec=x\n"), (None, None));
-        assert_eq!(app_name("org.example.NoSuchApp"), "NoSuchApp", "a reverse domain name's last part");
-        assert_eq!(app_name("No-such-app"), "No-such-app");
     }
 
     /// A clip made only for a drag out of the window showed in the list of
@@ -2395,6 +1672,68 @@ mod tests {
         assert_eq!(history.steps(doc), before + 1);
     }
 
+    /// A drag's receiver asked for a clip's file (its name made beside it,
+    /// `handed_out`) as the clip was deleted: the name was linked after the
+    /// delete had looked for names to remove, and a full-size copy stayed in
+    /// the clips folder that nothing named or removed.
+    #[test]
+    fn a_clip_deleted_as_a_drag_hands_it_out_leaves_no_name_behind() {
+        use std::sync::atomic::AtomicU64;
+        static N: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "vodscribe-hand-out-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let paths = vodscribe_core::Paths::new(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Db::open(&root.join("library.sqlite")).unwrap();
+        let vod = db.add_vod(&info()).unwrap().0.id;
+        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap();
+        let file = db.files().clip_file(clip.id, "mp4");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"clip").unwrap();
+        db.set_clip_file(clip.id, 1.0, 2.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
+        let db = Arc::new(Mutex::new(db));
+        let asking = {
+            let (db, paths) = (db.clone(), paths.clone());
+            std::thread::spawn(move || hand_out_made(&db, &paths, clip.id, "c 0:01.mp4"))
+        };
+        // Deleted while the receiver's ask is under way, as `remove` does.
+        std::thread::sleep(Duration::from_millis(100));
+        {
+            let db = db.lock().unwrap();
+            let path = db.clip(clip.id).unwrap().and_then(|c| c.file_path);
+            db.delete_clip(clip.id).unwrap();
+            let_go_files(&paths, clip.id, path.as_deref(), false);
+        }
+        let given = asking.join().unwrap();
+        let left: Vec<_> = std::fs::read_dir(paths.clip_names(clip.id)).into_iter().flatten().flatten().collect();
+        assert!(left.is_empty(), "left in the clips folder: {left:?}");
+        assert!(!paths.clip_names(clip.id).exists(), "its names' folder is left");
+        // Given only if the ask came first; then it was deleted with the clip.
+        if let Made::Ready(path) = given {
+            assert!(!path.exists(), "handed out {path:?}, still there");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn info() -> vodscribe_core::fetch::VodInfo {
+        vodscribe_core::fetch::VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            channel_login: None,
+            channel_url: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+            started_at: None,
+        }
+    }
+
     fn library() -> (Db, i64) {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let info = vodscribe_core::fetch::VodInfo {
@@ -2403,6 +1742,8 @@ mod tests {
             url: "https://youtu.be/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -2439,7 +1780,8 @@ mod tests {
         db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
         let a = db.add_edit_clip(edit, 1.0, 2.0, "a", true).unwrap().id;
         let b = db.add_edit_clip(edit, 3.0, 4.0, "b", true).unwrap();
-        assert!(db.set_clip_file(b.id, b.start, b.end, ClipStatus::Ready, Some("/clips/b.mp4"), None).unwrap());
+        let file = db.files().clip_file(b.id, "mp4").to_string_lossy().into_owned();
+        assert!(db.set_clip_file(b.id, b.start, b.end, ClipStatus::Ready, Some(&file), None).unwrap());
         let b = b.id;
         db.hand_out_clip(b).unwrap();
         let stopped = std::cell::RefCell::new(Vec::new());
@@ -2452,9 +1794,9 @@ mod tests {
 
         let gone = crate::edits::delete_edit_in(&db, edit, stop).unwrap();
         let clips: Vec<_> = gone.clips.iter().map(|(c, out)| (c.id, c.file_path.as_deref(), *out)).collect();
-        assert_eq!(clips, [(a, None, false), (b, Some("/clips/b.mp4"), true)], "its clips, b dragged out");
+        assert_eq!(clips, [(a, None, false), (b, Some(&*file), true)], "its clips, b dragged out");
         assert_eq!(*stopped.borrow(), [a, b], "their cuts stopped");
-        assert!(db.edit(edit).unwrap().is_none() && db.clip(a).unwrap().is_none() && db.clip(b).unwrap().is_none());
+        assert!(db.revision(edit).unwrap().is_none() && db.clip(a).unwrap().is_none() && db.clip(b).unwrap().is_none());
         assert_eq!(db.clips(vod).unwrap().len(), 1, "the VOD's own clip stays");
     }
 

@@ -1,6 +1,6 @@
 //! Rendering an edit: pieces of media files (stretches of clips, say), one
-//! after another, as one file in the format clips are made in (`ClipFormat`:
-//! MP4, or MOV for editors). Each piece is trimmed to the frame, brought to
+//! after another, as one file encoded as clips are (`ClipEncoding`: MP4, or
+//! MOV for editors). Each piece is trimmed to the frame, brought to
 //! one picture size and frame rate (scaled to fit, with black bars) and one
 //! sound format, then they're joined. A piece without sound gets silence, and
 //! one without a picture a black one; one without a file at all (a hole: its
@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::{Context, Result, bail};
 
 use crate::local::{self, Media, Picture};
-use crate::settings::ClipFormat;
+use crate::settings::ClipEncoding;
 use crate::tools;
 
 /// A stretch of a media file, `start` to `end` seconds into it; with no
@@ -29,7 +29,7 @@ pub struct Piece {
 /// The picture an edit's rendered at: as given, or else its first picture's.
 pub fn picture_of(sources: &[Media], given: Option<Picture>) -> Option<Picture> {
     let first = sources.iter().find_map(|m| m.picture)?;
-    // Even sizes, which H.264's 4:2:0 needs.
+    // Even sizes, which 4:2:0 and 4:2:2 need.
     let even = |n: u32| n.max(2) & !1;
     let p = given.unwrap_or(first);
     Some(Picture { width: even(p.width), height: even(p.height), fps: if p.fps > 0.0 { p.fps } else { 30.0 }, ..p })
@@ -102,12 +102,12 @@ pub fn render(
     pieces: &[Piece],
     picture: Option<Picture>,
     chapters: &[(f64, String)],
-    format: ClipFormat,
+    encoding: ClipEncoding,
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<PathBuf> {
-    encode_pieces(ffmpeg, pieces, picture, chapters, format, out, cancel, progress)
+    encode_pieces(ffmpeg, pieces, picture, chapters, encoding, out, cancel, progress)
 }
 
 /// `chapters` (start, title) of a video `length` seconds long, as an ffmpeg
@@ -155,7 +155,7 @@ fn encode_pieces(
     pieces: &[Piece],
     given: Option<Picture>,
     chapters: &[(f64, String)],
-    format: ClipFormat,
+    encoding: ClipEncoding,
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
@@ -194,7 +194,7 @@ fn encode_pieces(
     let length: f64 = pieces.iter().map(|p| p.end - p.start).sum();
     // Named for what it holds, found only now: sound alone is an .m4a or .wav
     // (beside, not over, a file of that name already there).
-    let named = out.with_extension(crate::clips::extension(picture.is_none(), format));
+    let named = out.with_extension(crate::clips::extension(picture.is_none(), encoding.format()));
     let out = &match (named != out, named.parent(), named.file_name()) {
         (true, Some(dir), Some(name)) if named.exists() => crate::clips::unique_path(dir, &name.to_string_lossy()),
         _ => named,
@@ -234,7 +234,7 @@ fn encode_pieces(
     // with chapters, the metadata file's instead, which has only those (its
     // chapters' titles come only with its metadata, not after a -1).
     let chapters_input = sources.to_string();
-    let mut args = crate::clips::output_args(format, picture.is_some());
+    let mut args = crate::clips::output_args(encoding, picture.is_some());
     if with_chapters {
         for pair in args.chunks_mut(2) {
             if matches!(pair, ["-map_metadata" | "-map_chapters", "-1"]) {
@@ -343,7 +343,10 @@ mod tests {
             Piece { source: Some(nut), start: 0.0, end: 0.5 },
         ];
         let bad = dir.join("out").join("bad.mp4");
-        assert!(render(&ffmpeg, &refused, None, &[], ClipFormat::Mp4, &bad, &AtomicBool::new(false), |_| {}).is_err());
+        assert!(
+            render(&ffmpeg, &refused, None, &[], ClipEncoding::default(), &bad, &AtomicBool::new(false), |_| {})
+                .is_err()
+        );
         let pieces = [
             Piece { source: Some(a.clone()), start: 1.0, end: 2.5 },
             Piece { source: Some(b), start: 0.0, end: 2.0 },
@@ -354,8 +357,10 @@ mod tests {
         let out = dir.join("out").join("edit.mp4");
         let mut seen = Vec::new();
         let chapters = [(0.0, "Intro".to_string()), (2.0, "Part = two; #2".to_string())];
-        render(&ffmpeg, &pieces, None, &chapters, ClipFormat::Mp4, &out, &AtomicBool::new(false), |p| seen.push(p))
-            .unwrap();
+        render(&ffmpeg, &pieces, None, &chapters, ClipEncoding::default(), &out, &AtomicBool::new(false), |p| {
+            seen.push(p)
+        })
+        .unwrap();
         assert_eq!(seen.last(), Some(&1.0));
         let probe = |args: &[&str]| {
             let o = std::process::Command::new(&ffprobe).args(["-v", "error"]).args(args).arg(&out).output().unwrap();
@@ -389,8 +394,9 @@ mod tests {
         let pieces = [Piece { source: Some(tone), start: 0.0, end: 1.0 }];
         // (A WAV keeps no chapters: they're left out.)
         let chapters = [(0.0, "Tone".to_string())];
-        let made = render(&ffmpeg, &pieces, None, &chapters, ClipFormat::Mov, &asked, &AtomicBool::new(false), |_| {})
-            .unwrap();
+        let mov =
+            ClipEncoding { codec: crate::settings::ClipCodec::Dnxhr, quality: crate::settings::ClipQuality::Proxy };
+        let made = render(&ffmpeg, &pieces, None, &chapters, mov, &asked, &AtomicBool::new(false), |_| {}).unwrap();
         assert_eq!(made, dir.join("out").join("sound.wav"));
         assert!(made.is_file() && !asked.exists());
     }

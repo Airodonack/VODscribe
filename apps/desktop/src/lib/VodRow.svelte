@@ -18,6 +18,7 @@
   import Spinner from "./Spinner.svelte";
   import { covered as coveredBy, requestDetail, statusLabel } from "./stretches";
   import { inEdits as inEditsOf, removing as removals } from "./removal.svelte";
+  import { refreshing } from "./refresh.svelte";
   import Thumb from "./Thumb.svelte";
   import { transcribe } from "./bulk";
   import { offers } from "./offers.svelte";
@@ -194,6 +195,8 @@
   // (its text is erased, not just dropped); the row says so meanwhile, and
   // goes when it's done (removal.svelte.ts).
   const removing = $derived(removals.has(vod.id));
+  // Refresh details asks its site, which takes seconds (refresh.svelte.ts).
+  const refreshingDetails = $derived(refreshing.has(vod.id));
   // Removing it asks as removing several picked does (actions.ts): a VOD that
   // edits use, whether its video goes too, the stretches they use kept first.
   async function remove() {
@@ -231,7 +234,7 @@
       Removing…
     </span>
   </div>
-{:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
+{:else if refreshingDetails || vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
     {#if untouched}
       <span class="status muted">
@@ -263,6 +266,13 @@
       </span>
     {:else if vod.note}
       <span class="note muted" title={vod.note}>{vod.note}</span>
+    {/if}
+    <!-- Asking its site takes seconds, beside whatever else it's doing: said under that, which stays. -->
+    {#if refreshingDetails}
+      <span class="status">
+        <Spinner label="Refreshing details" />
+        Refreshing details…
+      </span>
     {/if}
   </div>
 {/if}
@@ -360,12 +370,12 @@
       bind:this={keepButton}
       onclick={keep}
       title={keeping !== undefined
-        ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
+        ? `Downloading the video, ${Math.round(keeping * 100)}%. Click to stop.`
         : keepError
-          ? `The video couldn't be downloaded: ${keepError} Click to try again.`
+          ? `Couldn't download the video: ${keepError} Click to try again.`
           : hasSitePlayer(vod)
-            ? `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and clipping work without it.`
-            : `Download the video (up to ${height}p, ${keepSize}): ${platform} has no player VODscribe can show, so it plays here, as it downloads.`}
+            ? `Download the video, up to ${height}p${keepSize ? `, ${keepSize}` : ""}. It then plays here, exact to the frame.`
+            : `Download the video, up to ${height}p${keepSize ? `, ${keepSize}` : ""}. It plays here as it downloads.`}
       aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
       {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
     >
@@ -414,9 +424,7 @@
   <Popover bind:open={asking} anchor={keepButton} label="Before downloading the video" width={340}>
     <PermissionNote
       action="Download video"
-      hideLabel="Don't show this again{pickedHeight !== height
-        ? ` (and download at ${pickedHeight}p from now on)`
-        : ''}"
+      hideLabel="Don't ask again{pickedHeight !== height ? ` (and download at ${pickedHeight}p from now on)` : ''}"
       onanswer={answer}
     >
       <div class="quality" role="radiogroup" aria-label="Video quality">

@@ -1,12 +1,13 @@
 //! Importing annotations for a VOD (`vodscribe_core::annotations`): from the
 //! file host where they're published, or from a file (the tests'); asking
 //! the file host whether a VOD has some; and reading a VOD's cast and
-//! activity back for the page, and where its pictures come from.
+//! activity back for the page, where its pictures come from, and the
+//! streamer cards its cast opens.
 
 use std::path::Path;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::annotations::{self, Found, Offer, VodAnnotations};
 use vodscribe_core::annotations_filter;
 use vodscribe_core::chat::ChatMessage;
@@ -73,7 +74,7 @@ async fn import(
     emit_vod(&app, &state.db.lock().unwrap(), vod.id)?;
     // Whatever started the import (the offer, a file, a test), the page
     // re-reads what it shows of the VOD from here.
-    let _ = app.emit("annotations-imported", vod.id);
+    crate::page::emit(&app, "annotations-imported", vod.id);
     Ok(Imported { vod, created })
 }
 
@@ -116,7 +117,40 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
         }
         match look_up(&app, id, &platform, &platform_id) {
             Ok(Found::Available { .. }) => {
-                let _ = app.emit("annotations-found", id);
+                crate::page::emit(&app, "annotations-found", id);
+            }
+            Ok(Found::None) => {}
+            Err(e) => {
+                if cfg!(debug_assertions) {
+                    eprintln!("annotations for {platform} {platform_id}: {e:#}");
+                }
+            }
+        }
+    });
+}
+
+/// For a VOD whose details were refreshed (`vods::refresh_details`): asks
+/// the file host about its annotations again, as `look_up_added` does for
+/// one just added, on a thread of its own so the refresh doesn't wait,
+/// unless the user turned that off (nothing is asked then). Published, and
+/// not the ones it has already, the page offers them (`annotations-found`),
+/// as after an add. A failure to ask is kept quiet.
+pub(crate) fn look_up_refreshed(app: &AppHandle, vod: &Vod) {
+    if !annotations::can_be_published(&vod.info.platform) {
+        return;
+    }
+    let (app, id) = (app.clone(), vod.id);
+    let (platform, platform_id) = (vod.info.platform.clone(), vod.info.platform_id.clone());
+    std::thread::spawn(move || {
+        if !may_ask(&app) {
+            return;
+        }
+        match look_up(&app, id, &platform, &platform_id) {
+            Ok(Found::Available { .. }) => {
+                let offer = app.state::<AppState>().db.lock().unwrap().annotations_offer(id);
+                if offer.is_ok_and(|offer| !offer.up_to_date) {
+                    crate::page::emit(&app, "annotations-found", id);
+                }
             }
             Ok(Found::None) => {}
             Err(e) => {
@@ -239,4 +273,31 @@ pub(crate) async fn fetch_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
 #[tauri::command]
 pub(crate) fn avatar_base() -> Option<String> {
     annotations::avatar_base()
+}
+
+/// Streamer card `id` as the file host has it (the page reads it,
+/// streamers.ts); None when it isn't there, or when the user turned asking
+/// the file host off (Settings): the card shows what the VOD knows. Offline,
+/// an error, which the page takes as the same.
+#[tauri::command]
+pub(crate) async fn streamer_card(app: AppHandle, id: String) -> CmdResult<Option<serde_json::Value>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !may_ask(&app) {
+            return Ok(None);
+        }
+        annotations::streamer_card(&id)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+
+/// The file host's index of streamers' accounts (the page reads it,
+/// streamers.ts), as `streamer_card` asks.
+#[tauri::command]
+pub(crate) async fn streamer_index(app: AppHandle) -> CmdResult<Option<serde_json::Value>> {
+    tauri::async_runtime::spawn_blocking(move || if may_ask(&app) { annotations::streamer_index() } else { Ok(None) })
+        .await
+        .map_err(err)?
+        .map_err(err)
 }

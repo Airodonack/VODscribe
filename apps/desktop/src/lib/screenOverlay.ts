@@ -33,7 +33,7 @@ function canvasOf(
 }
 
 /** A path round the box at `x`, `y`, `w` by `h`, its corners of radius `r`
- *  (as `roundRect`, which macOS 12's WebKit lacks). */
+ *  (as `roundRect`, which an older WebKit lacks). */
 function rounded(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   r = Math.min(r, w / 2, h / 2);
   ctx.beginPath();

@@ -6,8 +6,17 @@
 // has no library yet: on a computer that's used, point XDG_DATA_HOME (Linux)
 // somewhere else, or run on a test machine.
 
-import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -27,44 +36,11 @@ export function dataDirs() {
   }
 }
 
-/** The system's Videos folder, as the app finds it (Tauri's video_dir), or null where there's none. */
-function videosDir() {
-  switch (process.platform) {
-    case "win32":
-      // The known folder, which a user (or OneDrive) may have moved from the profile's Videos.
-      return (
-        execFileSync("powershell", ["-NoProfile", "-Command", "[Environment]::GetFolderPath('MyVideos')"], {
-          encoding: "utf8",
-        }).trim() || null
-      );
-    case "darwin":
-      return path.join(homedir(), "Movies");
-    default: {
-      // XDG_VIDEOS_DIR in user-dirs.dirs, read as the dirs crate does: under
-      // $HOME or absolute, "$HOME/" meaning none; none without the file, as
-      // in a fresh test folder or a container.
-      const config = process.env.XDG_CONFIG_HOME?.startsWith("/")
-        ? process.env.XDG_CONFIG_HOME
-        : path.join(homedir(), ".config");
-      const file = path.join(config, "user-dirs.dirs");
-      if (!existsSync(file)) return null;
-      const value = readFileSync(file, "utf8").match(/^[ \t]*XDG_VIDEOS_DIR[ \t]*=[ \t]*"(.*)"[ \t]*$/m)?.[1];
-      if (!value || value === "$HOME/") return null;
-      if (value.startsWith("$HOME/")) return path.join(homedir(), value.slice("$HOME/".length));
-      return value.startsWith("/") ? value : null;
-    }
-  }
-}
+/** Where the app puts clips' and edits' files (`Paths::clips`): in its local data. */
+export const clipsDir = () => path.join(dataDirs().at(-1), "clips");
 
-/**
- * Where the app puts clip files (clips.rs clips_dir): VODscribe in the
- * Videos folder, or clips in its data where there's no Videos folder. On
- * Windows and macOS there always is one, outside the data folders.
- */
-export function clipsDir() {
-  const videos = videosDir();
-  return videos ? path.join(videos, "VODscribe") : path.join(dataDirs().at(-1), "clips");
-}
+/** Where VOD `id`'s kept video is, with extension `ext` (`Paths::source_video`). */
+export const keptVideo = (id, ext) => path.join(dataDirs().at(-1), "media", `${id}.${ext}`);
 
 /** The app's library: its database in the data folder (`dataDirs`). */
 export const libraryPath = () => path.join(dataDirs()[0], "library.sqlite");
@@ -84,7 +60,6 @@ const SITE_VOD_COLUMNS = {
   duration: "duration",
   chat: "chat",
   chatError: "chat_error",
-  mediaPath: "media_path",
 };
 
 /**
@@ -92,15 +67,15 @@ const SITE_VOD_COLUMNS = {
  * added by its link, without the network: its file gone from it (and any
  * video kept for it), its chat known to have none unless `fields` says
  * (`chat: null` has the app fetch it at its next start). `fields` may also
- * set its `title`, `channel`, `duration`, `chatError` and `mediaPath` (a
- * video downloaded for it). With the app stopped, as it reads the library
- * at start.
+ * set its `title`, `channel`, `duration`, `chatError` and `video` (a file
+ * copied in as the video kept for it, as a download leaves it). With the
+ * app stopped, as it reads the library at start.
  *
  * @param {number} id
  * @param {string} platform
  * @param {string} platformId
  * @param {{ title?: string, channel?: string | null, duration?: number, chat?: string | null,
- *   chatError?: string | null, mediaPath?: string | null }} [fields]
+ *   chatError?: string | null, video?: string }} [fields]
  */
 export function makeSiteVod(id, platform, platformId, fields = {}) {
   const link = SITE_LINKS[platform];
@@ -110,10 +85,23 @@ export function makeSiteVod(id, platform, platformId, fields = {}) {
     platform_id: platformId,
     url: link(platformId),
     source_path: null,
+    received_ext: null,
+    video_ext: null,
     media_path: null,
     chat: "none",
   };
-  for (const [name, value] of Object.entries(fields)) {
+  const { video, ...rest } = fields;
+  if (video) {
+    const ext = path.extname(video).slice(1);
+    mkdirSync(path.dirname(keptVideo(id, ext)), { recursive: true });
+    copyFileSync(video, keptVideo(id, ext));
+    // Its extension, and its full path beside it as the app writes them
+    // (`Db::set_media_path`): without the path, the app takes the video as
+    // one a version before 0.7.2 forgot (`library::settle`).
+    set.video_ext = ext;
+    set.media_path = keptVideo(id, ext);
+  }
+  for (const [name, value] of Object.entries(rest)) {
     const column = SITE_VOD_COLUMNS[name];
     if (!column) throw new Error(`makeSiteVod doesn't set ${name}`);
     set[column] = value;
@@ -127,6 +115,44 @@ export function makeSiteVod(id, platform, platformId, fields = {}) {
     if (done.changes !== 1) throw new Error(`no VOD ${id} in the library to make ${platform}'s`);
   } finally {
     db.close();
+  }
+}
+
+/** The line every yt-dlp stand-in of the tests carries (siteVod.mjs, scenarios/download-play.mjs). */
+export const YT_DLP_STAND_IN = "stand-in for yt-dlp";
+
+/**
+ * Puts the real yt-dlp back in `bin` (the data folder's) where a run that
+ * died left a stand-in there: the stand-ins are put back in a `finally`
+ * that a killed run never reaches, and one left in place answers every
+ * site's lookup in every run after (one sat on a runner for days). The real
+ * one moved aside (yt-dlp.e2e-real) comes back; with none, the stand-in is
+ * removed, and setup downloads yt-dlp again. Says what it did, or null.
+ */
+export function putBackYtDlp(bin = path.join(dataDirs().at(-1), "bin")) {
+  const ytDlp = path.join(bin, "yt-dlp");
+  const real = path.join(bin, "yt-dlp.e2e-real");
+  if (existsSync(ytDlp) && !isStandIn(ytDlp)) return null;
+  if (existsSync(real)) {
+    renameSync(real, ytDlp);
+    return `put the real yt-dlp back over a test's stand-in in ${bin}`;
+  }
+  if (!existsSync(ytDlp)) return null;
+  rmSync(ytDlp, { force: true });
+  return `removed a test's yt-dlp stand-in from ${bin}: setup downloads yt-dlp again`;
+}
+
+/** Whether `file` is one of the tests' stand-ins: its first lines, not the whole (the real one is tens of MB). */
+function isStandIn(file) {
+  const fd = openSync(file, "r");
+  try {
+    const head = Buffer.alloc(512);
+    return head
+      .subarray(0, readSync(fd, head, 0, head.length, 0))
+      .toString("latin1")
+      .includes(YT_DLP_STAND_IN);
+  } finally {
+    closeSync(fd);
   }
 }
 

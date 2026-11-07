@@ -110,6 +110,8 @@ export type CastMember = {
   /** The streamer behind a character, by their public name, when it isn't `name`. */
   player?: string;
   account?: Account;
+  /** The id of their streamer card (the player's, for a character), when there is one: streamers.ts. */
+  streamer?: string;
 };
 
 /** A video on a site: the platform, and its own id there (Twitch's "v2906990586"). */
@@ -139,6 +141,12 @@ export type Annotations = {
   activity: Activity[];
   /** Other points of view, when the file has them. */
   povs?: Pov[];
+  /**
+   * What the VOD is part of, by the ids streamer cards name their sections by
+   * ("nopixel": an event, a server, a game): a card shows a section only in a
+   * VOD that names it (streamers.ts). Ids as `cardId` takes them.
+   */
+  contexts?: string[];
 };
 
 /**
@@ -156,6 +164,7 @@ export const LIMITS = {
   names: 100,
   activity: 10_000,
   povs: 1_000,
+  contexts: 100,
   text: 10_000,
   /** A chat file's messages, and one message's parts. */
   messages: 2_000_000,
@@ -211,6 +220,7 @@ function withinLimits(v: Record<string, unknown>) {
     [v.cast, LIMITS.cast, "people in its cast"],
     [v.activity, LIMITS.activity, "stretches of activity"],
     [v.povs, LIMITS.povs, "other points of view"],
+    [v.contexts, LIMITS.contexts, "contexts"],
   ];
   for (const [list, max, what] of lists) if (listLength(list) > max) tooBig(`it has more than ${count(max)} ${what}`);
   const nested: [unknown, string, number, string][] = [
@@ -266,19 +276,37 @@ export function parseAnnotations(value: unknown): Annotations {
   // or with a login that can't be one, is left out rather than the file refused.
   const cast = (v.cast as Record<string, unknown>[]).map((m) => {
     if (typeof m !== "object" || m === null) return m;
-    const { player, account, ...rest } = m;
+    const { player, account, streamer, ...rest } = m;
     const name = typeof player === "string" ? player.trim() : "";
     const tied = readAccount(account);
+    const card = cardId(streamer);
     return {
       ...rest,
       aliases: rest.aliases ?? [],
       ...(name ? { player: name } : {}),
       ...(tied ? { account: tied } : {}),
+      ...(card ? { streamer: card } : {}),
     };
   });
   // Other points of view may be left out, and one that can't be read is, rather than the file refused.
   const povs = Array.isArray(v.povs) ? v.povs.map(readPov).filter((p): p is Pov => p !== null) : [];
-  return { ...v, transcript: { ...transcript, segments }, chapters, highlights, cast, povs } as Annotations;
+  // So may its contexts, and one that isn't an id is.
+  const contexts = Array.isArray(v.contexts)
+    ? [...new Set(v.contexts.map(cardId).filter((c): c is string => c !== null))]
+    : [];
+  return { ...v, transcript: { ...transcript, segments }, chapters, highlights, cast, povs, contexts } as Annotations;
+}
+
+/**
+ * `value` as a streamer card's id or a context's: lowercase letters, digits,
+ * `_` and `-`, a letter or digit first, at most 64; trimmed; null for
+ * anything else. It names a file on the file host. crates/core
+ * annotations.rs `card_id` is the same rule.
+ */
+export function cardId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) ? id : null;
 }
 
 /**

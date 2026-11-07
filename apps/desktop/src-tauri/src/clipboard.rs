@@ -9,7 +9,7 @@
 //! it was, its copy gets a copy of the file rather than being made again
 //! (`Cutter::copy_file`), the same frames at once.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager};
 use vodscribe_core::clipboard::{Copied, CopiedKind, Paste};
 use vodscribe_core::db::{Clip, ClipStatus, Db};
 use vodscribe_core::edits::{self, ItemState, Put};
+use vodscribe_core::settings::ClipEncoding;
 
 use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err};
@@ -42,6 +43,8 @@ pub(crate) struct CopiedFile {
     pub(crate) thumb: Option<PathBuf>,
     /// The clip's items when it was copied: the file is of these.
     pub(crate) items: Vec<ItemState>,
+    /// What the file was made with, if that's known.
+    pub(crate) encoding: Option<ClipEncoding>,
     /// The file as it was then: one changed or replaced since isn't copied.
     size: u64,
     modified: Option<SystemTime>,
@@ -112,6 +115,7 @@ fn held(app: &AppHandle, db: &Db, item: &Put) -> Result<Held> {
                 path,
                 thumb,
                 items: copied.state.items.clone(),
+                encoding: c.encoding,
                 size: meta.len(),
                 modified: meta.modified().ok(),
             })
@@ -234,10 +238,9 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         if now.items != file.items {
             return Ok(false);
         }
-        let name = file.path.file_name().context("a clip's file has a name")?;
-        let dir = file.path.parent().unwrap_or(Path::new("."));
+        let ext = file.path.extension().and_then(|e| e.to_str()).context("a clip's file has an extension")?;
         let whole = edits::cut_whole(&db.edit_pieces(id)?);
-        (vodscribe_core::clips::unique_path(dir, &name.to_string_lossy()), whole, clip)
+        (state.paths.clip_file(id, ext), whole, clip)
     };
     crate::files::writing(&out);
     if let Err(e) = std::fs::copy(&file.path, &out) {
@@ -261,6 +264,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         return Ok(db.clip(id)?.is_none());
     }
     db.set_made_now(id)?;
+    db.set_made_as(id, file.encoding)?;
     if let Some(thumb) = &file.thumb
         && let Err(e) = std::fs::copy(thumb, crate::clips::thumb_path(app, id))
     {
@@ -278,13 +282,15 @@ mod tests {
     use super::*;
 
     fn library() -> (Db, i64) {
-        let db = Db::open(Path::new(":memory:")).unwrap();
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let info = vodscribe_core::fetch::VodInfo {
             platform: "youtube".into(),
             platform_id: "x".into(),
             url: "https://youtu.be/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,

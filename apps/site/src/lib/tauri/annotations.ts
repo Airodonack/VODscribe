@@ -5,7 +5,7 @@
 // Its chapters, highlights, cast and activity are kept here as the file has
 // them, and reach the app's components through the commands the app answers
 // for a VOD whose annotations it imported: list_marks (chapters and
-// highlights, as marks), vod_annotations (cast, activity and other points of view) and transcript
+// highlights, as marks), vod_annotations (cast, activity, other points of view and contexts) and transcript
 // (each line's speaker), in core.ts and backend.ts.
 
 import type { ChatLine, Vod } from "desktop/lib/api.ts";
@@ -22,6 +22,8 @@ export interface Annotated {
   cast: CastMember[];
   activity: Activity[];
   povs: Pov[];
+  /** What the VOD is part of ("nopixel"), for the streamer cards' sections. */
+  contexts: string[];
   /** Where a waveform published beside the annotations file would be, or null (a file dropped). */
   peaks: string | null;
 }
@@ -57,6 +59,7 @@ export function openAnnotations(
     cast: annotations.cast,
     activity: annotations.activity,
     povs: annotations.povs ?? [],
+    contexts: annotations.contexts ?? [],
     peaks,
   };
   return id;

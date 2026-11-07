@@ -15,6 +15,8 @@ test("the button says what's made and what's erased, counted", () => {
     summary([job("clip", 1, true), job("edit", 3), job("edit", 4), job("erase", 7, true), job("erase", 8)]),
     "Making 1 clip · Rendering 2 edits · Erasing 2 removed VODs",
   );
+  assert.equal(summary([job("receive", 1, true), job("clip", 1, true)]), "Making 1 clip · Receiving 1 file");
+  assert.equal(summary([job("receive", 1, true), job("receive", 2, true)]), "Receiving 2 files");
 });
 
 test("each job's line says what it's doing and how far, or that it waits", () => {
@@ -24,6 +26,8 @@ test("each job's line says what it's doing and how far, or that it waits", () =>
   assert.equal(jobLine(job("edit", 2, true, 1)), "Rendering · 100%");
   assert.equal(jobLine(job("erase", 5, true, 0.3)), "Erasing · 30%");
   assert.equal(jobLine(job("erase", 6)), "Waiting");
+  assert.equal(jobLine(job("receive", 1, true)), "Receiving…");
+  assert.equal(jobLine(job("receive", 1, true, 0.5)), "Receiving · 50%");
 });
 
 test("only the clips and edits waiting are dragged, and a drag shows at once", () => {

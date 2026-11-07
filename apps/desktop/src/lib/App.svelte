@@ -46,8 +46,9 @@
   import { undoRedo as undoRedoIn } from "./undo";
   import Toast from "./Toast.svelte";
   import AnnotationsOffer from "./AnnotationsOffer.svelte";
+  import ResolveNote from "./ResolveNote.svelte";
   import { offers } from "./offers.svelte";
-  import type { Doc } from "./api";
+  import type { Doc, Settings as SettingsValues } from "./api";
   import { nav, searching, type Search, type Step } from "./nav.svelte";
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
@@ -58,6 +59,7 @@
   import { isShort, shortMode } from "./shortMode.svelte";
   import { canEmbed } from "./embed";
   import { povLibrary } from "./castLink.svelte";
+  import StreamerCard from "./StreamerCard.svelte";
   import type { PaneRow } from "./annotationRows";
 
   // The website's VOD pages open straight onto their one VOD, without the
@@ -470,6 +472,15 @@
           if (vod) void offers.offer(vod, true);
         }),
       ),
+      // A file dropped with no path, received: the first of its drop opens,
+      // as a dropped file on disk does (the Adder); one that failed says so.
+      await events.received(
+        afterLoad((received) => {
+          if (received.kind === "open") return pick(received.vod);
+          const what = received.name ? `“${received.name}”` : "the dropped file";
+          toast.error(`Couldn't receive ${what}. ${received.why}`);
+        }),
+      ),
       await events.vodRemoved(
         afterLoad((id) => {
           nav.forget({ kind: "vod", id });
@@ -841,6 +852,15 @@
   // Edits show in the clip bar under the player (ClipStrip.svelte); one opened
   // there takes the main area, and a VOD picked (or played) takes it back.
   edits.start();
+  // Whether a rendered edit is current depends on how clips are made, so a
+  // change of that in Settings reads them again once it's saved.
+  const madeWith = (s: SettingsValues | null) => s && `${s.clip_format} ${s.clip_codec} ${s.clip_quality}`;
+  let editsMadeWith = madeWith(settings.value);
+  settings.onSaved((saved) => {
+    if (madeWith(saved) === editsMadeWith) return;
+    editsMadeWith = madeWith(saved);
+    edits.reread();
+  });
   $effect(() => {
     if (edits.openId !== null) selectedId = null;
   });
@@ -895,6 +915,7 @@
     <svelte:element
       this={DEMO ? "div" : "main"}
       class="main"
+      data-press-blurs-text
       class:alone
       bind:clientWidth={mainWidth}
       bind:clientHeight={mainHeight}
@@ -1080,6 +1101,8 @@
   </div>
   <Toast />
   <AnnotationsOffer />
+  <StreamerCard />
+  <ResolveNote />
 {/if}
 
 <style>

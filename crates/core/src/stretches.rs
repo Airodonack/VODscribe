@@ -61,12 +61,13 @@ pub enum Transcribed {
     All,
 }
 
-const STRETCH_COLUMNS: &str = "id, vod_id, start, end, status, progress, reached, error, model, audio";
+const STRETCH_COLUMNS: &str = "id, vod_id, start, end, status, progress, reached, error, model, audio_ext";
 
-fn stretch_from_row(r: &Row) -> rusqlite::Result<Stretch> {
+fn stretch_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Stretch> {
+    let (id, vod_id) = (r.get("id")?, r.get("vod_id")?);
     Ok(Stretch {
-        id: r.get("id")?,
-        vod_id: r.get("vod_id")?,
+        id,
+        vod_id,
         start: r.get("start")?,
         end: r.get("end")?,
         status: Status::parse(&r.get::<_, String>("status")?),
@@ -74,7 +75,8 @@ fn stretch_from_row(r: &Row) -> rusqlite::Result<Stretch> {
         reached: r.get("reached")?,
         error: r.get("error")?,
         model: r.get("model")?,
-        audio: r.get("audio")?,
+        audio: crate::db::ext_of(r.get("audio_ext")?)
+            .map(|ext| crate::db::shown(&files.source_section(vod_id, id, &ext))),
     })
 }
 
@@ -248,14 +250,14 @@ impl Db {
 
     pub fn stretch(&self, id: i64) -> Result<Option<Stretch>> {
         let sql = format!("SELECT {STRETCH_COLUMNS} FROM stretches WHERE id = ?1");
-        Ok(self.conn.query_row(&sql, [id], stretch_from_row).optional()?)
+        Ok(self.conn.query_row(&sql, [id], |r| stretch_from_row(r, &self.files)).optional()?)
     }
 
     /// VOD `vod_id`'s stretches, done and asked for, in time order.
     pub fn stretches(&self, vod_id: i64) -> Result<Vec<Stretch>> {
         let sql = format!("SELECT {STRETCH_COLUMNS} FROM stretches WHERE vod_id = ?1 ORDER BY start, id");
         let mut stmt = self.conn.prepare(&sql)?;
-        Ok(stmt.query_map([vod_id], stretch_from_row)?.collect::<rusqlite::Result<_>>()?)
+        Ok(stmt.query_map([vod_id], |r| stretch_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The ranges of VOD `vod_id` transcribed by a model this version no
@@ -275,7 +277,7 @@ impl Db {
     pub fn requests(&self, vod_id: i64) -> Result<Vec<Stretch>> {
         let sql = format!("SELECT {STRETCH_COLUMNS} FROM stretches WHERE vod_id = ?1 AND status != 'done' ORDER BY id");
         let mut stmt = self.conn.prepare(&sql)?;
-        Ok(stmt.query_map([vod_id], stretch_from_row)?.collect::<rusqlite::Result<_>>()?)
+        Ok(stmt.query_map([vod_id], |r| stretch_from_row(r, &self.files))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The first request asked for with `status`, of a VOD in the library's
@@ -286,14 +288,15 @@ impl Db {
             .conn
             .query_row(
                 "SELECT s.id FROM stretches s JOIN vod_order o ON o.vod_id = s.vod_id JOIN vods v ON v.id = s.vod_id
-                 WHERE s.status = ?1 AND (?2 = 0 OR v.source_path IS NOT NULL) ORDER BY s.id LIMIT 1",
+                 WHERE s.status = ?1 AND (?2 = 0 OR v.source_path IS NOT NULL OR v.received_ext IS NOT NULL)
+                 ORDER BY s.id LIMIT 1",
                 params![status.as_str(), local_only],
                 |r| r.get(0),
             )
             .optional()?;
         let Some(stretch) = id.map(|id| self.stretch(id)).transpose()?.flatten() else { return Ok(None) };
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE id = ?1");
-        let vod = self.conn.query_row(&sql, [stretch.vod_id], vod_from_row)?;
+        let vod = self.conn.query_row(&sql, [stretch.vod_id], |r| vod_from_row(r, &self.files))?;
         Ok(Some((vod, stretch)))
     }
 
@@ -317,8 +320,8 @@ impl Db {
     /// Requests waiting to transcribe go back to waiting to download.
     pub fn forget_downloads(&self) -> Result<()> {
         self.conn.execute_batch(
-            "UPDATE vods SET audio_path = NULL;
-             UPDATE stretches SET audio = NULL;
+            "UPDATE vods SET audio_ext = NULL, audio_path = NULL;
+             UPDATE stretches SET audio_ext = NULL, audio = NULL;
              UPDATE stretches SET status = 'queued', progress = 0 WHERE status = 'ready';",
         )?;
         Ok(())
@@ -343,8 +346,13 @@ impl Db {
         Ok(())
     }
 
+    /// Records request `id`'s section of audio, at `audio`
+    /// (`Paths::source_section`), or that it has none.
     pub fn set_stretch_audio(&self, id: i64, audio: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE stretches SET audio = ?2 WHERE id = ?1", params![id, audio])?;
+        let vod_id: i64 = self.conn.query_row("SELECT vod_id FROM stretches WHERE id = ?1", [id], |r| r.get(0))?;
+        let ext =
+            audio.map(|a| crate::db::built_ext(a, |ext| self.files.source_section(vod_id, id, ext))).transpose()?;
+        self.conn.execute("UPDATE stretches SET audio_ext = ?2, audio = ?3 WHERE id = ?1", params![id, ext, audio])?;
         Ok(())
     }
 
@@ -457,7 +465,7 @@ impl Db {
         self.atomically(|db| {
             let Some(stretch) = db.stretch(id)? else { return Ok(()) };
             db.conn.execute(
-                "UPDATE stretches SET status = 'done', progress = 1, error = NULL, audio = NULL WHERE id = ?1",
+                "UPDATE stretches SET status = 'done', progress = 1, error = NULL, audio_ext = NULL, audio = NULL WHERE id = ?1",
                 [id],
             )?;
             db.merge_done(stretch.vod_id, Some(id))
@@ -510,6 +518,8 @@ mod tests {
             url: format!("https://youtu.be/{id}"),
             title: id.into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration,
             thumbnail: None,
             published: None,

@@ -17,7 +17,7 @@
   import { keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, markFramesOf, transportKey } from "./playerKeys";
-  import { carry, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
+  import { carry, dragEditOut, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
   import { drivePlayer } from "./drivePlayer.svelte";
   import { latest } from "./latest";
   import { pressToDrag } from "./pressToDrag";
@@ -176,15 +176,10 @@
       gone = true;
     };
   });
-  // How far the section downloading of each VOD can be used already.
-  const usable = (vodId: number) => {
-    const f = edits.fetching.get(vodId);
-    return f ? (f.usable ?? f.from + f.progress * (f.to - f.from) - 1) : null;
-  };
   // How many tens of seconds of the sections downloading are in: each ten
   // more, the edit is planned again, so the player plays further into them.
   const reached = $derived(
-    (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, usable(vodId) ?? 0) / 10), 0),
+    (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, edits.usable(vodId) ?? 0) / 10), 0),
   );
   const EMPTY =
     `Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or ${os === "mac" ? "Option" : "Alt"}-drag a ` +
@@ -641,7 +636,7 @@
       const s = segments.find((x) => x.piece.id === seg.piece_id && x.at <= seg.at + 1e-6 && seg.at < x.at + x.length);
       const vodFrom = s ? s.vodFrom + (seg.at - s.at) : 0;
       const f = s && edits.fetching.get(s.piece.vod_id);
-      const upTo = s && usable(s.piece.vod_id);
+      const upTo = s && edits.usable(s.piece.vod_id);
       let done = 0;
       if (s && f && upTo != null && f.from <= vodFrom + 1e-3 && f.to >= vodFrom + seg.length - 1e-3)
         done = Math.max(0, Math.min(seg.length, upTo - vodFrom));
@@ -821,7 +816,7 @@
 
   // The rendered video, carried out of the window into an editor or a folder.
   function onOutDrag() {
-    if (edit) api.dragEdit(edit.id).catch((err) => (edits.error = String(err)));
+    if (edit) void dragEditOut(edit);
   }
 
   /** Delete edit: asked as from its row (actions.ts). */
@@ -915,9 +910,7 @@
           class="make"
           onclick={() => edits.render(edit.id)}
           disabled={!segments.length}
-          title="{again
-            ? 'Render the edit again'
-            : 'Render the edit'} into one video, in Videos/VODscribe/Edits{labelOf('edit.render')
+          title="{again ? 'Render the edit again' : 'Render the edit'} into one video{labelOf('edit.render')
             ? ` (${labelOf('edit.render')}: export)`
             : ''}"
         >
@@ -1053,7 +1046,8 @@
 {/snippet}
 
 {#snippet sourceLinks()}
-  {#each sources as source (source.vodId)}
+  <!-- A clip of a VOD's clip bar has its way back to that VOD (editBelow) in place of a link to it. -->
+  {#each sources.filter((s) => !(bar?.kind === "vod" && s.vodId === bar.id)) as source (source.vodId)}
     <button
       class="source"
       onclick={() => {
@@ -1082,7 +1076,7 @@
   {#if snippet}
     <div class="sources" aria-label="Where it comes from">
       {#if bar}
-        <button class="back" onclick={backToBar} title="Back to “{bar.title}”, this clip picked on its clip bar">
+        <button class="source back" onclick={backToBar} title="Back to “{bar.title}”, this clip picked on its clip bar">
           <span class="arrow" aria-hidden="true">‹</span>
           <span class="name">Back to {bar.title}</span>
           <span class="what muted">· clip bar</span>
@@ -1184,7 +1178,7 @@
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
-    /* Capped by a width, not max-height: macOS 12's WebKit (17.6) turned
+    /* Capped by a width, not max-height: an older WebKit (macOS 12's) turned
        max-height and aspect-ratio together into a max-width, and the box
        shrank to the left. */
     max-width: calc(var(--player-max-height, 44vh) * 16 / 9);
@@ -1260,8 +1254,11 @@
     gap: 6px;
     min-height: 40px;
     padding: 6px 16px;
+    /* The page's own scrollbar (app.css), below the links, as on a clip bar
+       (ClipStrip.svelte): scrollbar-width: thin makes WebKitGTK draw an
+       overlay whose hit area covers the row's lower half, so a click on a
+       link's middle reaches the row instead. */
     overflow-x: auto;
-    scrollbar-width: thin;
   }
 
   .source {
@@ -1302,23 +1299,11 @@
     border-style: solid;
   }
 
-  /* Back to the clip bar a clip open here is on: grey as a clip's pill
-     (ClipStrip.svelte's .chip), dashed as a control rather than a link. */
+  /* Back to the clip bar a clip open here is on: a link back as the others
+     are, and the only one to its VOD, the clip picked there. */
   .back {
-    flex: none;
-    display: flex;
-    align-items: center;
     gap: 4px;
     max-width: 320px;
-    height: 28px;
-    padding: 0 10px;
-    border: 1px dashed var(--border);
-    border-radius: 14px;
-    background: var(--surface-2);
-    color: var(--text);
-    font-size: 12px;
-    overflow: hidden;
-    cursor: pointer;
   }
 
   .back .arrow {
@@ -1336,10 +1321,6 @@
 
   .back .what {
     flex: none;
-  }
-
-  .back:hover {
-    border-style: solid;
   }
 
   .make :global(svg) {

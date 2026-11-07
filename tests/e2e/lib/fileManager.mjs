@@ -6,13 +6,13 @@
 // that takes finished files only (`openFinishedOnly`), in the same place.
 // On macOS, Finder (in icon view, so a drop lands in the folder shown, not
 // in the one selected in column view), and the finished-files-only app is
-// one built with swiftc. Linux (X11) and macOS, so far. And what those
+// one built with swiftc, as is one that gives a file as a promise only
+// (`openPromiseGiver`, for drop-virtual). Linux (X11) and macOS, so far. And what those
 // scenarios share: the clip format
 // picked, the length of a file dropped, the app's windows (the system's drag
 // shows its picture in one of its own).
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { release } from "node:os";
 import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -101,10 +101,10 @@ export async function openFileManager(app, ctx, dest, home) {
  * `program` run with its `args`, `env` over the test's environment and its
  * output to `stdio`, its window (titled to match `title`) put beside the
  * app's (moved to the screen's left edge if that makes room; skipped,
- * through `ctx`, where the screen has none): where to drop on it, and
- * `close`.
+ * through `ctx`, where the screen has none): where to drop on it, its
+ * window (`win`, X11's id), and `close`.
  */
-async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
+export async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
   let page = await os.windowRect(app);
   const [screenW] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" }).trim().split(" ").map(Number);
   const fm = { w: 600, h: 500 };
@@ -133,8 +133,9 @@ async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
       `no room for a file manager beside the window (screen ${screenW} px wide, the window ${page.x} to ${page.x + page.w})`,
     );
   const proc = spawn(program, args, { env: { ...process.env, ...env }, stdio });
+  let win;
   try {
-    const win = await until(
+    win = await until(
       `${program}'s window`,
       () => {
         try {
@@ -157,6 +158,7 @@ async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
   }
   return {
     drop: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
+    win,
     close: () => proc.kill(),
   };
 }
@@ -189,14 +191,15 @@ export function noFinishedOnly() {
 
 /** An app that takes finished files only, as Qt's apps do (Kdenlive, say): let
  *  go on, it asks for the drop's files, takes those already there, and gives
- *  up after 5 s. Its windows' class is "Clip-taker". */
+ *  up after 5 s. Its windows' class is "Clip-taker", or its first argument's,
+ *  capitalised ("resolve": "Resolve"). */
 const FINISHED_ONLY = `
 import os, sys, time
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import GLib
-GLib.set_prgname("clip-taker")  # its windows' class, set before GTK starts
+GLib.set_prgname(sys.argv[1] if len(sys.argv) > 1 else "clip-taker")  # its windows' class, set before GTK starts
 from gi.repository import Gdk, Gtk
 
 def say(what):
@@ -242,9 +245,10 @@ Gtk.main()
  * The app that takes finished files only (`FINISHED_ONLY`), its script and
  * what it says in folder `work`, beside the app's window: where to drop on
  * it, what it has said so far (`said`, its lines), and `close`. On macOS,
- * with `refuses`, it refuses every drag instead.
+ * with `refuses`, it refuses every drag instead. On Linux, its windows'
+ * class is `name`'s (DaVinci Resolve's is "resolve").
  */
-export async function openFinishedOnly(app, ctx, work, { refuses = false } = {}) {
+export async function openFinishedOnly(app, ctx, work, { refuses = false, name = "clip-taker" } = {}) {
   mkdirSync(work, { recursive: true });
   if (process.platform === "darwin") return openFinishedOnlyMac(app, ctx, work, refuses);
   const script = path.join(work, "finished-only.py");
@@ -253,7 +257,7 @@ export async function openFinishedOnly(app, ctx, work, { refuses = false } = {})
   writeFileSync(log, "");
   const out = openSync(log, "a");
   try {
-    const opened = await openBeside(app, ctx, [PYTHON, script], {}, "^finished-only$", ["ignore", out, out]);
+    const opened = await openBeside(app, ctx, [PYTHON, script, name], {}, "^finished-only$", ["ignore", out, out]);
     return { ...opened, said: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
   } finally {
     closeSync(out);
@@ -299,20 +303,52 @@ export function probeDuration(file) {
   return Number(h) * 3600 + Number(m) * 60 + Number(s);
 }
 
-/** Clips made as `format` ("MP4" or "MOV"), chosen in Settings. */
+/** The codec each choice of Settings' clip format makes (crates/core `ClipCodec`). */
+const CODECS = { "MP4 H.264": "h264", "MP4 H.265": "h265", "MOV DNxHR": "dnxhr", "MOV ProRes": "prores" };
+
+/**
+ * Clips made as `format`, chosen in Settings: a choice as it reads there
+ * ("MOV ProRes"), or "MP4" or "MOV" alone for that file's first codec,
+ * H.264 or DNxHR.
+ */
 export async function setFormat(app, format) {
-  await app.openSettings("Storage");
-  await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Clip format"]')`), MINUTE);
+  const label = Object.keys(CODECS).find((l) => l === format || l.startsWith(`${format} `));
+  if (!label) throw new Error(`no clip format ${format}`);
+  await choose(app, "Clip format", label, (s) => s.clip_codec === CODECS[label]);
+}
+
+/** Clips made at `quality` ("Proxy", "Standard" or "High"), chosen in Settings. */
+export async function setQuality(app, quality) {
+  await choose(app, "Clip quality", quality, (s) => s.clip_quality === quality.toLowerCase());
+}
+
+/** Picks `option` in Settings' radio group `group` (Encoding), once `saved(settings)` says it's saved. */
+async function choose(app, group, option, saved) {
+  await app.openSettings("Encoding");
+  const buttons = `[role="radiogroup"][aria-label="${group}"] button`;
+  await until(group, () => app.js(`return !!document.querySelector(arguments[0])`, buttons), MINUTE);
   await app.js(
-    `[...document.querySelectorAll('[role="radiogroup"][aria-label="Clip format"] button')].find((b) => b.textContent.trim() === arguments[0]).click()`,
-    format,
+    `const b = [...document.querySelectorAll(arguments[0])].find((b) => b.textContent.trim() === arguments[1]);
+     if (!b) throw new Error("no " + arguments[1]);
+     b.click();`,
+    buttons,
+    option,
   );
-  await until(
-    `${format} chosen`,
-    async () => (await app.invoke("get_settings")).clip_format === format.toLowerCase(),
-    10_000,
-  );
+  await until(`${option} chosen`, async () => saved(await app.invoke("get_settings")), 10_000);
   await app.key("Escape");
+}
+
+/**
+ * A video file's picture as ffmpeg reads it (the cells have no ffprobe):
+ * its codec, profile, tag and pixel format, as in "hevc (Main) (hvc1 /
+ * 0x31637668), yuv420p(tv, …)".
+ */
+export function probeVideo(file) {
+  const said = spawnSync(ffmpeg(), ["-hide_banner", "-i", file], { encoding: "utf8" }).stderr ?? "";
+  const [, codec, profile, tag, pixels] =
+    said.match(/Video: (\w+) \(([^)]+)\) \((\w+) \/ 0x[0-9a-fA-F]+\), (\w+)/) ?? [];
+  if (!codec) throw new Error(`no picture in ${file}: ${said.trim().split("\n").at(-1)}`);
+  return { codec, profile, tag, pixels };
 }
 
 /** Runs JXA `script`, its last value read as JSON. */
@@ -369,25 +405,34 @@ function placeMac(owner, fm) {
     JSON.stringify(front(${at}).kCGWindowBounds)`);
 }
 
-/** On macOS, the app in front before a press that must reach it (`focusMac`); elsewhere nothing. */
+/** On macOS, the app in front before a press that must reach it (`os.toFront`); elsewhere nothing. */
 export async function frontmost(app) {
-  if (process.platform === "darwin") await focusMac(app);
+  if (process.platform === "darwin") await os.toFront(app);
 }
 
 /**
- * The app in front again, by a click on its title bar (an app can't bring
- * another to the front from a script any more), and a moment for it: a
- * press right after the click that brought it there goes nowhere. Always:
- * the page can say it has the focus while its window isn't in front.
+ * The top-left corner of the first icon (by place: top row, then left) in
+ * the Finder window at `at` (its CoreGraphics bounds), read from Finder's
+ * accessibility tree, not from a layout that differs between versions (the
+ * sidebar is about 40 px narrower on macOS 12, and may be on others).
  */
-async function focusMac(app) {
-  const page = await os.windowRect(app);
-  os.click(page.x + Math.round(page.w / 2), page.y - 14);
-  await sleep(1500);
+function finderIcon(at) {
+  return jxa(`ObjC.import("ApplicationServices"); ${MAC_WINDOWS}
+    const attr = (el, name) => { const r = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), r) === 0 ? ObjC.castRefToObject(r[0]) : null; };
+    const text = (el, name) => attr(el, name)?.description.js ?? "";
+    const kids = (el) => attr(el, "AXChildren")?.js ?? [];
+    const point = (el) => { const m = /x:(-?[\\d.]+) y:(-?[\\d.]+)/.exec(text(el, "AXPosition")); return m && { x: +m[1], y: +m[2] }; };
+    const app = $.AXUIElementCreateApplication(front("Finder").kCGWindowOwnerPID);
+    const win = kids(app).find((w) => { const p = point(w); return p && Math.abs(p.x - ${at.X}) < 2 && Math.abs(p.y - ${at.Y}) < 2; });
+    const icons = [];
+    const walk = (el, depth) => { if (depth > 8) return; for (const k of kids(el)) {
+      const role = text(k, "AXRole");
+      if (role === "AXImage") { const p = point(k); if (p) icons.push(p); }
+      else if (role !== "AXToolbar" && role !== "AXOutline") walk(k, depth + 1); } };
+    if (win) walk(win, 0);
+    icons.sort((a, b) => a.y - b.y || a.x - b.x);
+    JSON.stringify(icons[0] ?? null)`);
 }
-
-/** macOS 12 (Darwin 21) or older, whose Finder lays out its window differently. */
-const MONTEREY = process.platform === "darwin" && Number(release().split(".")[0]) <= 21;
 
 /** Finder on folder `dest`, in icon view, beside the app's window: where to drop on it, and `close`. */
 async function openFinder(app, ctx, dest) {
@@ -411,20 +456,23 @@ async function openFinder(app, ctx, dest) {
   // where it was let go.
   jxa(`${MAC_WINDOWS} command(18); $.usleep(300000); command(18, 0x40000); "true"`);
   await sleep(500);
-  await focusMac(app);
+  await os.toFront(app);
   return {
     // (Right of its sidebar.)
     drop: { x: Math.round(at.X + at.Width * 0.65), y: Math.round(at.Y + at.Height * 0.6) },
     window: at,
     // The cancel button of the file in the first place (arranged by name):
-    // at its icon's top-left corner, right of the sidebar, below the toolbar.
-    // macOS 12's Finder (Darwin 21) has a narrower sidebar: 41 px further left.
-    cancelAt: () => ({ x: Math.round(at.X + (MONTEREY ? 181 : 222)), y: Math.round(at.Y + 76) }),
+    // at its icon's top-left corner, a little in, where the document's page begins.
+    cancelAt: () => {
+      const icon = finderIcon(at);
+      if (!icon) throw new Error(`no icon in Finder's window at ${at.X},${at.Y}`);
+      return { x: Math.round(icon.x + 3), y: Math.round(icon.y + 10) };
+    },
     // Its title bar clicked (Finder in front), then Cmd+W.
     close: () => {
       jxa(`${MAC_WINDOWS} const b = front("Finder").kCGWindowBounds; mouse(5, b.X + b.Width / 2, b.Y + 12); $.usleep(100000);
         mouse(1, b.X + b.Width / 2, b.Y + 12); mouse(2, b.X + b.Width / 2, b.Y + 12); $.usleep(300000); command(13); "true"`);
-      return focusMac(app);
+      return os.toFront(app);
     },
   };
 }
@@ -484,13 +532,98 @@ async function openFinishedOnlyMac(app, ctx, work, refuses) {
   try {
     await until("its window", () => said().some((l) => l.endsWith(" ready")), MINUTE);
     await sleep(1000);
-    await focusMac(app);
+    await os.toFront(app);
   } catch (e) {
     proc.kill();
     throw e;
   }
   return {
     drop: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
+    said,
+    close: () => proc.kill(),
+  };
+}
+
+/** An app that gives a file as a promise only, on macOS: a window that, pressed and dragged from, drags file FILE as an
+ *  NSFilePromiseProvider named NAME, written (copied) where the receiver asks once it's let go, after DELAY seconds. */
+const PROMISE_GIVER_MAC = `
+import AppKit
+func say(_ s: String) { print(String(format: "%.3f ", Date().timeIntervalSince1970) + s); fflush(stdout) }
+let env = ProcessInfo.processInfo.environment
+let file = URL(fileURLWithPath: env["FILE"]!)
+let name = env["NAME"] ?? file.lastPathComponent
+let delay = Double(env["DELAY"] ?? "0")!
+final class Giver: NSView, NSFilePromiseProviderDelegate, NSDraggingSource {
+    let queue = OperationQueue()
+    var dragging = false
+    override func draw(_ r: NSRect) { NSColor.systemTeal.setFill(); r.fill() }
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+    override func mouseDown(with e: NSEvent) { dragging = false }
+    override func mouseDragged(with e: NSEvent) {
+        if dragging { return }
+        dragging = true
+        let p = convert(e.locationInWindow, from: nil)
+        let item = NSDraggingItem(pasteboardWriter: NSFilePromiseProvider(fileType: "public.mpeg-4", delegate: self))
+        item.setDraggingFrame(NSRect(x: p.x - 32, y: p.y - 32, width: 64, height: 64), contents: NSWorkspace.shared.icon(forFile: file.path))
+        say("drag begins")
+        beginDraggingSession(with: [item], event: e, source: self)
+    }
+    func draggingSession(_ s: NSDraggingSession, sourceOperationMaskFor c: NSDraggingContext) -> NSDragOperation { .copy }
+    func draggingSession(_ s: NSDraggingSession, endedAt p: NSPoint, operation: NSDragOperation) { say("ended with operation \\(operation.rawValue)") }
+    func filePromiseProvider(_ p: NSFilePromiseProvider, fileNameForType t: String) -> String { say("named \\(name)"); return name }
+    func filePromiseProvider(_ p: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
+        say("asked for \\(url.path)")
+        Thread.sleep(forTimeInterval: delay)
+        do { try FileManager.default.copyItem(at: file, to: url); say("written"); completionHandler(nil) }
+        catch { say("failed: \\(error)"); completionHandler(error) }
+    }
+    func operationQueue(for p: NSFilePromiseProvider) -> OperationQueue { queue }
+}
+let pos = (env["POS"] ?? "700 100 400 300").split(separator: " ").map { Double($0)! }
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+let screen = NSScreen.main!.frame
+let win = NSWindow(contentRect: NSRect(x: pos[0], y: screen.height - pos[1] - pos[3], width: pos[2], height: pos[3]), styleMask: [.titled], backing: .buffered, defer: false)
+win.title = "promise-giver"
+win.contentView = Giver(frame: NSRect(x: 0, y: 0, width: pos[2], height: pos[3]))
+win.makeKeyAndOrderFront(nil)
+say("ready")
+app.run()
+`;
+
+/**
+ * On macOS, the app that gives `file` as a file promise only, named `name`
+ * (`PROMISE_GIVER_MAC`), built and run in folder `work`, beside the app's
+ * window: where to press to drag from it (`from`), what it has said so far
+ * (`said`, its lines), and `close`. It writes the file `delay` seconds after
+ * it's asked for.
+ */
+export async function openPromiseGiver(app, ctx, work, file, name, { delay = 1 } = {}) {
+  if (process.platform !== "darwin") throw new Error("the promise giver is macOS's");
+  mkdirSync(work, { recursive: true });
+  const fm = await besideMac(app, ctx);
+  const source = path.join(work, "promise-giver.swift");
+  writeFileSync(source, PROMISE_GIVER_MAC);
+  const program = path.join(work, "Promise Giver");
+  execFileSync("swiftc", ["-O", source, "-o", program], { stdio: "ignore" });
+  const log = path.join(work, "promise-giver.log");
+  writeFileSync(log, "");
+  const out = openSync(log, "a");
+  const proc = spawn(program, [], {
+    env: { ...process.env, FILE: file, NAME: name, DELAY: String(delay), POS: `${fm.x} ${fm.y} ${fm.w} ${fm.h}` },
+    stdio: ["ignore", out, out],
+  });
+  closeSync(out);
+  const said = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
+  try {
+    await until("its window", () => said().some((l) => l.endsWith(" ready")), MINUTE);
+    await sleep(1000);
+  } catch (e) {
+    proc.kill();
+    throw e;
+  }
+  return {
+    from: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
     said,
     close: () => proc.kill(),
   };

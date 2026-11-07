@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { CODEC_NAMES, QUALITY_NAMES } from "./dragout";
   // Settings, a section at a time; which one is shown, and the list of them,
   // are settingsWindow.svelte.ts's, so a section can be opened from elsewhere.
   import Controls from "./Controls.svelte";
@@ -6,13 +7,22 @@
   import { settings as appSettings } from "./appSettings.svelte";
   import { onDestroy, onMount } from "svelte";
   import { ask } from "./ask";
-  import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
+  import {
+    api,
+    events,
+    type ClipCodec,
+    type ClipQuality,
+    type Device,
+    type DownloadProgress,
+    type GpuStatus,
+    type UnlistenFn,
+  } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
   import { LICENSES, PRIVACY, SUPPORT } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, os, videoSize } from "./platform";
-  import { shows } from "./asks";
+  import { foundVodscription, shows } from "./asks";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
   import { SECTIONS, settingsWindow } from "./settingsWindow.svelte";
@@ -29,12 +39,53 @@
   let cacheBytes = $state<number | null>(null);
   let mediaBytes = $state<number | null>(null);
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
-  let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
+  let clipCodec = $derived<ClipCodec>(appSettings.value?.clip_codec ?? "h264");
+  let clipQuality = $derived<ClipQuality>(appSettings.value?.clip_quality ?? "standard");
+  /** The clip codecs offered, each with the file it goes in (crates/core `ClipCodec::format`) and its help line. */
+  const CODECS = [
+    {
+      id: "h264",
+      format: "mp4",
+      label: CODEC_NAMES.h264,
+      hint: "Small files that nearly every video editor and player opens.",
+    },
+    {
+      id: "h265",
+      format: "mp4",
+      label: CODEC_NAMES.h265,
+      hint: "Smaller files, but some editors and Windows players cannot open them.",
+    },
+    {
+      id: "dnxhr",
+      format: "mov",
+      label: CODEC_NAMES.dnxhr,
+      hint: "Large files that scrub smoothly in DaVinci Resolve and Premiere.",
+    },
+    {
+      id: "prores",
+      format: "mov",
+      label: CODEC_NAMES.prores,
+      hint: "Large files that scrub smoothly in Final Cut and other Apple editors.",
+    },
+  ] as const;
+  const QUALITIES = [
+    { id: "proxy", label: QUALITY_NAMES.proxy },
+    { id: "standard", label: QUALITY_NAMES.standard },
+    { id: "high", label: QUALITY_NAMES.high },
+  ] as const;
   let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
   let loadCastPictures = $derived(appSettings.value?.load_cast_pictures ?? true);
   // The notes that can be stopped (asks.ts): each switch on while its note shows.
   let askBeforeDownloading = $derived(shows(appSettings.value, "ask_before_downloading"));
   let suggestMov = $derived(shows(appSettings.value, "suggest_mov_for_resolve"));
+  // What's done with a VODscription found after an add (asks.ts); the offer's
+  // "Don't ask again" picks Use it or Don't use it.
+  let foundVodscriptionIs = $derived(foundVodscription(appSettings.value));
+  const FOUND = [
+    { id: "ask", label: "Ask" },
+    { id: "always", label: "Use it" },
+    { id: "never", label: "Don't use it" },
+  ] as const;
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -360,25 +411,38 @@
         <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
           {clearingFootage ? "Deleting…" : "Delete fetched video"}
         </button>
+      </section>
+    {:else if settingsWindow.section === "encoding"}
+      <section>
+        <span class="eyebrow">Encoding</span>
         <p class="label">Clips and edits are made as</p>
         <div class="segmented" role="radiogroup" aria-label="Clip format">
-          {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}
+          {#each CODECS as c (c.id)}
             <button
               role="radio"
-              aria-checked={clipFormat === format}
-              class:on={clipFormat === format}
-              onclick={() => appSettings.update({ clip_format: format })}
+              aria-checked={clipCodec === c.id}
+              class:on={clipCodec === c.id}
+              onclick={() => appSettings.update({ clip_codec: c.id, clip_format: c.format })}
             >
-              {name}
+              {c.label}
             </button>
           {/each}
         </div>
-        <p class="muted hint">
-          {clipFormat === "mp4"
-            ? "H.264 and AAC: small, and read by nearly every video editor."
-            : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
-          Clips already made are made again when next dragged out.
-        </p>
+        <p class="muted hint">{CODECS.find((c) => c.id === clipCodec)?.hint}</p>
+        <p class="label">Quality</p>
+        <div class="segmented" role="radiogroup" aria-label="Clip quality">
+          {#each QUALITIES as q (q.id)}
+            <button
+              role="radio"
+              aria-checked={clipQuality === q.id}
+              class:on={clipQuality === q.id}
+              onclick={() => appSettings.update({ clip_quality: q.id })}
+            >
+              {q.label}
+            </button>
+          {/each}
+        </div>
+        <p class="muted hint">A clip or edit made in another format or quality is made again when next dragged out.</p>
         {#if os === "linux"}
           <label class="toggle">
             <input
@@ -386,9 +450,9 @@
               checked={suggestMov}
               onchange={(e) => appSettings.update({ suggest_mov_for_resolve: e.currentTarget.checked })}
             />
-            Suggest MOV for DaVinci Resolve
+            Ask about MOV when dropping on Resolve
           </label>
-          <p class="muted hint">Once, after a clip is dragged out, if Resolve is installed and clips are MP4.</p>
+          <p class="muted hint">Resolve on Linux can't open MP4 clips.</p>
         {/if}
       </section>
     {:else if settingsWindow.section === "updates"}
@@ -442,6 +506,20 @@
           Enable VODscription annotations for VODs
         </label>
         <p class="muted hint">It sends a VOD's site and its id on that site, nothing else.</p>
+        <p class="label apart">When a VODscription is found</p>
+        <div class="segmented" role="radiogroup" aria-label="When a VODscription is found">
+          {#each FOUND as f (f.id)}
+            <button
+              role="radio"
+              aria-checked={foundVodscriptionIs === f.id}
+              class:on={foundVodscriptionIs === f.id}
+              onclick={() => appSettings.update({ use_vodscription: f.id })}
+            >
+              {f.label}
+            </button>
+          {/each}
+        </div>
+        <p class="muted hint">After you add or refresh a VOD. Its gift button always offers it.</p>
         <label class="toggle">
           <input
             type="checkbox"
@@ -680,7 +758,12 @@
     font-size: 13px;
   }
 
-  /* A row of choices, the chosen one filled (theme, video quality, clip format). */
+  /* A label among the switches: as far from the one above as a switch is. */
+  .label.apart {
+    margin-top: 12px;
+  }
+
+  /* A row of choices, the chosen one filled (theme, video quality, clip format and quality, a VODscription found). */
   .segmented {
     display: inline-flex;
     margin-bottom: 12px;

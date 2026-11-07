@@ -108,11 +108,13 @@ const APT = (image) => ({
   pm: "apt",
   // The WebDriver package was renamed in Ubuntu 26.04 (webkitgtk-webdriver).
   // Nautilus, for the scenarios that drop a clip on a file manager (about 50
-  // to 60 s more to install); file, to name the binary a crash's core is from.
+  // to 60 s more to install); File Roller, for drop-virtual to drag a video
+  // out of a zip (before 43 it can: Ubuntu 22.04's); file, to name the
+  // binary a crash's core is from.
   install:
     `export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && ` +
     `driver=$(apt-cache policy webkit2gtk-driver | grep -q "Candidate: [0-9]" && echo webkit2gtk-driver || echo webkitgtk-webdriver) && ` +
-    `apt-get install -y -qq /pkg/app.deb $driver xvfb xauth openbox xdotool dbus procps nautilus file $EXTRA >/dev/null`,
+    `apt-get install -y -qq /pkg/app.deb $driver xvfb xauth openbox xdotool dbus procps nautilus file-roller file $EXTRA >/dev/null`,
 });
 const DNF = (image) => ({
   image,

@@ -5,8 +5,8 @@
 // file is made again, a second long; undone (Ctrl+Z), it's two seconds
 // again, made again too. Split in two and so rendered as an edit, a chapter
 // added in it, renamed and moved makes it again each time. Its head names
-// the VOD before it, and the way back under its player opens the VOD, its
-// pill picked there. Deleted from the clip bar and undone, it comes back
+// the VOD before it, and the way back under its player, the one link there
+// to the VOD, opens it, its pill picked there. Deleted from the clip bar and undone, it comes back
 // whole: both pieces and its chapter, made again. Opened again and deleted
 // while it's open, the editor closes.
 
@@ -19,7 +19,7 @@ export default {
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "clip-open":
-      "A clip is open in the editor: at the top, the VOD's name in grey, a › and the clip's name, on one line, with no Render button; under its player and timeline, on one row, a grey pill with a dashed border reading ‹ Back to the VOD's name · clip bar, then a dashed link to the same VOD.",
+      "A clip is open in the editor: at the top, the VOD's name in grey, a › and the clip's name, on one line, with no Render button; under its player and timeline, one pill alone, tinted with a dashed coloured border, reading ‹ Back to the VOD's name · clip bar; no other link to the VOD.",
   },
   async run(app, { fixtures, log, checkpoint }) {
     await app.toLibrary();
@@ -142,6 +142,11 @@ export default {
     const crumb = await app.js(`return document.querySelector("section.edit-view .head .crumb")?.textContent.trim()`);
     if (crumb !== title) throw new Error(`the clip's head says "${crumb}" before its name, not "${title}"`);
     await checkpoint("clip-open");
+    const links = await app.js(
+      `return [...document.querySelectorAll("section.edit-view .sources button")].map((b) => b.textContent.replace(/\\s+/g, " ").trim())`,
+    );
+    if (links.join(" | ") !== `‹ Back to ${title} · clip bar`)
+      throw new Error(`under the clip's player, the links are ${JSON.stringify(links)}`);
     await app.click("section.edit-view .sources button.back");
     await until(
       "the VOD back, the clip's pill picked",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-streamer-card"
+description = "Enables the streamer_card command without any pre-configured scope."
+commands.allow = ["streamer_card"]
+
+[[permission]]
+identifier = "deny-streamer-card"
+description = "Denies the streamer_card command without any pre-configured scope."
+commands.deny = ["streamer_card"]

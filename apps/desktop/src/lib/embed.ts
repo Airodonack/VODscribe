@@ -15,6 +15,7 @@ import { ownPlayer } from "./ownPlayer.svelte";
 import { cueAt, elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { OwnStatus } from "./ownStatus";
+import { HeldMute } from "./heldMute";
 import { settling } from "./settle";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
@@ -58,6 +59,9 @@ export interface EmbeddedPlayer {
    *  doesn't, the player's panel shows them in a strip under the player,
    *  never over a site's (Player.svelte). */
   drawsCaptions?(): boolean;
+  /** Told whether the app's captions show in the strip under it, where it
+   *  has captions of its own to turn off meanwhile (YouTube's). */
+  stripCaptions?(on: boolean): void;
   destroy(): void;
 }
 
@@ -145,6 +149,8 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
         time,
         (at, playing) => {
           plain = true;
+          // The reloaded player loads its captions module again.
+          captionsLoaded = captionsOff = false;
           params.set("start", String(Math.floor(at)));
           params.set("autoplay", playing ? "1" : "0");
           reloadPlain(frame, embedUrl());
@@ -161,7 +167,18 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
   const post = (message: object) =>
     frame.contentWindow?.postMessage(JSON.stringify({ ...message, id: 1, channel: "widget" }), YOUTUBE);
   const command = (func: string, args: unknown[] = []) => post({ event: "command", func, args });
+  // Whether their captions module has loaded, and whether it was turned
+  // off since (or since ours last came on).
+  let captionsLoaded = false;
   let captionsOff = false;
+  // Whether ours show in the strip under their plain player (Player.svelte).
+  let inStrip = false;
+  const theirsOff = () => {
+    if (captionsOff || !captionsLoaded) return;
+    captionsOff = true;
+    command("setOption", ["captions", "track", {}]);
+    command("unloadModule", ["captions"]);
+  };
 
   return connect(
     frame,
@@ -205,14 +222,14 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
       }
       if (data.event === "onAdStart") bridged?.adStarted();
       if (data.event === "onAdEnd") bridged?.adEnded();
-      // Our captions show over our picture (bridge), so theirs are turned
-      // off, through their player's own API, once, when it says its captions
-      // module has loaded (apiInfoDelivery naming it). Turned on again in
-      // their player, they stay.
-      if (data.event === "apiInfoDelivery" && data.info?.namespaces?.includes("captions") && !captionsOff && !plain) {
-        captionsOff = true;
-        command("setOption", ["captions", "track", {}]);
-        command("unloadModule", ["captions"]);
+      // Where ours show, over our picture (bridge) or in the strip under
+      // their plain player, theirs are turned off, through their player's
+      // own API, once, when it says its captions module has loaded
+      // (apiInfoDelivery naming it), so captions show once. Turned on again
+      // in their player, they stay; with ours off, theirs are left alone.
+      if (data.event === "apiInfoDelivery" && data.info?.namespaces?.includes("captions")) {
+        captionsLoaded = true;
+        if (!plain || inStrip) theirsOff();
       }
       return data.event === "onReady" || data.event === "initialDelivery";
     },
@@ -252,6 +269,13 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
         },
       },
       drawsCaptions: () => bridged?.drawing() ?? false,
+      stripCaptions(on) {
+        if (on === inStrip) return;
+        inStrip = on;
+        // Ours on again: theirs, turned on meanwhile, go off again.
+        if (!on) captionsOff = false;
+        else if (plain) theirsOff();
+      },
       destroy: () => {
         bridged?.stop();
         cleanup();
@@ -362,9 +386,12 @@ async function twitch(
   clock.asked(time, play);
   // Its sound as it last said (their own controls set it too), or as last
   // set in any player till it says (`remembered`); it has no speed to set.
-  const sound = { volume: prefs.volume() ?? 1, muted: false };
+  const sound = { volume: prefs.volume() ?? 1 };
   // Whether the volume last set has been told to it, once it's ready.
   let told = false;
+  // Its mute: one set before it's ready (on the bar before Play) is sent
+  // again once it is, as it takes none till then (heldMute.ts).
+  const mute = new HeldMute();
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
   let resumeAt: number | null = null;
   const command = (eventName: number, params: unknown = null) =>
@@ -382,7 +409,7 @@ async function twitch(
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         const playback = data.params?.playback;
         if (typeof data.params?.volume === "number") sound.volume = data.params.volume;
-        if (typeof data.params?.muted === "boolean") sound.muted = data.params.muted;
+        if (typeof data.params?.muted === "boolean") mute.heard(data.params.muted);
         // Reloaded plain (bridge), it now and then starts from the start
         // whatever its URL said (seen in macOS's WebKit): sent where it was, once.
         const now = data.params?.currentTime;
@@ -406,6 +433,8 @@ async function twitch(
       if (ready && !told) {
         told = true;
         remembered((volume) => command(TWITCH_SET_VOLUME, volume));
+        const held = mute.ready();
+        if (held !== null) command(TWITCH_SET_MUTED, held);
       }
       return ready;
     },
@@ -426,15 +455,15 @@ async function twitch(
       ),
       volume: {
         get: () => sound.volume,
-        muted: () => sound.muted,
+        muted: () => mute.muted,
         set(volume) {
           sound.volume = volume;
           prefs.setVolume(volume);
           command(TWITCH_SET_VOLUME, volume);
-          if (sound.muted && volume > 0) this.setMuted(false);
+          if (mute.muted && volume > 0) this.setMuted(false);
         },
         setMuted(muted) {
-          sound.muted = muted;
+          mute.set(muted);
           command(TWITCH_SET_MUTED, muted);
         },
       },

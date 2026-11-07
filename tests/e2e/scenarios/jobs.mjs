@@ -1,25 +1,26 @@
 // The list of jobs at the bottom of the library: three clips of all of a
 // long file asked for at once, one made at a time, show there with their
-// names, the first being made, the other two waiting. The last is dragged
-// above the one before it, and the queue takes that order: it's the one
-// made next. Cancel on the one being made ends it: its part file goes, it
+// names, the first being made, the other two waiting, and nothing more to
+// show. A fourth asked for: the list still shows three, and "1 more". The
+// last of the three is dragged above the one before it, and the queue takes
+// that order: it's the one made next. "1 more" shows all four; the fourth's
+// Cancel takes it out, and "1 more" doesn't come back. Cancel on the one being made ends it: its part file goes, it
 // leaves the list, and the clip says it was canceled. Then a site's VOD with
 // its video kept here and a long chat is removed from the library: it's
 // erased at once, a job of its own in the list ("Erasing"), and quitting
 // while that goes on is over at once (it used to wait up to three seconds
 // for it); at the next start what was left of it is erased.
 //
-// A clip's part file is beside its clip: in the Videos folder's VODscribe
-// on Windows and macOS (and on Linux with a Videos folder set), in the
-// app's data elsewhere. Looking in the data alone found none on the hosted
-// Windows and macOS runners, every night (2026-10-31, 2026-11-01).
+// A clip's part file is beside its clip, in the clips' folder of the app's
+// local data (before 0.7.2, in the Videos folder: looking in the data alone
+// found none on the hosted Windows and macOS runners, 2026-10-31).
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { clipsDir, dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
+import { clipsDir, dataDirs, keptVideo, libraryPath, makeSiteVod } from "../lib/data.mjs";
 import { longVideo, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -27,6 +28,8 @@ import * as os from "../lib/os.mjs";
 const QUIT_WITHIN = 2000;
 /** The jobs' list, opened (Jobs.svelte). */
 const LIST = '[role="dialog"][aria-label="Jobs"]';
+/** "N more" in it, past three. */
+const MORE = `${LIST} button.more`;
 
 /** The part files of clips being made (`.<name>.part`), in the clips' folder or anywhere in the app's data. */
 function partFiles() {
@@ -77,7 +80,7 @@ function writeLongChat(id) {
 function leftOf(id) {
   const db = new DatabaseSync(libraryPath(), { readOnly: true });
   try {
-    const row = db.prepare("SELECT gone, media_path FROM vods WHERE id = ?").get(id) ?? null;
+    const row = db.prepare("SELECT gone, video_ext FROM vods WHERE id = ?").get(id) ?? null;
     const chat = Number(db.prepare("SELECT count(*) AS n FROM chat WHERE vod_id = ?").get(id).n);
     return { row, chat };
   } finally {
@@ -87,6 +90,11 @@ function leftOf(id) {
 
 export default {
   name: "jobs",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "jobs-list":
+      "A three-minute video, not transcribed, is open; at the bottom of the library a bar reads Making 3 clips over a thin progress line, and above it a list: Clip at 0:00 saying Making the clip with a percentage and a progress bar, then Clip at 0:01 and Clip at 0:02 each saying Waiting, every row with an ×.",
+  },
   async run(app, ctx) {
     const { log } = ctx;
     const dir = path.join(ctx.out, "fixtures");
@@ -147,10 +155,23 @@ export default {
     if (!listed[0].line.startsWith("Making the clip")) throw new Error(`the first says "${listed[0].line}"`);
     if (listed[1].line !== "Waiting" || listed[2].line !== "Waiting")
       throw new Error(`the others say "${listed[1].line}", "${listed[2].line}"`);
+    const moreSays = () => app.js(`return document.querySelector(arguments[0])?.textContent.trim() ?? null`, MORE);
+    if ((await moreSays()) !== null) throw new Error(`with three jobs, the list has "${await moreSays()}"`);
     log(`listed: ${listed.map((r) => `${r.label} (${r.line})`).join("; ")}`);
     await ctx.checkpoint("jobs-list");
 
-    // The last dragged above the one before it, a frame at a time (the
+    // A fourth: the list still shows three, and "1 more".
+    const [d] = (await app.invoke("add_clips", { vodId: vod.id, ranges: [[3, 180]] })).map((m) => m.id);
+    await until("the fourth waiting", async () => (await order()) === `${a}* ${b} ${c} ${d}`, MINUTE);
+    await until("1 more under the three", async () => (await moreSays()) === "1 more", 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: it says ${await moreSays()}`);
+    });
+    const folded = (await rows()).map((r) => r.job).join(" ");
+    if (folded !== `clip-${a} clip-${b} clip-${c}`) throw new Error(`with four jobs, the list shows ${folded}`);
+    await ctx.checkpoint("jobs-folded");
+
+    // The last of the three dragged above the one before it (the fourth
+    // folded away), a frame at a time (the
     // list moves as it passes the other's middle: reorder.svelte.ts): with
     // the system's own pointer where this layer drives it, as a hand does,
     // else with pointer events made in the page.
@@ -184,7 +205,7 @@ export default {
         `clip-${c}`,
         `clip-${b}`,
       );
-    await until("the queue in the order dragged", async () => (await order()) === `${a}* ${c} ${b}`, 10_000).catch(
+    await until("the queue in the order dragged", async () => (await order()) === `${a}* ${c} ${b} ${d}`, 10_000).catch(
       async (e) => {
         throw new Error(`${e.message}: it's ${await order()}`);
       },
@@ -192,6 +213,28 @@ export default {
     const shown = (await rows()).map((r) => r.job).join(" ");
     if (shown !== `clip-${a} clip-${c} clip-${b}`) throw new Error(`the list shows ${shown} after the drag`);
     log(`dragged ${byHand ? "with the system's pointer" : "by pointer events in the page"}: the last is made next`);
+
+    // "1 more": all four. The fourth's Cancel: out of the queue, and no "more".
+    await app.click(MORE);
+    const all = await until(
+      "all four shown",
+      async () => {
+        const r = await rows();
+        return r.length === 4 && r;
+      },
+      10_000,
+    );
+    if (all.map((r) => r.job).join(" ") !== `clip-${a} clip-${c} clip-${b} clip-${d}`)
+      throw new Error(`"1 more" shows ${all.map((r) => r.job).join(" ")}`);
+    if ((await moreSays()) !== null) throw new Error(`with all shown, the list still has "${await moreSays()}"`);
+    await ctx.checkpoint("jobs-all");
+    await app.click(`${LIST} [data-job="clip-${d}"] button.cancel`);
+    await until("the fourth out", async () => (await order()) === `${a}* ${c} ${b}`, 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: it's ${await order()}`);
+    });
+    await until("three shown", async () => (await rows()).length === 3, 10_000);
+    if ((await moreSays()) !== null) throw new Error(`after the fourth's Cancel, the list has "${await moreSays()}"`);
+    log(`a fourth: "1 more" showed all four; canceled, it's gone with the "more"`);
 
     // Cancel on the one being made: its ffmpeg ends, its part file goes,
     // and the one dragged up is made next.
@@ -224,10 +267,7 @@ export default {
     const title = "A stream with chat";
     // Kept videos are beside the downloads' work folder (Paths::media): in
     // the local data on Windows, not the roaming data the library is in.
-    const media = path.join(dataDirs().at(-1), "media");
-    mkdirSync(media, { recursive: true });
-    const kept = path.join(media, `${title} [${String(site.id).padStart(6, "0")}].mp4`);
-    copyFileSync(videos(dir).video, kept);
+    const kept = keptVideo(site.id, "mp4");
     makeSiteVod(site.id, "twitch", TWITCH_VOD, {
       title,
       channel: "Marlowe",
@@ -235,7 +275,7 @@ export default {
       duration: 14400,
       chat: "done",
       chatError: null,
-      mediaPath: kept,
+      video: videos(dir).video,
     });
     const wrote = writeLongChat(site.id);
     const messages = leftOf(site.id).chat;

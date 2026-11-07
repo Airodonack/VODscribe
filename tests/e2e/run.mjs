@@ -80,7 +80,7 @@ import { parseArgs } from "node:util";
 
 import { isUnplayable } from "../../apps/desktop/src/lib/media.ts";
 import { App, clock, sizePage, watchWith } from "./lib/app.mjs";
-import { dataDirs, resetData } from "./lib/data.mjs";
+import { dataDirs, putBackYtDlp, resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import { deal, parseShard, readDurations } from "./lib/durations.mjs";
 import { pageDump } from "./lib/dump.mjs";
@@ -159,6 +159,10 @@ const ledger = JSON.parse(readFileSync(path.join(here, "flaky.json"), "utf8"));
 // The computer first: a gap it has is named once, not found as timeouts
 // (by the run, not again by each of its workers).
 if (!worker) for (const warning of preflight()) console.log(`preflight: ${warning}`);
+// A yt-dlp stand-in a killed run left in the tools (lib/data.mjs putBackYtDlp)
+// would answer every site's lookup in this one. Each worker has its own.
+const putBack = putBackYtDlp();
+if (putBack) console.log(`preflight: ${putBack}`);
 
 const started = Date.now();
 const results = [];

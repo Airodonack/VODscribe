@@ -205,9 +205,8 @@ exec '${real}' "$@"
       const cuts = (await app.invoke("list_marks", { vodId: vod.id })).map((m) => m.start);
       /** How long the stretch from `start` is, between the cuts. */
       const stretchFrom = (start) => Math.min(...cuts.filter((c) => c > start + 0.01)) - start;
-      // The app's clip files (where they are: the Videos folder, or its data's).
-      // The app's clip files: where clips go (the Videos or Movies folder's VODscribe, or the data's clips)
-      // and anywhere in its data; on macOS the Movies folder is the runner's own, so only those written since this began.
+      // The app's clip files, and the names they're handed out by beside them
+      // (all in its data); on macOS only those written since this began.
       const clipDirs = [...new Set([clipsDir(), ...dataDirs()])];
       const appFiles = () =>
         clipDirs.flatMap(filesUnder).filter((f) => /\.(mov|mp4)(\.part)?$/.test(f) && (!mac || mtimeOf(f) >= started));
@@ -725,7 +724,14 @@ exec '${real}' "$@"
     } finally {
       taker?.close();
       if (entry) rmSync(entry, { force: true });
-      nautilus?.close();
+      // Awaited: on macOS it brings the app back to the front, and a press
+      // left in flight after the app is quit ends the whole run. Its own
+      // failure is told, not put in place of the step's.
+      try {
+        await nautilus?.close();
+      } catch (e) {
+        ctx.log(`the file manager not closed: ${e.message}`);
+      }
       rmSync(ffmpeg, { force: true });
       if (existsSync(aside)) renameSync(aside, ffmpeg);
     }
@@ -841,7 +847,7 @@ async function onWindows(app, ctx) {
     `Add-Type -TypeDefinition (Get-Content -Raw '${source}') -OutputAssembly '${ffmpeg}' -OutputType ConsoleApplication`,
   ]);
   encodes("slow");
-  // The clips folder (Videos\VODscribe), as it was: what the test adds there goes after.
+  // The clips folder (in the local data), as it was: what the test adds there goes after.
   const clips = clipsDir();
   const appFiles = () =>
     [...filesUnder(clips), ...filesUnder(dataDirs()[0])].filter((f) => /\.(mov|mp4)(\.part)?$/.test(f));
@@ -909,23 +915,17 @@ async function onWindows(app, ctx) {
       explorer.closeExplorerDialogs();
       for (const f of droppedHere()) rmSync(path.join(dest, f), { force: true });
     };
+    let shots = 0;
     /**
      * Clip (or `what`) pressed and carried over the window's edge to `to`, in
      * one gesture (the page can't be asked anything while the system's drag
      * is up); there, `then` (letting go, say). A screenshot of each as it's
      * over the drop (drag-promise-<n>.png): the drag's picture, drawn by the
-     * shell, isn't a window of the app's to look for.
+     * shell, isn't a window of the app's to look for. The app's window in
+     * front first: the app a drop went to comes to the front, with the keys.
      */
-    /** The app's window in front again, as a click on its title bar puts it
-     *  (the app a drop went to comes to the front, and the keys go there). */
-    const focusApp = async () => {
-      const page = await os.windowRect(app);
-      os.click(page.x + Math.round(page.w / 2), page.y - 16);
-      await sleep(300);
-    };
-    let shots = 0;
     const carryOut = async (then, what = "button.action.clip", to = target.drop) => {
-      await focusApp();
+      await os.toFront(app);
       await app.js(`performance.clearMarks(); window.__ended = []; ${HEAR_TOASTS}`);
       const from = await centre(what);
       const steps = [
@@ -945,6 +945,10 @@ async function onWindows(app, ctx) {
       steps.push(["move", to.x + 16, to.y + 8], ["wait", 300], ...then);
       await os.gesture(steps);
     };
+    /** The files dropped, once Explorer has written them. It makes each at
+     *  its full length at once and fills it in from there, the movie's index
+     *  (written last) still missing, so a file there isn't whole until its
+     *  copies are over: they end the drag (EndOperation). */
     const landed = async (label, count = 1) => {
       const got = await until(
         `${label}: ${count} file${count > 1 ? "s" : ""} in the folder`,
@@ -952,6 +956,7 @@ async function onWindows(app, ctx) {
         2 * MINUTE,
         { every: 100 },
       );
+      await ended();
       return got.map((f) => ({ name: f, length: probeDuration(path.join(dest, f)) }));
     };
 
@@ -1082,7 +1087,7 @@ async function onWindows(app, ctx) {
       },
       2 * MINUTE,
     );
-    await focusApp();
+    await os.toFront(app);
     await setFormat(app, "MP4");
     encodes("slow");
     for (const p of three) {
@@ -1124,7 +1129,7 @@ async function onWindows(app, ctx) {
     );
     await settle();
     say("6");
-    await focusApp();
+    await os.toFront(app);
     await app.key("Escape");
     // (Off the clip bar again, so the next pill shows in its width.)
     for (const p of three) await app.invoke("delete_clip", { id: p.id });
@@ -1176,7 +1181,7 @@ async function onWindows(app, ctx) {
     mkdirSync(refuserWork, { recursive: true });
     taker = await explorer.openFilesOnly(refuserWork, beside, { refuses: true });
     // (The form came to the front: the keys go to the app again.)
-    await focusApp();
+    await os.toFront(app);
     await toTime(app, 50);
     const marks = (await app.invoke("list_marks", { vodId: vod.id })).length;
     await app.key("b");

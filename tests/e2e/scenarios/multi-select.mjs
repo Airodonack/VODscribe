@@ -1,8 +1,9 @@
 // Several things picked at once, as in a file manager (selection.svelte.ts,
 // pick.ts). On a transcribed file: cuts at 1, 2 and 3 s (B), then
 // Ctrl-click (⌘ on a Mac) on the stretch 2-3 s and then on 1-2 s: each shows
-// its number in that order, the playhead stays where it was, and C makes a
-// clip of each, in that order, as one change. An Alt-click (Option) on the
+// its number in that order, the playhead stays where it was, the clip bar,
+// with no clips yet, says what it's for, and C makes a clip of each, in that
+// order, as one change. An Alt-click (Option) on the
 // timeline picks the stretch there alone, Ctrl+Alt-click adds one, and the
 // playhead stays; a plain click elsewhere on the timeline lets go of it and
 // moves the playhead, while a stretch selected with I stays through one;
@@ -31,7 +32,8 @@
 //
 // One kind picked at a time: two pills picked, then a cut clicked, the pills
 // are let go (the bar says nothing's picked) and Delete takes the cut only;
-// the same with a library row picked. Ctrl+A (⌘A) picks by where the
+// the same with a library row picked, and a plain click on the timeline
+// lets go of a row picked too. Ctrl+A (⌘A) picks by where the
 // pointer is, whatever has the focus: over the clip bar, all the clips; over
 // the timeline, the whole timeline selected (no clips); over the library's
 // pane, all its rows; over the main side with nothing open, nothing, and not
@@ -51,14 +53,23 @@ import * as os from "../lib/os.mjs";
 const TOGGLE = `const mac = /Mac/.test(navigator.platform);
   const toggle = { ctrlKey: !mac, metaKey: mac };`;
 
+/** What the clip bar says while it has no clips (ClipStrip.svelte). */
+const EMPTY_BAR = "Drop clips here to make them";
+
 export default {
   name: "multi-select",
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "stretches-numbered":
-      "On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there).",
+      'On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there); it holds only the grey words "Drop clips here to make them".',
     "stretch-grabbed":
       "On the timeline the stretch from about 0:02 to 0:03 has a dashed outline over a light shade, and no other stretch is outlined or numbered; a small card with a picture and a waveform, saying its length, sits near it, carried.",
+    "clips-picked":
+      "On the clip bar both pills are ringed in the accent colour and numbered, 1 on Tranguelity and 2 on Swift in uh, each with its play, folder and × icons; there is no row about them under the bar (no count, no Clip or Add to edit… buttons).",
+    "clip-bar-box":
+      "On the clip bar a thin rectangle, drawn from the empty space at the right, reaches over both pills, and both are ringed and numbered 1 and 2.",
+    "library-picked":
+      "In the library a bar reads 2 VODs with Add to edit…, Remove… and an ×; the rows fourth and third are outlined and shaded, numbered 2 and 1, while first and eagle-has-landed are not; the main area offers to search all 4 VODs.",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -187,6 +198,10 @@ export default {
       if (text) throw new Error(`the clip bar has a row "${text}" ${when}`);
     };
     await noRow("with two stretches picked");
+    // With no clips yet, the bar says what it's for.
+    const hint = () => app.js(`return document.querySelector(".clip-bar .drop")?.textContent.trim() ?? null`);
+    const said = await hint();
+    if (said !== EMPTY_BAR) throw new Error(`the empty clip bar says ${JSON.stringify(said)}, not "${EMPTY_BAR}"`);
     await ctx.checkpoint("stretches-numbered");
 
     // C: a clip of each, in the order picked.
@@ -204,6 +219,7 @@ export default {
     if (byId.join() !== "2-3,1-2") throw new Error(`the clips were made in the order ${byId.join(", ")}`);
     if (await app.js(`return !!document.querySelector(".scrubber .chosen")`))
       throw new Error("the stretches are still picked once clipped");
+    await until("the empty bar's hint gone", async () => (await hint()) === null, 10_000);
     ctx.log(`C made ${byId.join(", ")} in the order picked`);
 
     // An Alt-click (Option on a Mac) on the timeline, not dragged, picks the
@@ -705,6 +721,20 @@ export default {
     if (askedNow.length) throw new Error(`Delete on the cut asked ${JSON.stringify(askedNow)}`);
     if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id))
       throw new Error("Delete on the cut removed the VOD");
+
+    // A row picked, then a plain click on the timeline, the playhead set
+    // there: the row is let go, as a stretch or a pill picked is.
+    await click(d, "toggle");
+    await says("2 VODs", "another Ctrl-clicked beside the open one");
+    await plainAt(0.5);
+    await until(
+      "a plain click on the timeline let the row go",
+      () => app.js(`return !document.querySelector(".list .vod.chosen, aside .picked")`),
+      10_000,
+    ).catch(async (e) => {
+      throw new Error(`${e.message}: the list says "${await listHead()}"`);
+    });
+    ctx.log("a plain click on the timeline lets go of a library row picked");
 
     // The two pills picked, 2-3 s first, and the second dragged (in the
     // page's events) onto "Make new edit": both go in a new edit, in the

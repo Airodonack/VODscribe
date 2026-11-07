@@ -11,13 +11,13 @@ mod chats;
 mod choices;
 mod clipboard;
 mod clips;
-#[cfg(windows)]
 mod drag_source;
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+mod drop_target;
 #[cfg(feature = "e2e")]
 mod e2e;
 mod edits;
 mod embed;
-mod file_drag;
 mod files;
 mod footage;
 mod history;
@@ -25,8 +25,11 @@ mod job_list;
 mod jobs;
 mod loopback;
 mod media;
+mod page;
 mod player;
+mod receive;
 mod recovery;
+mod resolve;
 mod screen;
 mod setup;
 mod storyboards;
@@ -39,7 +42,7 @@ mod worker;
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::{Paths, model};
 
@@ -67,6 +70,8 @@ struct AppState {
     sweeper: vods::Sweeper,
     /// What the two queues above are at, for the library's list of jobs (`job_list`).
     job_list: job_list::JobList,
+    /// Files dropped on the window being received (`receive`), listed with the jobs.
+    receives: receive::Receives,
     /// Footage for edits being downloaded (`footage`).
     footage: footage::Footage,
     /// Whole videos downloaded on request (`videos`).
@@ -83,6 +88,8 @@ struct AppState {
     embed: embed::Embed,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// VODs whose details are being refreshed (`vods::refresh_details`), one at a time each.
+    refreshing: Mutex<std::collections::HashSet<i64>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -175,8 +182,8 @@ fn allow_images_from(csp: &mut Option<tauri::utils::config::Csp>, base: &str) {
 
 fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     if let Some(mut vod) = db.vod(id).map_err(err)? {
-        vodscribe_core::pipeline::mark_partial(&app.state::<AppState>().paths.work(), &mut vod);
-        let _ = app.emit("vod", vod);
+        vodscribe_core::pipeline::mark_partial(&app.state::<AppState>().paths, &mut vod);
+        crate::page::emit(app, "vod", vod);
     }
     Ok(())
 }
@@ -186,21 +193,29 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
-    let _ = std::fs::remove_dir_all(paths.local.join("preview"));
-    embed::clear(&paths.local);
+    let _ = std::fs::remove_dir_all(paths.temp_preview());
+    embed::clear(&paths.temp_embed());
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
     footage::tidy_work(&paths.work());
-    // Kept videos' leftovers from VODs no longer in the library; only
-    // tidying, so a library that can't be read here isn't a reason not
-    // to start.
-    if let Ok(vods) = db.vods() {
+    // Only tidying from here, so a library that can't be read isn't a
+    // reason not to start.
+    let vods = db.vods();
+    // Files a quit (or a crash) left being received from another app's drop.
+    let files: Option<Vec<String>> =
+        vods.as_ref().ok().map(|v| v.iter().filter_map(|v| v.source_path.clone()).collect());
+    receive::tidy(&paths.received(), &paths.received_incoming(), files.as_deref());
+    // Kept videos' leftovers from VODs no longer in the library.
+    if let Ok(vods) = vods {
         let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
-        vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
+        vodscribe_core::pipeline::tidy_media(&paths, &library);
+        // What VODs added before the library kept their channel's login and
+        // page lack, from their info where it's still kept.
+        vodscribe_core::pipeline::fill_channels(&db, &paths, &vods);
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);
     }
     let db = Mutex::new(db);
-    let reads = Mutex::new(Db::open_reader(&paths.db())?);
-    let searches = vodscribe_core::searcher::Searcher::new(Db::open_reader(&paths.db())?);
+    let reads = Mutex::new(Db::open_reader(&paths)?);
+    let searches = vodscribe_core::searcher::Searcher::new(Db::open_reader(&paths)?);
     let worker = Worker::start(app.handle().clone(), paths.clone())?;
     let handle = app.handle().clone();
     let media = media::MediaServer::start(move |asked| match asked {
@@ -221,6 +236,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         clips: clips::Cutter::new(),
         sweeper: vods::Sweeper::new(),
         job_list: job_list::JobList::new(),
+        receives: receive::Receives::new(),
         footage: footage::Footage::default(),
         videos: videos::Videos::new(),
         storyboards: storyboards::Storyboards::new(),
@@ -229,6 +245,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         player: player::Native::default(),
         embed: embed::Embed::default(),
         adding: Mutex::default(),
+        refreshing: Mutex::default(),
     });
     // First, so the queues' first news (what's left from last time) is heard.
     app.state::<AppState>().job_list.run(app.handle().clone())?;
@@ -269,7 +286,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // On Windows the data dir roams, so downloads go in the local one.
-            let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
+            let mut paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
+            // Where 0.7.1 made clips; without a Videos folder it made them in
+            // the library, whose own files are known anyway.
+            if let Ok(videos) = app.path().video_dir() {
+                paths = paths.with_old_clips(videos.join("VODscribe"));
+            }
             paths.ensure()?;
             app.manage(choices::Kept::load(paths.choices()));
             // Upgrades: drop models this version no longer uses.
@@ -279,8 +301,14 @@ pub fn run() {
             // A library that won't open: the window opens on the recovery
             // screen (recovery.rs) instead of the app failing to start.
             let db_path = paths.db();
-            match Db::open(&db_path) {
+            match Db::open_in(&paths) {
                 Ok(db) => {
+                    // Files recorded where they were before 0.7.2 go where
+                    // they're built now (a move a crash cut short is
+                    // finished): here only, before any job has a path.
+                    if let Err(e) = vodscribe_core::library::settle(&db) {
+                        eprintln!("Some of the library's files couldn't be moved to where they go now: {e:#}");
+                    }
                     app.manage(recovery::Problem::none(db_path));
                     start_library(app, paths, db)?;
                 }
@@ -329,7 +357,16 @@ pub fn run() {
                 Ok(extra) if !extra.trim().is_empty() => builder.additional_browser_args(&webview_args(&extra)),
                 _ => builder,
             };
+            // The app takes drops itself (receive.rs), files without a path
+            // too; the page hears the same events. On Windows instead of wry's
+            // drop target, on macOS through it, on Linux beside it (for the
+            // drops the web view can't take: files an archive manager saves,
+            // a sandboxed app's).
+            #[cfg(windows)]
+            let builder = builder.disable_drag_drop_handler();
             let main = builder.build()?;
+            #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+            receive::take_drops(&main)?;
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());
             app.manage(screen::Screen::default());
@@ -385,7 +422,10 @@ pub fn run() {
             annotations::fetch_annotations,
             annotations::vod_annotations,
             annotations::avatar_base,
+            annotations::streamer_card,
+            annotations::streamer_index,
             vods::cancel_add,
+            vods::refresh_details,
             vods::list_vods,
             vods::add_files,
             vods::media_extensions,
@@ -413,7 +453,6 @@ pub fn run() {
             clips::add_mark,
             clips::move_mark,
             clips::set_mark_text,
-            clips::resolve_installed,
             edits::list_edits,
             edits::create_edit,
             edits::get_edit,
@@ -463,6 +502,8 @@ pub fn run() {
             e2e::e2e_player_state,
             #[cfg(feature = "e2e")]
             e2e::e2e_set_inner_size,
+            #[cfg(feature = "e2e")]
+            e2e::e2e_work_busy,
             screen::screen_under,
             player::player_play,
             player::player_pause,

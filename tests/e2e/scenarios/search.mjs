@@ -21,6 +21,16 @@ export default {
   expects: {
     "search-or":
       'Under the search box, which reads "zebra OR landed", the query is shown as two word chips, "zebra" and "landed", with OR between them; below, the matches are grouped under each video\'s name, the word "landed" highlighted in each.',
+    "search-grouped":
+      'The search box reads landed; below the player, 2 matches for "landed" in 2 VODs, under an Audio heading in two groups, each headed by its VOD\'s name (landed, eagle-has-landed) with a count of 1 and one line at 0:04, landed highlighted in yellow; an empty Chat column at the right.',
+    "search-none":
+      'The search box reads zebra crossing and a VOD is open; the main area shows a search icon, No matches for "zebra crossing" in eagle-has-landed., a grey sentence of advice about words and quotes, and a Search all VODs button.',
+    "search-across-lines":
+      "The search box reads a quoted phrase, \"landed! Swippin',\"; 1 match in 1 VOD, under landed-twice: a row at 0:04 holds the end of one line and the start of the next, with landed! and Swippin', highlighted together across the two; the From filter reads All VODs with a small lock.",
+    "search-within-typed":
+      "Under the search box (landed within:5) two chips, landed and within:5 with an ×; the From filter, reading … within 5 s, is open: All VODs picked with a lock, Audio and Chat picked, Within showing 5 with s picked and the field greyed, and under it Set by the search text: change within: there.",
+    "search-error":
+      'The search box reads "unclosed; right under it a line in red says a quote isn\'t closed and to add the other "; no results are listed, and the area under the player is empty.',
   },
   async run(app, ctx) {
     await app.toLibrary();

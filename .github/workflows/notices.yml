@@ -1,0 +1,123 @@
+name: Dependabot notices
+
+# On a Dependabot pull request: regenerates THIRD-PARTY-NOTICES.txt, which
+# carries every dependency's version, and pushes it to the PR's branch when it
+# changed, then starts Checks on the new head. Without this every version bump
+# fails Checks' notices check until someone regenerates the file by hand.
+#
+# Why it is safe:
+# - It runs on `pull_request`, not `pull_request_target`. A Dependabot run gets
+#   a read-only token and only Dependabot secrets; `permissions` may raise the
+#   token for Dependabot's own runs (GitHub's "Troubleshooting Dependabot on
+#   GitHub Actions"). `pull_request_target` would give the PR's code a write
+#   token in the base repository's context.
+# - Both jobs run only when Dependabot opened the PR and made the push, so a
+#   person's push to the branch never runs with a write token.
+# - The job that touches the new dependencies has a read-only token. It installs
+#   the JavaScript packages with --ignore-scripts, and cargo fetch and
+#   cargo-about (which reads `cargo metadata`) run no build scripts.
+# - The job with the write token runs nothing from the PR: it checks out the
+#   PR's commit, copies the one regenerated text file in, commits and pushes.
+# - It pushes onto the commit it regenerated from, without force, so a newer
+#   Dependabot push wins and its own run regenerates again.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notices-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
+    timeout-minutes: 15
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.regenerate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # Reads the pnpm version from package.json's packageManager field.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          # Keep in step with rust-toolchain.toml.
+          toolchain: "1.99.0"
+
+      # The notices read the packages' license files and package.json, so no
+      # install script needs to run.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - id: regenerate
+        name: Regenerate third-party notices
+        run: |
+          CARGO_ABOUT=$(bash scripts/fetch-cargo-about.sh "$RUNNER_TEMP/cargo-about")
+          export CARGO_ABOUT
+          cargo fetch --locked
+          python3 scripts/third-party-notices.py
+          if git diff --quiet -- apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat -- apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.regenerate.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notices
+          path: apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt
+          retention-days: 1
+
+  push:
+    needs: regenerate
+    if: needs.regenerate.outputs.changed == 'true' && github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    permissions:
+      # To push the commit, and to start Checks on it.
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notices
+          path: ${{ runner.temp }}/notices
+
+      - name: Commit and push the notices
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          cp "$RUNNER_TEMP/notices/THIRD-PARTY-NOTICES.txt" apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt
+          git commit -q -m "Third-party notices regenerated for the new versions" \
+            -m "By the Dependabot notices workflow (notices.yml), with scripts/third-party-notices.py."
+          git push origin "HEAD:refs/heads/$BRANCH"
+
+      # A push made with this workflow's token starts no workflow runs, but a
+      # dispatch does, so the PR's new head gets its Checks.
+      - name: Start Checks on the new head
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run check.yml --ref "$BRANCH"

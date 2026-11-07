@@ -95,6 +95,10 @@ export const hasSitePlayer = (vod: Vod) => ["youtube", "twitch", "kick"].include
  *  own (crates/core pipeline.rs `keeps_video`). */
 export const keepsVideo = (vod: Vod) => !hasSitePlayer(vod) && vod.platform !== "local";
 
+/** Whether `vod` came from a site, which can be asked about it again: not
+ *  a file on this computer (one added, or received from another app). */
+export const fromSite = (vod: Vod) => vod.source_path === null && vod.platform !== "local";
+
 /** Whether `vod` is a file here (on this computer, or its video kept):
  *  its frames are read, and its clips cut, from that, not downloaded. */
 export const playsFromFile = (vod: Vod) => !!vod.media || vod.platform === "local";

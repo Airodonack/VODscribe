@@ -35,10 +35,9 @@ fn main() -> Result<()> {
                 db.vod(vod.id)?.context("just added")?
             } else {
                 let yt_dlp = yt_dlp.as_ref().context("run `setup` first")?;
-                let info =
-                    fetch::probe(yt_dlp, source, &pipeline::info_path(&paths.work(), 0), &AtomicBool::new(false))?;
+                let info = fetch::probe(yt_dlp, source, &paths.source_info(0), &AtomicBool::new(false))?;
                 let (vod, _) = db.add_vod(&info)?;
-                std::fs::rename(pipeline::info_path(&paths.work(), 0), pipeline::info_path(&paths.work(), vod.id))?;
+                std::fs::rename(paths.source_info(0), paths.source_info(vod.id))?;
                 vod
             };
             println!("#{} {} ({:?}s)", vod.id, vod.info.title, vod.info.duration);
@@ -58,8 +57,7 @@ fn main() -> Result<()> {
             let mut report = |s, f: f64| eprint!("\r{s:?} {:5.1}%  {:6.1}s   ", f * 100.0, t.elapsed().as_secs_f64());
             let stretch = db.request(vod.id, 0.0, None)?;
             let audio =
-                pipeline::audio_for(&mut db, &vod, &stretch, &tools, &paths.work(), None, &cancel, &mut report)?
-                    .audio();
+                pipeline::audio_for(&mut db, &vod, &stretch, &tools, &paths, None, &cancel, &mut report)?.audio();
             let stretch = db.stretch(stretch.id)?.context("just asked for")?;
             pipeline::transcribe(
                 &mut db,
@@ -85,7 +83,7 @@ fn main() -> Result<()> {
         }
         ["probe", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
-            let probe_path = paths.work().join("probe.json");
+            let probe_path = paths.temp_probe(0);
             let info = fetch::probe(&yt_dlp, url, &probe_path, &AtomicBool::new(false));
             let _ = std::fs::remove_file(&probe_path);
             let info = info?;
@@ -93,10 +91,10 @@ fn main() -> Result<()> {
         }
         ["chat", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("yt-dlp not found; run setup")?;
-            let info = fetch::probe(&yt_dlp, url, &paths.work().join("cli.info.json"), &AtomicBool::new(false))?;
+            let info = fetch::probe(&yt_dlp, url, &paths.temp_probe(1), &AtomicBool::new(false))?;
             let started = Instant::now();
             let mut store = chat::MemoryChat::default();
-            let found = chat::fetch(&info, Some(&yt_dlp), &paths.work(), 0, &mut store, &cancel, |f| {
+            let found = chat::fetch(&info, Some(&yt_dlp), &paths.temp_chat(0), &mut store, &cancel, |f| {
                 eprint!("\rchat {:.0}%", f * 100.0)
             })?;
             eprintln!();

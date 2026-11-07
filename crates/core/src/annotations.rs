@@ -10,6 +10,12 @@
 //! `<BASE_URL>/annotations/<platform>/<platform id>.json`: `look_up` asks
 //! whether a VOD's is there (one HEAD request naming the site and the VOD's
 //! id, nothing else), and `download` fetches it to import.
+//!
+//! The people in a cast have streamer cards on the same server, one per
+//! person (apps/desktop/src/lib/streamers.ts has their shape), at
+//! `<BASE_URL>/streamers/<id>.json`, with an index of their accounts at
+//! `<BASE_URL>/streamers.json`: `streamer_card` and `streamer_index` fetch
+//! them for the page.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -57,6 +63,8 @@ pub const MAX_NAMES: usize = 100;
 pub const MAX_ACTIVITY: usize = 10_000;
 /// Other points of view.
 pub const MAX_POVS: usize = 1_000;
+/// The contexts a VOD names (`contexts`).
+pub const MAX_CONTEXTS: usize = 100;
 /// Any one text in a file (a title, a line, a name), in characters.
 pub const MAX_TEXT: usize = 10_000;
 /// A chat file's messages.
@@ -80,6 +88,11 @@ pub struct Annotations {
     /// one. Optional; one `Pov::read` can't take is left out.
     #[serde(default, deserialize_with = "povs", skip_serializing_if = "Vec::is_empty")]
     pub povs: Vec<Pov>,
+    /// What the VOD is part of, by the ids streamer cards name their
+    /// sections by ("nopixel"): a card shows a section only when the VOD it's
+    /// opened in names it. Optional; one `context_id` can't take is left out.
+    #[serde(default, deserialize_with = "contexts", skip_serializing_if = "Vec::is_empty")]
+    pub contexts: Vec<String>,
 }
 
 /// The VOD the file is of.
@@ -152,6 +165,38 @@ pub struct CastMember {
     /// Where they stream; one `Account::read` can't take is left out.
     #[serde(default, deserialize_with = "account", skip_serializing_if = "Option::is_none")]
     pub account: Option<Account>,
+    /// The person's streamer card, by the id it's published under (the
+    /// player's, for a character): `streamer_card`. One `streamer_id` can't
+    /// take is left out.
+    #[serde(default, deserialize_with = "streamer", skip_serializing_if = "Option::is_none")]
+    pub streamer: Option<String>,
+}
+
+/// `id` as a streamer card's id or a context's: lowercase letters, digits,
+/// `_` and `-`, a letter or digit first, at most 64; trimmed; None for
+/// anything else. It names a file on the file host, so nothing else gets
+/// into the path. The page's `cardId` (streamers.ts) is the same rule.
+pub fn card_id(id: &str) -> Option<&str> {
+    let id = id.trim();
+    let fits = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-');
+    let first = id.bytes().next()?;
+    (id.len() <= 64 && (first.is_ascii_lowercase() || first.is_ascii_digit()) && id.bytes().all(fits)).then_some(id)
+}
+
+fn streamer<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_str().and_then(card_id).map(Into::into))
+}
+
+fn contexts<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let mut out: Vec<String> = Vec::new();
+    for id in value.as_array().into_iter().flatten().filter_map(|v| v.as_str()).filter_map(card_id) {
+        if !out.iter().any(|o| o == id) {
+            out.push(id.into());
+        }
+    }
+    Ok(out)
 }
 
 /// A cast member's account: the site and their login there (Twitch's and
@@ -264,12 +309,13 @@ pub struct Activity {
     pub name: Option<String>,
 }
 
-/// A VOD's cast, activity and other points of view, as an import left them.
+/// A VOD's cast, activity, other points of view and contexts, as an import left them.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct VodAnnotations {
     pub cast: Vec<CastMember>,
     pub activity: Vec<Activity>,
     pub povs: Vec<Pov>,
+    pub contexts: Vec<String>,
 }
 
 fn not_annotations(what: &str) -> anyhow::Error {
@@ -346,6 +392,7 @@ fn within_limits(value: &serde_json::Value) -> Result<()> {
         ("/cast", MAX_CAST, "people in its cast"),
         ("/activity", MAX_ACTIVITY, "stretches of activity"),
         ("/povs", MAX_POVS, "other points of view"),
+        ("/contexts", MAX_CONTEXTS, "contexts"),
     ];
     for (path, max, what) in lists {
         if list_len(value, path) > max {
@@ -619,6 +666,53 @@ fn download_from(base: &str, platform: &str, id: &str) -> Result<(Annotations, O
     Ok((annotations, version))
 }
 
+/// The largest streamer card read: a few kilobytes is plenty.
+const MAX_CARD_BYTES: u64 = 256 * 1024;
+/// The largest index of streamers' accounts read (`streamer_index`).
+const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Where streamer card `id` is on server `base`, if `id` is one (`card_id`).
+pub fn card_url(base: &str, id: &str) -> Option<String> {
+    Some(format!("{base}/streamers/{}.json", card_id(id)?))
+}
+
+/// Where the index of streamers' accounts (each platform and login's card
+/// id; the page reads it, streamers.ts) is on server `base`.
+pub fn index_url(base: &str) -> String {
+    format!("{base}/streamers.json")
+}
+
+/// The JSON at `url` on the file host, read up to `limit` bytes; None when
+/// it isn't there (404, 410, 403); offline or anything else, an error. The
+/// page reads what's in it, and shows only what it can (streamers.ts).
+fn fetch_json(url: &str, limit: u64) -> Result<Option<serde_json::Value>> {
+    let mut response = match agent().get(url).call() {
+        Ok(r) => r,
+        Err(ureq::Error::StatusCode(403 | 404 | 410)) => return Ok(None),
+        Err(e) => return Err(e).context("ask the file host"),
+    };
+    let json =
+        response.body_mut().with_config().limit(limit).read_to_string().context("read the file host's answer")?;
+    Ok(Some(serde_json::from_str(&json).context("read the file host's answer")?))
+}
+
+/// Streamer card `id` as published, if it is; an id that can't be one is none.
+pub fn streamer_card(id: &str) -> Result<Option<serde_json::Value>> {
+    streamer_card_at(&base_url(), id)
+}
+
+pub(crate) fn streamer_card_at(base: &str, id: &str) -> Result<Option<serde_json::Value>> {
+    match card_url(base, id) {
+        Some(url) => fetch_json(&url, MAX_CARD_BYTES),
+        None => Ok(None),
+    }
+}
+
+/// The index of streamers' accounts as published, if it is.
+pub fn streamer_index() -> Result<Option<serde_json::Value>> {
+    fetch_json(&index_url(&base_url()), MAX_INDEX_BYTES)
+}
+
 /// What the library knows of a VOD's published annotations, for offering them.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Offer {
@@ -678,6 +772,8 @@ impl Db {
                         url,
                         title: source.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Untitled".into()),
                         channel: source.channel.clone().filter(|c| !c.trim().is_empty()),
+                        channel_login: None,
+                        channel_url: None,
                         duration: Some(source.duration),
                         thumbnail: None,
                         // YYYY-MM-DD, from an ISO 8601 time.
@@ -706,15 +802,16 @@ impl Db {
             db.import_transcript(vod_id, annotations)?;
             db.import_marks(vod_id, annotations)?;
             db.conn.execute(
-                "INSERT OR REPLACE INTO vod_annotations (vod_id, cast_members, activity, produced, imported_at, povs)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT OR REPLACE INTO vod_annotations (vod_id, cast_members, activity, produced, imported_at, povs, contexts)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     vod_id,
                     serde_json::to_string(&annotations.cast)?,
                     serde_json::to_string(&annotations.activity)?,
                     annotations.produced.as_ref().map(serde_json::to_string).transpose()?,
                     now(),
-                    serde_json::to_string(&annotations.povs)?
+                    serde_json::to_string(&annotations.povs)?,
+                    serde_json::to_string(&annotations.contexts)?
                 ],
             )?;
             if let Some(chat) = chat {
@@ -848,20 +945,24 @@ impl Db {
         })
     }
 
-    /// VOD `vod_id`'s cast, activity and other points of view, if annotations were imported for it.
+    /// VOD `vod_id`'s cast, activity, other points of view and contexts, if annotations were imported for it.
     pub fn vod_annotations(&self, vod_id: i64) -> Result<Option<VodAnnotations>> {
-        let row: Option<(String, String, Option<String>)> = self
+        type Row = (String, String, Option<String>, Option<String>);
+        let row: Option<Row> = self
             .conn
-            .query_row("SELECT cast_members, activity, povs FROM vod_annotations WHERE vod_id = ?1", [vod_id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
+            .query_row(
+                "SELECT cast_members, activity, povs, contexts FROM vod_annotations WHERE vod_id = ?1",
+                [vod_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
             .optional()?;
-        let Some((cast, activity, povs)) = row else { return Ok(None) };
+        let Some((cast, activity, povs, contexts)) = row else { return Ok(None) };
         Ok(Some(VodAnnotations {
             cast: serde_json::from_str(&cast)?,
             activity: serde_json::from_str(&activity)?,
-            // None from an import before they were kept (`db::MIGRATE_V34`).
+            // None from an import before they were kept (`db::MIGRATE_V34`, `db::MIGRATE_V38`).
             povs: povs.as_deref().map(serde_json::from_str).transpose()?.unwrap_or_default(),
+            contexts: contexts.as_deref().map(serde_json::from_str).transpose()?.unwrap_or_default(),
         }))
     }
 }
@@ -1022,6 +1123,65 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_cast_members_card_and_the_vods_contexts_are_read_and_kept_through_an_import() {
+        let mut json = serde_json::to_value(file("youtube", "abcdefghijk")).unwrap();
+        json["cast"] = serde_json::json!([
+            { "name": "Marlowe", "role": "streamer", "streamer": " marlowe-01 " },
+            { "name": "Ada", "role": "friend", "streamer": "../ada" },
+            { "name": "Bo", "role": "friend", "streamer": "Bo" },
+            { "name": "Cy", "role": "friend", "streamer": 7 }
+        ]);
+        json["contexts"] = serde_json::json!(["nopixel", " nopixel", "No Pixel", 3, "gta_rp"]);
+        let annotations = from_value(json).expect("a card or context that can't be read isn't fatal");
+        let cards: Vec<_> = annotations.cast.iter().map(|m| m.streamer.as_deref()).collect();
+        assert_eq!(cards, [Some("marlowe-01"), None, None, None], "trimmed; a path, a capital or a number left out");
+        assert_eq!(annotations.contexts, ["nopixel", "gta_rp"], "each once, what isn't an id left out");
+
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.import_annotations(&annotations, None).unwrap();
+        let kept = db.vod_annotations(vod.id).unwrap().unwrap();
+        assert_eq!((kept.cast, kept.contexts), (annotations.cast.clone(), annotations.contexts.clone()));
+        // A file with none: none kept, and none said.
+        let (plain, _) = db.import_annotations(&file("youtube", "bcdefghijkl"), None).unwrap();
+        let kept = db.vod_annotations(plain.id).unwrap().unwrap();
+        assert!(kept.contexts.is_empty() && kept.cast.iter().all(|m| m.streamer.is_none()));
+        assert!(serde_json::to_value(&kept.cast[0]).unwrap().get("streamer").is_none());
+    }
+
+    #[test]
+    fn a_card_id_is_lowercase_letters_digits_and_dashes() {
+        for good in ["marlowe", "s-0001", "a_b", "7"] {
+            assert_eq!(card_id(good), Some(good));
+        }
+        assert_eq!(card_id("  marlowe "), Some("marlowe"));
+        for bad in ["", "-a", "_a", "Marlowe", "a/b", "..", "a.b", "a b", "é", &"a".repeat(65)] {
+            assert_eq!(card_id(bad), None, "{bad:?}");
+        }
+        assert_eq!(card_url("http://h", "marlowe").as_deref(), Some("http://h/streamers/marlowe.json"));
+        assert_eq!(card_url("http://h", "../x"), None);
+        assert_eq!(index_url(BASE_URL), "https://dl.vodscribe.com/streamers.json");
+    }
+
+    #[test]
+    fn a_streamer_card_is_there_not_there_or_fails() {
+        let (base, asked) = host(|line| match line {
+            l if l.contains("/streamers/marlowe.json") => ("HTTP/1.1 200 OK".into(), r#"{"id":"marlowe"}"#.into()),
+            l if l.contains("/streamers/broken.json") => ("HTTP/1.1 500 Internal Server Error".into(), String::new()),
+            l if l.contains("/streamers/garbled.json") => ("HTTP/1.1 200 OK".into(), "{".into()),
+            _ => ("HTTP/1.1 404 Not Found".into(), String::new()),
+        });
+        assert_eq!(streamer_card_at(&base, "marlowe").unwrap(), Some(serde_json::json!({ "id": "marlowe" })));
+        assert_eq!(streamer_card_at(&base, "ada").unwrap(), None);
+        assert!(streamer_card_at(&base, "broken").is_err());
+        assert!(streamer_card_at(&base, "garbled").is_err());
+        // An id that can't be one is never asked for.
+        assert_eq!(streamer_card_at(&base, "../annotations/filter").unwrap(), None);
+        let asked = asked.lock().unwrap().clone();
+        assert_eq!(asked.len(), 4, "{asked:?}");
+        assert!(asked.iter().all(|l| l.starts_with("GET /streamers/")), "{asked:?}");
+    }
+
+    #[test]
     fn a_cast_members_player_and_account_are_read_and_kept_through_an_import() {
         let mut json = serde_json::to_value(file("youtube", "abcdefghijk")).unwrap();
         json["cast"] = serde_json::json!([
@@ -1127,6 +1287,7 @@ pub(crate) mod tests {
             role: "chatter".into(),
             player: None,
             account: None,
+            streamer: None,
         });
         next.transcript.segments.truncate(1);
         let (again, created) = db.import_annotations(&next, Some(&[message(1.0, "first")])).unwrap();

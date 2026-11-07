@@ -1,0 +1,84 @@
+# Scenarios
+
+One file per scenario, each on an empty library. A scenario's `expects` says what each checkpoint should show. Run them with `node tests/e2e/run.mjs <app> --only <name>`.
+
+- `add-link-error.mjs`: a link VODscribe can't use shows an error and adds nothing.
+- `add-picked.mjs`: A puts the clips picked into an edit without dragging.
+- `annotations-gone.mjs`: a VOD removed while the VODscription host is still answering about it.
+- `annotations-library.mjs`: the whole library checked against the host's filter of published VODs.
+- `annotations-lookup.mjs`: asking the host about VODs added from sites, and the setting that stops it.
+- `annotations-offer.mjs`: a published VODscription offered when its VOD is added, and used; Use with Don't ask again uses the next one unasked.
+- `annotations.mjs`: an annotations file imported for a video file, and how the VOD shows it.
+- `captions-fullscreen.mjs`: captions drawn over the app's own player, seen on the screen, and full screen with F.
+- `captions-strip.mjs`: a site's VOD shows captions in a strip under its player, with room kept from the start.
+- `cast-chips.mjs`: the streamer's picture beside their name in the heading and the library row.
+- `chat-partial.mjs`: a chat fetch that stops partway keeps what it fetched.
+- `chat-search.mjs`: searching chat by who wrote it, with `from:`.
+- `chat-view.mjs`: a synthetic chat as the page shows it.
+- `clip-bar-long.mjs`: a clip bar that scrolls sideways keeps every pill clickable.
+- `clip-drag.mjs`: the Clip button dragged onto the clip bar.
+- `clip-format.mjs`: clips made in each format and quality, their pictures read back, and a sound-only file's clip as WAV.
+- `clip-sources-long.mjs`: a clip in the editor whose links to its VODs scroll sideways keeps every link clickable.
+- `clip.mjs`: a clip cut between two cuts, resized and made again.
+- `controls.mjs`: keyboard controls changed in Settings › Controls take effect.
+- `copy-chapters.mjs`: Copy chapters puts each chapter's time and title on the clipboard.
+- `copy-moment.mjs`: the header's timestamp copies a link to the playhead's moment; needs the network.
+- `copy-paste.mjs`: Ctrl+C and Ctrl+V copy and paste clips and stretches as copies.
+- `download-play.mjs`: a VOD from a site without a usable player plays as its video downloads.
+- `drag-file-time.mjs`: how long a clip dragged out takes to land whole in a file manager.
+- `drag-note.mjs`: a site's clip dragged out before the download note was answered starts no drag.
+- `drag-out.mjs`: clips dragged out of the window with the OS's mouse.
+- `drag-promise.mjs`: a clip dragged out before it's made lands once it's made.
+- `drag-resolve.mjs`: an MP4 clip or edit dropped on DaVinci Resolve on Linux is held back, and the app offers MOV; one made in another codec or quality is made again when dragged.
+- `drop-virtual.mjs`: a video with no path dropped on the window (a zip in Explorer or an archive manager, a promise on a Mac) opens once received, and one its app can't give is said; on Linux also a sandboxed app's file.
+- `edit-footage-thumbnail.mjs`: the timeline's thumbnail over an edit's piece from a site.
+- `edits.mjs`: making, renaming, cutting and rendering an edit.
+- `export-whole.mjs`: C with no cuts clips the whole video.
+- `holes.mjs`: an edit whose file was deleted outside the app shows the hole.
+- `in-out-file.mjs`: I right after a timeline click, on a file.
+- `jobs.mjs`: the jobs list: clips waiting and being made, reordered and canceled, and a removed VOD erased.
+- `legend.mjs`: the keyboard legend under the player's controls.
+- `marks-undo.mjs`: highlights and chapters made, written, deleted and brought back.
+- `multi-drop.mjs`: several things picked put in an edit together.
+- `multi-select.mjs`: picking several things at once, as in a file manager.
+- `navigation.mjs`: Ctrl+F, and back and forward between what was open.
+- `perf-exit.mjs`: quitting, timed, from each state a person quits from.
+- `perf-library.mjs`: a large library's searches and scrolling, against their budgets.
+- `perf-page.mjs`: Settings and a VOD with twenty clips opening, against their budgets.
+- `perf-player.mjs`: opening and seeking in the app's own player, against their budgets.
+- `perf-switch.mjs`: switching between library entries, timed and watched for jank.
+- `platforms.mjs`: the test video on Twitch, Kick and YouTube, added and played; needs the network.
+- `player-open.mjs`: a file opens on its picture before Play.
+- `player-picture.mjs`: what the app's own player shows, seen on the screen and clicked with the OS's mouse.
+- `player-seek.mjs`: a far seek while playing lands and stays.
+- `quit-mid-job.mjs`: quitting mid-transcription leaves nothing running, and it carries on at the next start.
+- `readd-erasing.mjs`: a VOD removed and added again while it's being erased.
+- `readd-stuck.mjs`: a VOD removed and added again while its work won't stop.
+- `recovery.mjs`: a library that won't open starts the recovery screen.
+- `reload.mjs`: a page reload brings back what was open.
+- `remembered.mjs`: the small choices the page remembers outlast a restart.
+- `remove.mjs`: removing a VOD asks first.
+- `row-menus.mjs`: every library row's right-click menu.
+- `scrub-thumbnail.mjs`: the timeline's thumbnail shows the right frame.
+- `search-large.mjs`: searching 60 VODs of two hours' talk, timed.
+- `search.mjs`: searching two VODs, and a result shown in its transcript.
+- `settings.mjs`: settings, the clip format and quality among them, outlast a restart, and Reset settings puts them back.
+- `setup.mjs`: first-run setup, then the library; always runs first when chosen.
+- `short-mode.mjs`: a short window shows the player alone.
+- `site-embed.mjs`: a site's VOD with the app's picture under its player; needs the network and an `embed-takeover` build.
+- `site-frames.mjs`: the time by frame under a site's own player; needs the network.
+- `site-in-out.mjs`: I right after a timeline click, on a site's VOD; needs the network.
+- `site-plain.mjs`: a site's VOD in its own player, left as it is; needs the network.
+- `snippet-editor.mjs`: a clip opened in the editor.
+- `speed-menu.mjs`: the speed button clicked, and held for its menu; the captions button right-clicked and held for the Transcribe menu.
+- `store-errors.mjs`: errors show as toasts wherever the user is.
+- `streamer-card.mjs`: a person's card from their name or picture, showing only what it has; an older VOD's channel linked after Refresh details.
+- `transcribe-search-play.mjs`: adding, transcribing, searching and playing a file.
+- `transcribe-stretch.mjs`: transcribing only a stretch of a file.
+- `upgrade-0.4.0.mjs`: opening 0.4.0's library and settings.
+- `upgrade-0.5.0.mjs`: opening 0.5.0's library, with a transcription paused part-way.
+- `upgrade-0.5.1.mjs`: opening 0.5.1's library and settings.
+- `upgrade-0.5.2-dev.mjs`: opening 0.5.2-dev's library and settings.
+- `upgrade.mjs`: opening 0.3.0's library and settings.
+- `video-files.mjs`: video files of several kinds, each transcribed and played.
+- `vod-actions.mjs`: a VOD's Transcribe, Cancel, Pause and Resume.

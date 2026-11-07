@@ -13,6 +13,21 @@ import * as os from "../lib/os.mjs";
 
 export default {
   name: "transcribe-search-play",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "search-results-playing":
+      'A sound file is open with the search box reading landed: its caption line over the waveform, the waveform coloured where it has played, and below it 1 match for "landed" in 1 VOD, one line at 0:04 with landed highlighted.',
+    "player-caption":
+      "Dark theme: over the sound file's waveform its caption line (… has landed.) in light text on the dark page, readable, the waveform coloured up to the playhead; below, the search's one match with landed highlighted.",
+    "transcript-not-following":
+      "Dark theme. A ten-minute file's transcript is scrolled to its top (lines from 0:00) while the playhead stands at 5:21 on the timeline; no line in view is lit, and a Follow along button with a down arrow floats at the bottom middle of the transcript.",
+    "transcript-following":
+      "Dark theme. The transcript has scrolled to the line playing: the line at 5:17, under the playhead's 5:21, is lit in the middle of the view with lines before and after it, and there is no Follow along button.",
+    "transcript-search-match":
+      "Dark theme. The search box reads landed and the file plays (the bar shows the pause icon, about 1:33); the transcript, not the results, is showing, with the line at 1:31 lit in view, lines around it, and no Follow along button.",
+    "line-marked-on-timeline":
+      "Dark theme. The pointer is over the transcript line at 1:15, which is shaded; on the timeline a thin bright vertical mark stands at 1:15, a quarter of the way from the 1:00 tick to 2:00, while the playhead is at 0:00.",
+  },
   async run(app, { fixtures, out, checkpoint }) {
     await app.toLibrary();
     const done = await app.addAndTranscribe(fixtures.landed);

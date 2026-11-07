@@ -4,6 +4,11 @@ import { MINUTE, until } from "../lib/app.mjs";
 
 export default {
   name: "add-link-error",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "link-error":
+      "The library, still empty: the link box holds https://example.invalid/not-a-vod, and just under it a short message in red says VODscribe can't use that link and asks for a link to a video page; below it No VODs yet, and no new row.",
+  },
   async run(app, ctx) {
     await app.toLibrary();
     // Well-formed (the box is type="url"), but no site's VOD, nor anywhere at all.

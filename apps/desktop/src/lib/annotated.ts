@@ -4,7 +4,9 @@
 // chapters have no colour of their own). The data comes through the app's
 // commands (list_marks, transcript, vod_annotations), never from the file.
 
+import { channelLabel, channelUrl } from "./accounts";
 import type { Activity, CastMember, Vod } from "./api";
+import { sameName } from "./castNames";
 
 /** The cast's colours, by their place in the cast: each reads on the light
  *  and the dark theme alike, and none is the accent. */
@@ -61,35 +63,142 @@ export function castDetail(m: CastMember): string {
 
 /**
  * The cast member whose channel the VOD is on, by the channel's name: the one
- * with an account whose name, player or login is `channel` (any case), a
- * streamer first. Their picture goes beside the channel's name in the VOD's
- * heading and its library row. Undefined when none has an account.
+ * with an account whose name, player or login is `channel`, or whose login is
+ * the channel's `login` as its site gave it (any case), a streamer first.
+ * Their picture goes beside the channel's name in the VOD's heading and its
+ * library row. Undefined when none has an account.
  */
-export function channelMember(cast: CastMember[], channel: string | null | undefined): CastMember | undefined {
-  const key = channel?.trim().toLowerCase();
-  if (!key) return undefined;
-  const is = (n: string | undefined) => n?.trim().toLowerCase() === key;
-  const found = cast.filter((m) => m.account && !isVoice(m) && (is(m.name) || is(m.player) || is(m.account.login)));
+export function channelMember(
+  cast: CastMember[],
+  channel: string | null | undefined,
+  login?: string | null,
+): CastMember | undefined {
+  const lower = (n: string | null | undefined) => n?.trim().toLowerCase() || undefined;
+  const [key, loginKey] = [lower(channel), lower(login)];
+  if (!key && !loginKey) return undefined;
+  const found = cast.filter(
+    (m) =>
+      m.account &&
+      !isVoice(m) &&
+      ([m.name, m.player, m.account.login].some((n) => key && lower(n) === key) ||
+        (loginKey && lower(m.account.login) === loginKey)),
+  );
   return found.find((m) => m.role.trim().toLowerCase() === "streamer") ?? found[0];
 }
 
 /**
- * VOD `vod`'s own channel as an account, from the VOD itself, for when its
- * annotations give its streamer none: on Twitch the login is the channel's
- * name in lower case (when that name can be a login), on Kick it's in the
- * VOD's address (kick.com/<login>/videos/…). None on YouTube, where the VOD
- * has its channel's name and not its handle, nor for a file.
+ * Who VOD `vod`'s channel is, in its cast `cast`: the cast member the
+ * channel is by an account (`channelMember`, by the channel's name or the
+ * login its site gave), else one named as it (by name or player) with no
+ * account, given the channel's own where the VOD has one
+ * (`channelAccount`), else the channel itself, with that account. The
+ * picture beside the channel's name (ChannelDisc.svelte) and the card it
+ * opens (streamers.svelte.ts `channelCard`) are this one person. Undefined
+ * for a VOD with no channel.
  */
-export function channelAccount(vod: Pick<Vod, "platform" | "channel" | "url">): CastMember["account"] {
+export function channelPerson(
+  vod: Pick<Vod, "platform" | "channel" | "url" | "channel_login" | "channel_url">,
+  cast: CastMember[],
+): CastMember | undefined {
+  const channel = vod.channel?.trim();
+  if (!channel) return undefined;
+  const own = channelAccount(vod);
+  const account = own ? { account: own } : {};
+  const named = cast.find(
+    (m) => !isVoice(m) && (sameName(m.name, channel) || (!!m.player && sameName(m.player, channel))),
+  );
+  return (
+    channelMember(cast, channel, vod.channel_login) ??
+    (named && { ...named, ...account }) ?? { name: vod.channel!, aliases: [], role: "streamer", ...account }
+  );
+}
+
+/**
+ * VOD `vod`'s own channel as an account, from the VOD itself, for when its
+ * annotations give its streamer none: on Twitch the login the site gave
+ * (`channel_login`), else, for a VOD added before that was kept, the
+ * channel's name in lower case (when that name can be a login); on Kick
+ * it's in the VOD's address (kick.com/<login>/videos/…); on YouTube the
+ * handle the site gave ("@name") or the channel's id, else either as its
+ * channel's page (`channel_url`) has it. None for a file, or when nothing
+ * says (never a guess from YouTube's name).
+ */
+export function channelAccount(
+  vod: Pick<Vod, "platform" | "channel" | "url" | "channel_login" | "channel_url">,
+): CastMember["account"] {
   if (vod.platform === "twitch") {
-    const login = vod.channel?.trim().toLowerCase();
+    const login = (vod.channel_login || vod.channel)?.trim().toLowerCase();
     return login && /^[a-z0-9_]{1,25}$/.test(login) ? { platform: "twitch", login } : undefined;
   }
   if (vod.platform === "kick") {
     const login = /^https:\/\/(?:www\.)?kick\.com\/([A-Za-z0-9_-]+)\/videos\//.exec(vod.url)?.[1];
     return login ? { platform: "kick", login: login.toLowerCase() } : undefined;
   }
+  if (vod.platform === "youtube") {
+    const given = vod.channel_login?.trim();
+    if (given && (YOUTUBE_HANDLE.test(given) || YOUTUBE_CHANNEL_ID.test(given)))
+      return { platform: "youtube", login: given };
+    const page = vod.channel_url ? httpsUrl(vod.channel_url) : null;
+    if (!page || siteOf(page) !== "youtube.com") return undefined;
+    const [, first, second, ...rest] = page.pathname.replace(/\/+$/, "").split("/");
+    if (rest.length) return undefined;
+    const handle = first && !second ? decoded(first) : null;
+    if (handle && YOUTUBE_HANDLE.test(handle)) return { platform: "youtube", login: handle };
+    if (first === "channel" && second && YOUTUBE_CHANNEL_ID.test(second)) return { platform: "youtube", login: second };
+  }
   return undefined;
+}
+
+/** A YouTube handle as yt-dlp gives it, "@" first; YouTube's allow letters of any script. */
+const YOUTUBE_HANDLE = /^@[\p{L}\p{M}\p{N}._·-]{1,100}$/u;
+/** A YouTube channel's id. */
+const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
+
+const decoded = (part: string): string | null => {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return null;
+  }
+};
+
+/** `url` read as an https link to a plain host (no user, password or port); null for anything else. */
+function httpsUrl(url: string): URL | null {
+  let read: URL;
+  try {
+    read = new URL(url);
+  } catch {
+    return null;
+  }
+  const plain = read.protocol === "https:" && !read.username && !read.password && !read.port;
+  return plain && read.hostname.includes(".") ? read : null;
+}
+
+/** The site `url` is on: its host without "www." or "m.". */
+const siteOf = (url: URL) => url.hostname.replace(/^(?:www|m)\./, "");
+
+/**
+ * VOD `vod`'s own channel as a link on its streamer card, from the VOD
+ * itself: on YouTube its account's (`channelAccount`), on another site the
+ * channel's page as the site gave it (`channel_url`), only when that is
+ * https on the VOD's own site (its host or one under it). None on Twitch
+ * and Kick, whose card goes by the account as before, nor for a file, nor
+ * when nothing is known.
+ */
+export function channelPage(
+  vod: Pick<Vod, "platform" | "channel" | "url" | "channel_login" | "channel_url">,
+): { label: string; href: string } | undefined {
+  if (vod.platform === "twitch" || vod.platform === "kick" || vod.platform === "local") return undefined;
+  if (vod.platform === "youtube") {
+    const account = channelAccount(vod);
+    return account && { label: channelLabel(account), href: channelUrl(account) };
+  }
+  const page = vod.channel_url ? httpsUrl(vod.channel_url) : null;
+  const own = vod.url ? httpsUrl(vod.url) : null;
+  if (!page || !own) return undefined;
+  const [site, vods] = [siteOf(page), siteOf(own)];
+  if (site !== vods && !site.endsWith(`.${vods}`)) return undefined;
+  return { label: page.href.replace(/^https:\/\/(?:www\.)?/, "").replace(/\/$/, ""), href: page.href };
 }
 
 /**

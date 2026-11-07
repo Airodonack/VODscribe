@@ -14,12 +14,27 @@ import * as os from "../lib/os.mjs";
 
 const SITES = [
   ["twitch", "https://www.twitch.tv/videos/2901646294"],
-  ["kick", "https://kick.com/airodonack/videos/01a18dfb-c590-7069-b36a-97fe9266ffde"],
+  ["kick", "https://kick.com/airodonack/videos/01a1b43f-da70-76d4-88f2-d22fbea8ec73"],
   ["youtube", "https://www.youtube.com/watch?v=noa29qsTc4g"],
 ];
 
 export default {
   name: "platforms",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "twitch-playing":
+      "A Twitch VOD plays in Twitch's own player (the header says Twitch · Airodonack and Open on Twitch): the test video's big running clock and Segment 1 of 7 show in it, the app's bar under the timeline shows the pause icon, and the transcript lists lines from 0:00 with 0 messages beside Chat.",
+    "twitch-caption-strip":
+      "A Twitch VOD playing in Twitch's own player: in the dark strip just under the player one short line of caption text, centred and readable, from the transcript's first line (… captions and transcripts.); nothing of ours lies over the player.",
+    "kick-playing":
+      "A Kick VOD, My first stream. (Kick · Airodonack, Open on Kick), plays: the test video's big running clock and Segment 1 of 7 show, the bar shows the pause icon at a few seconds in, and the transcript lists lines from 0:00 with 0 messages beside Chat.",
+    "kick-caption-strip":
+      "A Kick VOD playing: in the dark strip just under the player one short line of caption text, centred and readable, from the transcript's first line (… captions and transcripts.); nothing of ours lies over the picture.",
+    "youtube-playing":
+      "A YouTube VOD, vodscribe test video (YouTube · Airodonack, Open on YouTube), plays in YouTube's own player over the test video's running clock; the bar shows the pause icon a few seconds in, No chat replay beside a greyed Chat, and the transcript lists lines at 0:00, 0:10, 0:20 and on.",
+    "youtube-caption-strip":
+      "A YouTube VOD playing in YouTube's own player: in the dark strip just under the player one line of caption text, centred and readable, from the transcript's first line (This is the VODScribe test video …); no caption text inside YouTube's player, and the strip doesn't overlap the player.",
+  },
   needs: ["network"],
   allowErrors: true,
   async run(app, ctx) {
@@ -100,7 +115,7 @@ export default {
           mute: !!document.querySelector('.bar button[aria-label="Mute"], .bar button[aria-label="Unmute"]'),
           volume: !!document.querySelector('.bar input[aria-label="Volume"]'),
           speed: !!document.querySelector(".bar button.speed"),
-          captions: document.querySelector('.bar button[aria-label="Captions"]')?.disabled === false,
+          captions: document.querySelector('.bar button[aria-label="Captions"]')?.getAttribute("aria-disabled") === "false",
         }`);
         const want = { mute: true, volume: true, speed: site !== "twitch", captions: true };
         if (Object.keys(want).some((k) => bar[k] !== want[k]))

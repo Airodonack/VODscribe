@@ -14,6 +14,19 @@ class AppSettings {
   // thread, so two quick changes could otherwise land older-last, and the
   // next launch would miss the newer one.
   #saving: Promise<void> = Promise.resolve();
+  /** Told once each save or reset has landed, with the settings as saved. */
+  #saved = new Set<(saved: Settings) => void>();
+
+  /** Has `told` called once each save or reset has landed: the app reads
+   *  the settings as saved from then on. */
+  onSaved(told: (saved: Settings) => void) {
+    this.#saved.add(told);
+  }
+
+  #landed() {
+    this.error = null;
+    if (this.value) for (const told of this.#saved) told(this.value);
+  }
 
   load(): Promise<void> {
     this.#loading ??= api.getSettings().then(
@@ -45,7 +58,7 @@ class AppSettings {
       api.resetSettings().then(
         (fresh) => {
           this.value = fresh;
-          this.error = null;
+          this.#landed();
         },
         (e) => void (this.error = String(e)),
       ),
@@ -66,7 +79,7 @@ class AppSettings {
       if (!this.value) return;
       this.value = changed(this.value);
       return api.setSettings($state.snapshot(this.value)).then(
-        () => void (this.error = null),
+        () => this.#landed(),
         (e) => void (this.error = String(e)),
       );
     });

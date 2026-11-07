@@ -19,7 +19,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { api, type Put, type Vod } from "./api";
-  import { os } from "./platform";
+  import { fromSite, os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, releaseNotes } from "./links";
@@ -29,7 +29,6 @@
   import Spinner from "./Spinner.svelte";
   import { Reorder } from "./reorder.svelte";
   import UpdateBanner from "./UpdateBanner.svelte";
-  import FormatHint from "./FormatHint.svelte";
   import VodRow from "./VodRow.svelte";
   import EditRow from "./EditRow.svelte";
   import Jobs from "./Jobs.svelte";
@@ -40,6 +39,7 @@
   import Menu, { type MenuItem } from "./Menu.svelte";
   import { actionsFor } from "./actions";
   import { offers } from "./offers.svelte";
+  import { refreshDetails } from "./refresh.svelte";
   import { pressToDrag, type Pressed } from "./pressToDrag";
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
@@ -62,7 +62,8 @@
 
   // A row's menu, opened by a right click on it (or the menu key): what can
   // be done with its VOD or edit (actions.ts), and for a VOD from a site,
-  // asking for its annotations. Add to edit… there asks which edit, beside the row.
+  // asking its site about it again (refresh.svelte.ts) and asking for its
+  // annotations. Add to edit… there asks which edit, beside the row.
   let menuOpen = $state(false);
   let menuFor = $state<{ row: LibraryRow; el: HTMLElement } | null>(null);
   let addingRow = $state(false);
@@ -85,14 +86,16 @@
       { kind: "vod", vod },
       { addToEdit, onremove: (id) => id === selectedId && onselect(null) },
     );
-    // Annotations are published for VODs from sites (a file's id is this computer's own).
+    // Before Remove…: asking its site again, for a VOD from one, and
+    // annotations, published for VODs from sites (a file's id is this computer's own).
+    const asks: MenuItem[] = [];
+    if (fromSite(vod)) asks.push({ label: "Refresh details", icon: "redo", run: () => void refreshDetails(vod) });
     if (vod.platform !== "local")
-      items.splice(
-        items.length - 1,
-        0,
+      asks.push(
         { label: "Check for a VODscription", icon: "gift", run: () => void offers.check(vod) },
         { label: "Check all VODs for VODscriptions", icon: "gift", run: () => void offers.checkLibrary() },
       );
+    items.splice(items.length - 1, 0, ...asks);
     return items;
   });
 
@@ -396,12 +399,13 @@
 
 <aside class="library-pane">
   <!-- Sibling elements, since buttons can't nest: the site link fills the
-       header, the credit sits on top of it under the name, and the version
-       number at the right, linking to what's new in it. -->
+       header, the credit inside it under the name, and the version number
+       on top of it at the right, linking to what's new in it. -->
   <div class="brand">
     <button class="site" onclick={() => openUrl(SITE)} title="vodscribe.com">
       <Logo size={28} tile />
       <span class="name">VODscribe</span>
+      <span class="credit">Made by {AUTHOR}</span>
       <span class="external"><Icon name="external" size={12} /></span>
     </button>
     {#if version}
@@ -411,12 +415,9 @@
         title="What's new in {version.split(/[_+-]/)[0]}">v{version}</button
       >
     {/if}
-    <span class="credit">Made by {AUTHOR}</span>
   </div>
 
   <UpdateBanner />
-  <FormatHint />
-
   <form onsubmit={add}>
     <input
       type="url"
@@ -486,6 +487,7 @@
 
   <div
     class="list library-list"
+    data-press-blurs-text
     role="listbox"
     aria-label="Library"
     aria-multiselectable="true"
@@ -625,6 +627,8 @@
     border-radius: 0;
     background: var(--surface);
     color: var(--muted);
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .site:hover:not(:disabled) {
@@ -666,13 +670,12 @@
     text-decoration: underline;
   }
 
+  /* Part of the site link: a click on it opens the site too. */
   .credit {
     position: absolute;
     left: 50px;
     bottom: 7px;
     padding: 0 2px;
-    border: none;
-    background: none;
     color: var(--muted);
     font-size: 11px;
     font-weight: 400;

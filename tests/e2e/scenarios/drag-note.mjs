@@ -11,7 +11,6 @@
 // library entry; the clip asked for is deleted before it's downloaded.
 
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { makeSiteVod } from "../lib/data.mjs";
@@ -52,10 +51,7 @@ export default {
      * then lets go at (`x`, `y`); the note is up after, or this throws.
      */
     const pullOut = async (where, x, y) => {
-      // The app's window in front, as a click on its title bar puts it.
-      const edge = await os.windowRect(app);
-      os.click(edge.x + Math.round(edge.w / 2), edge.y - 16, edge.scale);
-      await sleep(300);
+      await os.toFront(app);
       const button = await os.rectOf(app, "button.action.clip");
       const page = await os.windowRect(app);
       // Screen points on macOS (its runners have a scale of 1).
@@ -114,7 +110,9 @@ export default {
       await pullOut("over the app", page.x + Math.round(page.w / 2), Math.min(button.y + 120, page.y + page.h - 20));
       await answer("Cancel");
       if ((await clipsOf()).length) throw new Error("Cancel made a clip");
-      await sleep(300);
+      // Download clip's toast is said as the note's answer is heard, in the
+      // click that closes the note (dragout.ts): with the note gone, what
+      // Cancel says is said already.
       if (await app.toastSays()) throw new Error(`after Cancel the toast says "${await app.toastSays()}"`);
       ctx.log("Cancel: nothing made, nothing said");
     }

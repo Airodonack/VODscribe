@@ -169,7 +169,7 @@ impl<J: Clone + Send + 'static> Jobs<J> {
     /// Stops the job running if it's one `which` finds, and calls `mark`
     /// with it, under the queue's lock; whether it was. Its end (`run_ended`'s
     /// `ended`) comes after, never between: what `mark` notes, `ended` finds.
-    pub(crate) fn stop_running_then(&self, which: impl Fn(&J) -> bool, mark: impl FnOnce(&J)) -> bool {
+    pub(crate) fn stop_running_and_mark(&self, which: impl Fn(&J) -> bool, mark: impl FnOnce(&J)) -> bool {
         let queue = self.shared.0.lock().unwrap();
         match &queue.running {
             Some((job, stop)) if which(job) => {
@@ -219,16 +219,16 @@ impl<J: Clone + Send + 'static> Jobs<J> {
 
     /// As `run`, and as each job ends, asks `ended` about it under the
     /// queue's lock, as the job stops being the one running: a
-    /// `stop_running_then` comes wholly before that or finds no job. What
-    /// `ended` says goes to `then`, once the lock is let go of, for work that
-    /// takes other locks (the library's is taken before this one:
+    /// `stop_running_and_mark` comes wholly before that or finds no job. What
+    /// `ended` says goes to `after_unlock`, once the lock is let go of, for
+    /// work that takes other locks (the library's is taken before this one:
     /// `Cutter::stop_vod`).
     pub(crate) fn run_ended<T>(
         &self,
         name: &str,
         work: impl Fn(J, &AtomicBool) + Send + 'static,
         ended: impl Fn(&J) -> T + Send + 'static,
-        then: impl Fn(J, T) + Send + 'static,
+        after_unlock: impl Fn(J, T) + Send + 'static,
     ) -> Result<()> {
         // A second thread would run two jobs at once, and `running` holds one.
         let again = self.started.swap(true, Ordering::Relaxed);
@@ -262,7 +262,7 @@ impl<J: Clone + Send + 'static> Jobs<J> {
                 };
                 // For `stop_and_wait`.
                 wake.notify_all();
-                then(job, said);
+                after_unlock(job, said);
                 tell(&watcher);
             }
         })?;
@@ -466,7 +466,7 @@ mod tests {
         jobs.push(1);
         is_ending.recv_timeout(Duration::from_secs(5)).unwrap();
         let mark = marks.clone();
-        let canceled = jobs.stop_running_then(
+        let canceled = jobs.stop_running_and_mark(
             |&j| j == 1,
             |&j| {
                 mark.lock().unwrap().insert(j);
@@ -476,7 +476,7 @@ mod tests {
         gate.send(()).unwrap();
         assert_eq!(was_settled.recv_timeout(Duration::from_secs(5)), Ok((1, true)), "its end found the mark");
         assert!(marks.lock().unwrap().is_empty(), "a mark left behind: {:?}", marks.lock().unwrap());
-        assert!(!jobs.stop_running_then(|&j| j == 1, |_| panic!("not running")));
+        assert!(!jobs.stop_running_and_mark(|&j| j == 1, |_| panic!("not running")));
     }
 
     #[test]

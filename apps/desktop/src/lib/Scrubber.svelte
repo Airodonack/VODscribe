@@ -137,7 +137,7 @@
     pieces?: LanePiece[];
     /** An edit's real splits, where what plays jumps (else where its pieces meet). */
     joins?: number[];
-    /** Stretches of an edit whose footage isn't downloaded yet, and how much of each (from its start) is. */
+    /** Stretches whose footage isn't downloaded yet (an edit's, or a VOD's video downloading to play), and how much of each (from its start) is. */
     pending?: { start: number; end: number; done: number }[];
     /** The piece acted on (an edit's: the one at the playhead), outlined. */
     selectedPiece?: number | null;
@@ -164,7 +164,7 @@
     shown?: number | null;
     /** The video's frame rate, for marks (assumed, for players that don't say). */
     fps: number;
-    /** Stretches to light up: what the Clip or Transcribe button would act on, while it's hovered. */
+    /** Stretches to light up: what Clip or an entry of the Transcribe menu would act on, while it's hovered. */
     highlight?: { start: number; end: number }[];
     /** A stretch to light up as going: the piece Remove would take out, while it's hovered. */
     removing?: { start: number; end: number } | null;
@@ -1690,7 +1690,7 @@
     pointer-events: none;
   }
 
-  /* An edit's footage not downloaded yet. */
+  /* Footage not downloaded yet: an edit's, or a VOD's video playing as it downloads. */
   .pending {
     position: absolute;
     top: 0;

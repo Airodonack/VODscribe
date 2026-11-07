@@ -1,0 +1,446 @@
+// A person's streamer card, opened at the pointer by a click on their name or
+// their picture over their lines in the transcript, and by the VOD's channel
+// over the player. Two Twitch VODs of Marlowe's channel, made by importing
+// fixtures/annotations-minute.json with a cast of four: Marlowe (played by
+// Vance), Ada, Pell and Jules. The cards are served by the run's file host
+// (lib/fileHost.mjs) from fixtures/streamer-cards.json: Vance's has
+// everything (a picture, three channels, aliases, a social link and a
+// NoPixel section with two characters, one with its wiki page), Ada's a name
+// and two channels, Pell's a name alone, and Jules has none. The first VOD's
+// annotations name each card by its id and the VOD's context, NoPixel; the
+// second's name neither, so Marlowe's card is found through the index by
+// their Twitch account, and it has no NoPixel section. Each card shows only
+// what's there: no empty heading or list, nothing drawn with no height, the
+// same gap between what is there. A card is named for the person, and the
+// names and pictures that open one have no tooltip: the name is there to
+// read. With the file host not answering (offline), Pell's card is the
+// name the VOD gives, "Pell", and once it answers, the card's own, "Pell
+// Harrow". Escape closes a card. A VOD
+// added from YouTube (the yt-dlp stand-in's, lib/siteVod.mjs) and one from
+// Dailymotion, with no annotations: the channel's card links to the
+// channel's page as the site named it, with no picture. And a YouTube VOD
+// added before the library kept its channel's login and page: its card has
+// no link to the channel until its row's Refresh details asks the site
+// again, its row saying "Refreshing details…" meanwhile, under what it
+// says of the VOD (Not transcribed), which stays; while the site
+// says the video's gone, that says so, naming the VOD, and changes nothing;
+// then it has the channel's page, and the card and VODscription published
+// since show, the index asked for again past the session's.
+
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
+
+import { MINUTE, until } from "../lib/app.mjs";
+import { dataDirs, libraryPath } from "../lib/data.mjs";
+import { notFilter, serveFiles } from "../lib/fileHost.mjs";
+import { addSiteVod, offerShown, siteSaysGone, withSiteVods } from "../lib/siteVod.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
+const CHAT = path.join(here, "..", "fixtures", "annotations-minute.chat.json");
+const CARDS = JSON.parse(readFileSync(path.join(here, "..", "fixtures", "streamer-cards.json"), "utf8"));
+const NAMED = "v100000091";
+const LOOKED_UP = "v100000092";
+/** The stand-in's YouTube VOD added as one before 0.7.2 was, which kept no channel login or page. */
+const OLDER = "e2eolder";
+
+/** Vance's picture: four pixels square, all yellow. */
+const PICTURE = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEUlEQVR4nGP4eoQBjhiI4wAA3EIbkanqb5MAAAAASUVORK5CYII=",
+  "base64",
+);
+
+/** A file host's answer of `body`, as JSON. */
+const json = (body) => ({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+/** The file host: the cards and their index, and Vance's picture; nothing else is there. */
+function host(method, at) {
+  if (at === "/streamers.json") return json(CARDS.index);
+  const card = /^\/streamers\/([a-z0-9_-]+)\.json$/.exec(at)?.[1];
+  if (card && CARDS.cards[card]) return json(CARDS.cards[card]);
+  if (at === "/avatar/twitch/marlowe_live") return { status: 302, headers: { Location: "/pictures/vance.png" } };
+  if (at === "/pictures/vance.png") return { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE };
+  return { status: 404 };
+}
+
+/** The card open, as it reads: what it says, and what in it is empty or flat. */
+const READ = `
+  const card = document.querySelector('[role="dialog"] .card');
+  if (!card) return null;
+  const text = (el) => el.textContent.replace(/\\s+/g, " ").trim();
+  const img = card.querySelector("header .avatar img");
+  const rects = [...card.children].map((el) => el.getBoundingClientRect());
+  const box = card.closest('[role="dialog"]').getBoundingClientRect();
+  return {
+    settled: card.dataset.settled === "true",
+    name: text(card.querySelector(".name")),
+    aliases: card.querySelector(".aliases") ? text(card.querySelector(".aliases")) : null,
+    links: [...card.querySelectorAll(".links li")].map((li) => text(li) + " <" + li.querySelector("a").href + ">"),
+    sections: [...card.querySelectorAll("section.context")].map((s) => text(s.querySelector("h3")) + ": " +
+      [...s.querySelectorAll("li")].map((li) => text(li) + (li.querySelector("a") ? " <" + li.querySelector("a").href + ">" : "")).join(", ")),
+    picture: img ? (!img.complete ? "loading" : img.naturalWidth > 0 && img.classList.contains("loaded") ? "shown" : "none") : "no img",
+    empty: [...card.querySelectorAll("ul, li, section, h3, a, .aliases")].filter((el) => !text(el)).map((el) => el.tagName.toLowerCase() + "." + el.className),
+    flat: [...card.children, ...card.querySelectorAll("li, h3")].filter((el) => el.getBoundingClientRect().height < 1).map((el) => el.tagName.toLowerCase()),
+    gaps: rects.slice(1).map((r, i) => Math.round(r.top - rects[i].bottom)),
+    left: Math.round(box.left),
+    top: Math.round(box.top),
+    bottom: Math.round(box.bottom),
+  };`;
+
+/** Watches VOD `id`'s row for "Refreshing details…" from now on (`sawRefreshing`):
+ *  it may say so for less time than a look from here takes. */
+const watchRefreshing = (app, id) =>
+  app.js(
+    `const area = () => document.querySelector('.vod[data-key="' + arguments[0] + '"] .status-area');
+     window.__refreshingSeen = null;
+     const seen = new MutationObserver(() => {
+       const says = area()?.textContent.replace(/\\s+/g, " ").trim();
+       if (says?.includes("Refreshing details…")) { window.__refreshingSeen = says; seen.disconnect(); }
+     });
+     seen.observe(document.body, { childList: true, subtree: true, characterData: true });`,
+    String(id),
+  );
+/** What the row said once it said "Refreshing details…" (`watchRefreshing`), or null if it never did. */
+const sawRefreshing = (app) => app.js(`return window.__refreshingSeen`);
+
+export default {
+  name: "streamer-card",
+  expects: {
+    "streamer-card-full":
+      'A small card floating over the window: a round yellow picture beside the bold name "Vance" and "also Mar, V" under it; then, under a thin rule, links in the accent colour: "twitch.tv/marlowe_live", "youtube.com/@vanceplays", "kick.com/vance" and "Bluesky", each with a small arrow sign; then, under another rule, a small grey heading "NOPIXEL" over "Marlowe" (a link) and "Dez Kade". Nothing in it overlaps or is cut off, and there are no empty headings or blank stretches.',
+    "streamer-card-name":
+      'A small card floating over the window with only a round coloured disc holding the letter "P" and the bold name "Pell Harrow" beside it: no rule, no links, no headings, no empty space under the name.',
+    "streamer-card-channels":
+      'A small card floating over the window: a round coloured disc with the letter "A" beside the bold name "Ada", then under a thin rule two links, "kick.com/ada_plays" and "twitch.tv/ada_plays"; nothing else, no empty heading under them.',
+  },
+  async run(app, ctx) {
+    await app.toLibrary();
+    const dir = path.join(ctx.out, "streamer-card");
+    mkdirSync(dir, { recursive: true });
+    /** Imports the fixture as Twitch VOD `id`, its cast and contexts as `named` says; the VOD made. */
+    const importAs = async (id, named) => {
+      const doc = JSON.parse(readFileSync(FIXTURE, "utf8"));
+      doc.source.platform = "twitch";
+      doc.source.id = id;
+      const cards = { Marlowe: "marlowe", Ada: "ada", Pell: "pell" };
+      doc.cast = [
+        ...doc.cast,
+        { name: "Pell", aliases: [], role: "friend" },
+        { name: "Jules", aliases: [], role: "chatter" },
+      ].map((m) => (named && cards[m.name] ? { ...m, streamer: cards[m.name] } : m));
+      // Pell says the line no one was named for, and Jules the last.
+      doc.transcript.segments[2].speaker = "Pell";
+      doc.transcript.segments[5].speaker = "Jules";
+      if (named) doc.contexts = ["nopixel"];
+      const file = path.join(dir, `${id}.json`);
+      writeFileSync(file, JSON.stringify(doc));
+      writeFileSync(path.join(dir, `${id}.chat.json`), readFileSync(CHAT));
+      return (await app.invoke("import_annotations_file", { path: file })).vod;
+    };
+    const named = await importAs(NAMED, true);
+    const lookedUp = await importAs(LOOKED_UP, false);
+
+    /** Clicks what `part` is ("name" or "picture") of the transcript's heading for `who`, at its middle, once it's
+     *  drawn; the point clicked. */
+    const clickHead = (who, part) =>
+      until(
+        `the transcript's heading for ${who}`,
+        () =>
+          app.js(
+            `const head = [...document.querySelectorAll("#transcript .group-head")].find((h) => h.querySelector(".speaker")?.textContent.trim() === arguments[0]);
+             if (!head) return null;
+             const el = head.querySelector(arguments[1] === "name" ? ".speaker" : ".avatar");
+             // In view, as anything clicked is: a heading below the fold would put its card there too.
+             el.scrollIntoView({ block: "center" });
+             const r = el.getBoundingClientRect();
+             const [x, y] = [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+             el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: x, clientY: y, detail: 1, view: window }));
+             return { x, y };`,
+            who,
+            part,
+          ),
+        10_000,
+      );
+    /** The card, once its lookup has settled and its picture has loaded or not. */
+    const settledCard = (what) =>
+      until(
+        `${what}'s card`,
+        async () => {
+          const got = await app.js(READ);
+          return got?.settled && got.picture !== "loading" && got;
+        },
+        10_000,
+      );
+    const close = async () => {
+      await app.key("Escape");
+      await until("the card closed", async () => (await app.js(READ)) === null, 5_000);
+    };
+
+    const wrong = [];
+    /** Checks a card against `want` (the fields it should read as), and that nothing in it is empty or flat. */
+    const check = (what, got, want) => {
+      const seen = {
+        name: got.name,
+        aliases: got.aliases,
+        links: got.links,
+        sections: got.sections,
+        picture: got.picture,
+      };
+      if (JSON.stringify(seen) !== JSON.stringify(want)) wrong.push(`${what}: ${JSON.stringify(seen)}`);
+      if (got.empty.length) wrong.push(`${what} has empty ${got.empty.join(", ")}`);
+      if (got.flat.length) wrong.push(`${what} has ${got.flat.join(", ")} drawn with no height`);
+      if (got.gaps.some((g) => g !== got.gaps[0])) wrong.push(`${what}'s parts are ${got.gaps.join(", ")} px apart`);
+    };
+
+    // Offline: the file host answers nobody. Pell's card is what the VOD knows.
+    await app.openVod(named.id);
+    await clickHead("Pell", "name");
+    const offline = await settledCard("Pell, offline");
+    const known = { name: "Pell", aliases: null, links: [], sections: [], picture: "no img" };
+    check("Pell's card offline", offline, known);
+    await close();
+
+    const served = serveFiles(host);
+    const vance = {
+      name: "Vance",
+      aliases: "also Mar, V",
+      links: [
+        "twitch.tv/marlowe_live <https://www.twitch.tv/marlowe_live>",
+        "youtube.com/@vanceplays <https://www.youtube.com/@vanceplays>",
+        "kick.com/vance <https://kick.com/vance>",
+        "Bluesky <https://bsky.app/profile/vance.example>",
+      ],
+      sections: ["NoPixel: Marlowe <https://nopixel.fandom.com/wiki/Marlowe>, Dez Kade"],
+      picture: "shown",
+    };
+    const ada = {
+      name: "Ada",
+      aliases: null,
+      links: [
+        "kick.com/ada_plays <https://kick.com/ada_plays>",
+        "twitch.tv/ada_plays <https://www.twitch.tv/ada_plays>",
+      ],
+      sections: [],
+      picture: "none",
+    };
+    const pell = { name: "Pell Harrow", aliases: null, links: [], sections: [], picture: "no img" };
+    const jules = { name: "Jules", aliases: null, links: [], sections: [], picture: "no img" };
+    const people = [
+      ["Marlowe (Vance)", vance, "streamer-card-full"],
+      ["Ada", ada, "streamer-card-channels"],
+      ["Pell", pell, "streamer-card-name"],
+      ["Jules", jules, null],
+    ];
+    for (const [who, want, checkpoint] of people)
+      for (const part of ["name", "picture"]) {
+        const at = await clickHead(who, part);
+        const got = await settledCard(`${who} (${part})`).catch(async () => app.js(READ));
+        if (!got) {
+          wrong.push(`no card for ${who} from their ${part}`);
+          continue;
+        }
+        check(`${who}'s card from their ${part}`, got, want);
+        // At the pointer: its left edge there, just below it, or above it on a short window.
+        const below = got.top >= at.y && got.top <= at.y + 12;
+        const above = got.bottom <= at.y && got.bottom >= at.y - 12;
+        if (Math.abs(got.left - at.x) > 1 || !(below || above))
+          wrong.push(`${who}'s card from their ${part} is at ${got.left},${got.top}, clicked at ${at.x},${at.y}`);
+        if (part === "name" && checkpoint) await ctx.checkpoint(checkpoint);
+        await close();
+      }
+
+    // The VOD's channel over the player: Vance's card, NoPixel and all.
+    await app.click(".info .meta .channel");
+    check("the channel's card", await settledCard("the channel"), vance);
+    // Named as the person is, not as our "card": the dialog, and no tooltip
+    // on a name or picture, the name being there to read.
+    const dialog = await app.js(
+      `return document.querySelector('[role="dialog"]:has(.card)')?.getAttribute("aria-label")`,
+    );
+    if (dialog !== "Vance") wrong.push(`the card's dialog is named "${dialog}"`);
+    await close();
+    const openers = await app.js(
+      `return [...document.querySelectorAll(".info .meta .channel, #transcript .group-head .speaker, #transcript .group-head .avatar")]
+         .map((el) => ({
+           text: [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim(),
+           title: el.getAttribute("title"),
+         }))`,
+    );
+    const titled = openers.filter((o) => o.title !== null);
+    if (!openers.length || titled.length) wrong.push(`names and pictures with tooltips: ${JSON.stringify(titled)}`);
+    const channel = openers[0];
+    if (channel?.text !== named.channel) wrong.push(`the channel over the player reads "${channel?.text}"`);
+
+    // The VOD whose annotations name no card: Marlowe's by their account, through
+    // the index, and no NoPixel section, the VOD naming no context.
+    await app.openVod(lookedUp.id);
+    const plain = { ...vance, sections: [] };
+    for (const part of ["name", "picture"]) {
+      await clickHead("Marlowe (Vance)", part);
+      check(`in a VOD naming no card, Marlowe's from their ${part}`, await settledCard("Marlowe"), plain);
+      await close();
+    }
+    await app.click(".info .meta .channel");
+    check("in a VOD naming no card, the channel's", await settledCard("the channel"), plain);
+    await close();
+    // Ada's by her account too; Pell, with neither an id nor an account, is the name the VOD gives.
+    await clickHead("Ada", "name");
+    check("in a VOD naming no card, Ada's", await settledCard("Ada"), ada);
+    await close();
+    await clickHead("Pell", "name");
+    check("in a VOD naming no card, Pell's", await settledCard("Pell"), known);
+    await close();
+
+    // Each card asked for once this session, and the index once.
+    const asked = served.requests.map((r) => r.path).filter((p) => p.startsWith("/streamers"));
+    const once = ["/streamers/ada.json", "/streamers/marlowe.json", "/streamers/pell.json", "/streamers.json"];
+    if (JSON.stringify([...asked].sort()) !== JSON.stringify(once.sort()))
+      wrong.push(`the file host was asked for ${asked.join(", ")}`);
+    served.stop();
+
+    // A site's VOD with no annotations: the channel's card is its name and
+    // its page, as the site named it; no picture (YouTube's waits for its
+    // icon, CastDisc.svelte), and no initial in the heading either.
+    if (process.platform !== "win32")
+      await withSiteVods(ctx, async (started) => {
+        // The helpers above drive `app`: the one started with the stand-in now.
+        app = started;
+        const sites = [
+          ["youtube", "e2echannel", "youtube.com/@marlowe <https://www.youtube.com/@marlowe>"],
+          ["dailymotion", "xe2echannel", "dailymotion.com/marlowe <https://www.dailymotion.com/marlowe>"],
+        ];
+        for (const [site, id, link] of sites) {
+          // Added, it opens; a Dailymotion VOD with no video kept has no player bar yet, so it's its heading waited for.
+          await addSiteVod(app, id, site === "youtube" ? null : site);
+          await until(
+            `${site}'s VOD open`,
+            () => app.js(`return !!document.querySelector(arguments[0])`, `.info .meta .platform.${site}`),
+            MINUTE,
+          );
+          await app.click(".info .meta .channel");
+          const got = await settledCard(`${site}'s channel`);
+          check(`${site}'s channel's card`, got, {
+            name: "Marlowe",
+            aliases: null,
+            links: [link],
+            sections: [],
+            picture: "no img",
+          });
+          await close();
+        }
+
+        // A VOD added before the library kept its channel's login and page,
+        // as one from 0.7.1 is upgraded: none in its row, and no info JSON
+        // left to fill them from at start (pipeline::fill_channels).
+        const older = await addSiteVod(app, OLDER);
+        await ctx.quit();
+        const db = new DatabaseSync(libraryPath());
+        try {
+          db.prepare("UPDATE vods SET channel_login = NULL, channel_url = NULL WHERE id = ?").run(older.id);
+        } finally {
+          db.close();
+        }
+        rmSync(path.join(dataDirs().at(-1), "work", `${older.id}.info.json`), { force: true });
+        app = await ctx.start();
+        // Published since it was added: the card for its channel's YouTube
+        // account, and its VODscription.
+        let published = false;
+        const since = serveFiles((method, at) => {
+          if (at === "/streamers.json" && published)
+            return json({ ...CARDS.index, accounts: { ...CARDS.index.accounts, "youtube/@marlowe": "marlowe" } });
+          if (at === `/annotations/youtube/${OLDER}.json`)
+            return published ? { status: 200, headers: { ETag: '"v1"' }, body: "{}" } : { status: 404 };
+          return host(method, at);
+        });
+        try {
+          await app.toLibrary();
+          await app.click(`.vod[data-key="${older.id}"]`);
+          await until(
+            "the older VOD open",
+            () => app.js(`return !!document.querySelector(".info .meta .platform.youtube")`),
+            MINUTE,
+          );
+          // Its channel's card: the name it has, and no link to the channel.
+          await app.click(".info .meta .channel");
+          const before = await settledCard("the older VOD's channel");
+          check("the older VOD's channel's card", before, {
+            name: "Marlowe",
+            aliases: null,
+            links: [],
+            sections: [],
+            picture: "no img",
+          });
+          await close();
+          published = true;
+
+          // The site says the video's gone: said so, and nothing changes or is asked of the file host.
+          const vodNow = async () => (await app.invoke("list_vods")).find((v) => v.id === older.id);
+          const channelOf = (vod) => JSON.stringify([vod?.channel_login ?? null, vod?.channel_url ?? null]);
+          siteSaysGone(true);
+          const asked = since.requests.filter(notFilter).length;
+          await watchRefreshing(app, older.id);
+          await app.rowMenu(older.id, "Refresh details");
+          const failed = await until(
+            "Refresh details to fail",
+            async () => {
+              const says = await app.toastSays();
+              return says.startsWith("Couldn't refresh") && says;
+            },
+            MINUTE,
+          ).catch(async () => `(${await app.toastSays()})`);
+          if (
+            failed !==
+            `Couldn't refresh the details of “${older.title}”. That video isn't available. It may have been deleted or made private.`
+          )
+            wrong.push(`Refresh details, the video gone, says "${failed}"`);
+          const refreshingSaid = await sawRefreshing(app);
+          if (!refreshingSaid) wrong.push(`the row never said "Refreshing details…"`);
+          else if (!refreshingSaid.includes("Not transcribed"))
+            wrong.push(`refreshing, the row says "${refreshingSaid}", not what it said of the VOD`);
+          if (channelOf(await vodNow()) !== "[null,null]")
+            wrong.push(`a failed refresh kept the channel ${channelOf(await vodNow())}`);
+          const after = since.requests.filter(notFilter).slice(asked);
+          if (after.length) wrong.push(`a failed refresh asked the file host for ${JSON.stringify(after)}`);
+          siteSaysGone(false);
+
+          // Asked again: the channel's login and page as the site names them,
+          // nothing else of the VOD changed; its VODscription offered, as
+          // after an add, and the card published since found.
+          await app.rowMenu(older.id, "Refresh details");
+          const said = await until(
+            "Refresh details to be done",
+            async () => {
+              const says = await app.toastSays();
+              return says !== failed && says;
+            },
+            MINUTE,
+          ).catch(async () => `(${await app.toastSays()})`);
+          if (said !== `Refreshed the details of “${older.title}”.`) wrong.push(`Refresh details says "${said}"`);
+          const refreshed = await vodNow();
+          if (channelOf(refreshed) !== JSON.stringify(["@marlowe", "https://www.youtube.com/@marlowe"]))
+            wrong.push(`refreshed, the VOD's channel is ${channelOf(refreshed)}`);
+          if (refreshed?.title !== older.title) wrong.push(`refreshed, its title is "${refreshed?.title}"`);
+          await until("its VODscription offered", () => offerShown(app), 10_000).then(
+            () => app.clickText("Not now"),
+            () => wrong.push("a VODscription published since wasn't offered after Refresh details"),
+          );
+          await until("the offer closed", async () => !(await offerShown(app)), 10_000);
+          await app.click(".info .meta .channel");
+          const card = await settledCard("the refreshed VOD's channel");
+          const page = "youtube.com/@marlowe <https://www.youtube.com/@marlowe>";
+          if (card.name !== "Vance" || !card.links.includes(page))
+            wrong.push(`refreshed, the channel's card is ${JSON.stringify({ name: card.name, links: card.links })}`);
+          await close();
+          const index = since.requests.filter((r) => r.path === "/streamers.json").length;
+          if (index !== 1) wrong.push(`the index was asked for ${index} times, not once, by Refresh details`);
+        } finally {
+          since.stop();
+          siteSaysGone(false);
+        }
+      });
+    if (wrong.length) throw new Error(wrong.join("; "));
+    ctx.log("each card shows what it has and nothing for what it hasn't; NoPixel only where the VOD names it");
+  },
+};

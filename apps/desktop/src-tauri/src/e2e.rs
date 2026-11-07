@@ -109,6 +109,13 @@ pub(crate) fn e2e_set_inner_size(app: AppHandle, width: f64, height: f64) -> Res
     window.set_size(tauri::LogicalSize::new(width, height)).map_err(|e| e.to_string())
 }
 
+/// Makes VOD `vod_id`'s work not stop for `ms` when told to (`Worker::e2e_busy`):
+/// its erasure waits for it (tests/e2e/scenarios/readd-stuck.mjs).
+#[tauri::command]
+pub(crate) fn e2e_work_busy(app: AppHandle, vod_id: i64, ms: u64) {
+    app.state::<crate::AppState>().worker.e2e_busy(vod_id, Duration::from_millis(ms));
+}
+
 /// Runs `body` (a `Run`) in the main window and waits for its answer:
 /// `{"id", "ok", "value"}`, `value` being what it returned or the error.
 fn run(app: &AppHandle, waiting: &Waiting, id: u64, body: &str) -> (u16, String) {

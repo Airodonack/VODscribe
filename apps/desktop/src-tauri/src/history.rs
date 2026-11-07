@@ -17,9 +17,10 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::{ClipStatus, Db, MarkState};
 use vodscribe_core::edits::EditState;
+use vodscribe_core::settings::ClipEncoding;
 
 use crate::{AppState, CmdResult, err};
 
@@ -299,14 +300,17 @@ impl BarQueue for AppHandle {
 /// the change left it, or as an undo of it did) to `to`. Only that: what the
 /// change didn't touch stays as it is now, so a clip that went meanwhile
 /// without a change of its own (its file deleted outside the app) stays gone.
-fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+/// A clip is made again unless its file is as clips are made `now`.
+fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+    let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| remake_clip(db, now, clip, want);
     match (doc, from, to) {
         (Doc::Edit(id), Snapshot::Edit { state: was, bar: had }, Snapshot::Edit { state, bar }) => {
             if was != state {
                 db.restore_edit(id, state)?;
             }
             let add = |db: &Db, want: &BarClip<EditState>| db.add_bar_clip(id, &want.made);
-            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake_clip, add)?;
+            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
+            order_bar(db, id, bar, &edit_bar(db, id)?)?;
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
@@ -315,7 +319,10 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
             let add = |db: &Db, want: &BarClip<EditState>| {
                 db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made)
             };
-            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake_clip, add)?;
+            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
+            if let Some(bar) = db.vod_clip(id)? {
+                order_bar(db, bar, clips, &vod_bar(db, id)?)?;
+            }
         }
         _ => {}
     }
@@ -323,15 +330,16 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
 }
 
 /// Clip `clip` of a clip bar made of what `want` holds and titled as it:
-/// waiting to be made again unless its file is of that already. The cutter
+/// waiting to be made again unless its file is of that already, made as
+/// clips are made `now`. The cutter
 /// makes only a clip that isn't ready (`clips::cut`), so one left ready kept
 /// the file of what the undone change made it. One change: in between, the
 /// clip read from elsewhere (`list_clips`) would be back as it was yet ready,
 /// with the file of what it no longer is.
-fn remake_clip(db: &Db, clip: i64, want: &BarClip<EditState>) -> Result<()> {
+fn remake_clip(db: &Db, now: ClipEncoding, clip: i64, want: &BarClip<EditState>) -> Result<()> {
     db.atomically(|db| {
         db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })?;
-        if db.edit(clip)?.is_some_and(|e| !e.current) {
+        if db.edit(clip, now)?.is_some_and(|e| !e.current) {
             db.set_edit_render(clip, ClipStatus::Waiting, None, None, None)?;
         }
         Ok(())
@@ -442,6 +450,32 @@ fn restore_bar<M: Made>(
     Ok(())
 }
 
+/// The order `now`'s clips go in for clip bar `to`'s order: those that are
+/// `to`'s clips take the places they hold among them in `to`, others stay
+/// where they are. None if that's the order they're in already.
+fn bar_order<M: Made>(to: &[BarClip<M>], now: &[BarClip<M>]) -> Option<Vec<i64>> {
+    let mut ours: Vec<i64> = Vec::new();
+    for want in to {
+        if let Some(clip) = find(now, want, to).filter(|c| !ours.contains(&c.id)) {
+            ours.push(clip.id);
+        }
+    }
+    let mut next = ours.iter();
+    let order: Vec<i64> =
+        now.iter().map(|c| if ours.contains(&c.id) { *next.next().expect("one of ours") } else { c.id }).collect();
+    (order.iter().ne(now.iter().map(|c| &c.id))).then_some(order)
+}
+
+/// Puts listed clip `bar`'s clip bar, `now` as it is once a change was put
+/// back (`restore_bar`), in `to`'s order: a clip made again comes back where
+/// it was, not last.
+fn order_bar<M: Made>(db: &Db, bar: i64, to: &[BarClip<M>], now: &[BarClip<M>]) -> Result<()> {
+    match bar_order(to, now) {
+        Some(order) => db.change(bar, None, |db| db.order_bar(&order)),
+        None => Ok(()),
+    }
+}
+
 /// Steps `view`'s history back (`undo`) or forward, and tells the page which
 /// document changed (`restored`).
 fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
@@ -450,7 +484,7 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let mut s = state.history.0.lock().unwrap();
     let Some(mut entry) = History::take(&mut s, view, undo) else { return Ok(None) };
     let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
-    if let Err(e) = restore(app, &db, entry.doc, from, to) {
+    if let Err(e) = restore(app, &db, crate::edits::made_now(app), entry.doc, from, to) {
         // Kept, to try again: it's the newest of its stack still.
         let stacks = if undo { &mut s.undo } else { &mut s.redo };
         stacks.entry(entry.doc).or_default().push(entry);
@@ -465,7 +499,7 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let other = if undo { &mut s.redo } else { &mut s.undo };
     other.entry(entry.doc).or_default().push(entry);
     changed(app, &db, done.doc);
-    let _ = app.emit("restored", Restored { doc: done.doc, revision: done.revision });
+    crate::page::emit(app, "restored", Restored { doc: done.doc, revision: done.revision });
     Ok(Some(done))
 }
 
@@ -544,6 +578,8 @@ mod tests {
             url: "https://youtu.be/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -701,7 +737,7 @@ mod tests {
         let mut s = history.0.lock().unwrap();
         let entry = History::take(&mut s, doc, undo).expect("a step to take");
         let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
-        restore(&NoQueue, db, doc, from, to).unwrap();
+        restore(&NoQueue, db, ClipEncoding::default(), doc, from, to).unwrap();
         let other = if undo { &mut s.redo } else { &mut s.undo };
         other.entry(doc).or_default().push(entry);
     }
@@ -755,6 +791,35 @@ mod tests {
         assert_eq!(on_bar(&db), [was.clone(), was], "redone, the copy as it was");
     }
 
+    /// A clip pasted between two on a VOD's bar, then the middle one
+    /// deleted: undone or redone, it comes back where it was, not last.
+    #[test]
+    fn undo_and_redo_keep_the_bars_order() {
+        use vodscribe_core::clipboard::Paste;
+        use vodscribe_core::edits::Put;
+        let (db, vod) = library();
+        let history = History::default();
+        let doc = Doc::Vod(vod);
+        let bar = db.vod_clip(vod).unwrap().unwrap();
+        let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;
+        db.add_clip(vod, 3.0, 4.0, "b", true).unwrap();
+        let starts = |db: &Db| db.clips(vod).unwrap().iter().map(|c| c.start).collect::<Vec<_>>();
+        let copy = db.copy_of(&Put::Range { vod_id: vod, start: 5.0, end: 6.0, title: None }).unwrap();
+        history.change(&db, doc, "Clip pasted", |db| db.paste(Paste::Bar { bar, after: Some(a) }, &[copy])).unwrap();
+        assert_eq!(starts(&db), [1.0, 5.0, 3.0], "pasted after the first");
+        step_library(&history, &db, doc, true);
+        assert_eq!(starts(&db), [1.0, 3.0]);
+        step_library(&history, &db, doc, false);
+        assert_eq!(starts(&db), [1.0, 5.0, 3.0], "redone, in the middle again");
+
+        // The middle one deleted: undone, it's back in the middle.
+        let middle = db.clips(vod).unwrap()[1].id;
+        history.change(&db, doc, "Clip deleted", |db| db.delete_clip(middle)).unwrap();
+        assert_eq!(starts(&db), [1.0, 3.0]);
+        step_library(&history, &db, doc, true);
+        assert_eq!(starts(&db), [1.0, 5.0, 3.0], "undone, in the middle again");
+    }
+
     /// Clip `clip` of `doc`'s clip bar, made of `made`, resized and its
     /// file made of that: undone, it's back to `made` and waits to be made
     /// again. The cutter makes only a clip that isn't ready (`clips::cut`),
@@ -762,7 +827,8 @@ mod tests {
     fn undone_resize_is_made_again(db: &Db, doc: Doc, clip: i64, made: (f64, f64)) {
         let history = History::default();
         let ready = |(start, end): (f64, f64)| {
-            assert!(db.set_clip_file(clip, start, end, ClipStatus::Ready, Some("/clips/x.mp4"), None).unwrap());
+            let file = db.files().clip_file(clip, "mp4").to_string_lossy().into_owned();
+            assert!(db.set_clip_file(clip, start, end, ClipStatus::Ready, Some(&file), None).unwrap());
             db.set_made_now(clip).unwrap();
         };
         ready(made);
