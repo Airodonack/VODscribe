@@ -154,8 +154,20 @@
     const overlaps = (a: DOMRect, b: DOMRect) =>
       a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     const report = () => {
-      // Out of the page, or another box come since: the surface isn't this one's.
-      if (stopped || !mode || newest !== me || !box.isConnected) return;
+      // Another box come since: the surface isn't this one's.
+      if (stopped || !mode || newest !== me) return;
+      if (!box.isConnected) {
+        // Taken out of the page with what held it (an edit's frame, made
+        // again while a clip of its clip bar loads): the picture goes too,
+        // or it would stay over whatever opens there, till a box says where.
+        const gone = key(null);
+        if (last === "" || last === gone) return;
+        last = gone;
+        ++seq;
+        holes(null);
+        api.setScreen(null, mode !== "over").catch(() => {});
+        return;
+      }
       const r = box.getBoundingClientRect();
       const here = { x: r.x, y: r.y, width: r.width, height: r.height };
       if (mode !== "over") {

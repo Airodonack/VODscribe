@@ -47,6 +47,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `perf-page.mjs`: Settings and a VOD with twenty clips opening, against their budgets.
 - `perf-player.mjs`: opening and seeking in the app's own player, against their budgets.
 - `perf-switch.mjs`: switching between library entries, timed and watched for jank.
+- `picture-covered.mjs`: Settings and the search filter show over an edit's picture after its clip is opened and left.
 - `platforms.mjs`: the test video on Twitch, Kick and YouTube, added and played; needs the network.
 - `player-open.mjs`: a file opens on its picture before Play.
 - `player-picture.mjs`: what the app's own player shows, seen on the screen and clicked with the OS's mouse.

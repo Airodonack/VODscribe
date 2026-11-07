@@ -176,6 +176,12 @@
       gone = true;
     };
   });
+  // The frame is made again when the open edit goes for a moment (a clip of
+  // a clip bar opening is undefined till it's loaded): the screen follows it.
+  $effect(() => {
+    const [el, p] = [host, player];
+    if (el && p instanceof EditPlayer) untrack(() => p.moveTo(el));
+  });
   // How many tens of seconds of the sections downloading are in: each ten
   // more, the edit is planned again, so the player plays further into them.
   const reached = $derived(
