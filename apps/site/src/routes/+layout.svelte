@@ -194,7 +194,7 @@
 
   /* A phone's width holds the logo, the two sections and the face: the
      brand's word and Sign in's are left to screen readers. */
-  @media (max-width: 400px) {
+  @media (max-width: 480px) {
     .brand span,
     .account .words {
       position: absolute;
