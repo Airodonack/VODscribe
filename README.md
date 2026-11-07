@@ -1,3 +1,48 @@
+## Run VODscribe on Servo
+
+This branch runs the app with [Servo](https://servo.org) as its web engine instead of the system's web view. It is experimental and not sandboxed, and works on Linux x86_64 under X11 only (XWayland on Wayland).
+
+### Download
+
+The AppImage: [vodscribe-servo_0.7.1_x86_64.AppImage](https://dl.vodscribe.com/releases/demo/vodscribe-servo_0.7.1_x86_64.AppImage). Check it against its SHA-256, then start it:
+
+```sh
+echo "39adbeeac3d6ca4d33c8877cc6f8ec5468955de576e9b9e791b5320817952382  vodscribe-servo_0.7.1_x86_64.AppImage" | sha256sum -c
+chmod +x vodscribe-servo_0.7.1_x86_64.AppImage
+./vodscribe-servo_0.7.1_x86_64.AppImage
+```
+
+It brings GStreamer 1.28.8 with the patched mselib. It needs glibc 2.39 and GLib 2.80 or newer: Ubuntu 24.04, Debian 13, Fedora 40 or later.
+
+### Build it yourself
+
+You need Nix with flakes, and GTK's development files from your system (`libgtk-3-dev` on Debian and Ubuntu, `gtk3-devel` on Fedora). The flake gives the rest: Servo's build environment, GStreamer 1.28.8 with the patched mselib, Node and pnpm. Cargo takes the Servo fork ([Airodonack/servo](https://github.com/Airodonack/servo)) and the Servo runtime ([Airodonack/tauri-runtime-servo](https://github.com/Airodonack/tauri-runtime-servo)) from GitHub.
+
+```sh
+nix develop
+pnpm install
+scripts/prepare-sidecars.sh release   # the transcription workers
+pnpm tauri:servo dev                  # the app, with the page reloading as you edit it
+pnpm tauri:servo build                # a .deb and an .rpm
+```
+
+The AppImage takes a GStreamer built on the system itself, outside Nix. The published one is built on Ubuntu 24.04, with the packages `scripts/servo-gstreamer.sh` lists:
+
+```sh
+scripts/servo-gstreamer.sh              # GStreamer 1.28.8, in target/servo-gstreamer
+nix develop -c scripts/servo-appimage.sh  # the AppImage, in target/servo-appimage
+```
+
+`VODSCRIBE_SERVO_DIR` is optional. It names a folder with your own checkouts to build from instead: the Servo fork in `servo/`, the runtime in `tauri-servo/tauri-runtime-servo/`, and `scripts/gst-128-env.sh`, which loads GStreamer 1.28 with the patched mselib. The build then uses the fork's own Nix shell.
+
+### Not working yet
+
+- Twitch VODs don't play.
+- Dragging clips out of the window doesn't work, nor does box selection.
+- The streamer's picture sits out of line beside their name.
+- The AppImage transcribes on the CPU only.
+- The .deb and .rpm bundle neither GStreamer 1.28 nor the patched mselib, and still ask for WebKitGTK. Start their app from the flake's shell, with `GDK_BACKEND=x11`.
+
 <p align="center">
   <img src="apps/desktop/src-tauri/icons/app-icon.svg" width="96" height="96" alt="VODscribe logo">
 </p>
