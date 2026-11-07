@@ -1,3 +1,22 @@
+## Run VODscribe on Servo
+
+This branch runs the app with [Servo](https://servo.org) as its web engine instead of the system's web view. It is experimental, and works on Linux under X11 only.
+
+You need a folder that holds the Servo fork ([Airodonack/servo](https://github.com/Airodonack/servo), branch `vodscribe/main`) in `servo/`, the stylo fork ([Airodonack/stylo](https://github.com/Airodonack/stylo)) in `stylo/`, the Servo runtime ([Airodonack/tauri-runtime-servo](https://github.com/Airodonack/tauri-runtime-servo)) in `tauri-servo/tauri-runtime-servo/`, and `scripts/gst-128-env.sh`, which loads GStreamer 1.28 with the patched mselib. Servo builds in its own Nix shell. The desktop crate's Cargo.toml finds the runtime at a fixed path, so link the folder there.
+
+```sh
+export VODSCRIBE_SERVO_DIR=/path/to/that/folder
+pnpm tauri:servo dev     # the app, with the page reloading as you edit it
+pnpm tauri:servo build   # a .deb and an .rpm
+```
+
+Not working yet:
+
+- Twitch VODs don't play.
+- Dragging clips out of the window doesn't work, nor does box selection.
+- The streamer's picture sits out of line beside their name.
+- A built package bundles neither GStreamer 1.28 nor the patched mselib, and still asks for WebKitGTK. Start its app after sourcing `scripts/gst-128-env.sh`, with `GDK_BACKEND=x11`.
+
 <p align="center">
   <img src="apps/desktop/src-tauri/icons/app-icon.svg" width="96" height="96" alt="VODscribe logo">
 </p>
