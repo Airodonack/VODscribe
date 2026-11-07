@@ -145,7 +145,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `Settings.svelte`: Settings, a section at a time.
 - `settingsWindow.svelte.ts`: whether Settings is open, and at which section.
 - `appSettings.svelte.ts`: the settings, loaded once and saved whole.
-- `asks.ts`: the notes that can be turned off.
+- `asks.ts`: the notes that can be turned off, and what's done with a VODscription found.
 - `keymap.ts`: every keyboard control and its default keys.
 - `keys.svelte.ts`: the keys in force, with the user's own over the defaults.
 - `stored.ts`: small choices kept in the data folder.

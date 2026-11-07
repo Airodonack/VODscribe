@@ -8,10 +8,15 @@
 // annotations are newer than the ones it brought in. Using them fetches the file and
 // imports it, as an annotations file picked would be: the VOD's transcript
 // and the marks an import brought are replaced, the user's own marks stay.
+// After an add (or a refresh that finds newer ones), what's done goes by
+// Settings › Privacy (`use_vodscription`): offered, used with a toast, or
+// left for the gift button; the offer's "Don't ask again" keeps the answer.
+// The gift button and the row menu's checks always offer, so whoever asks
+// sees what they'd get.
 
 import { api, type AnnotationsOffer, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
-import { shows } from "./asks";
+import { foundVodscription } from "./asks";
 import { toast } from "./toasts.svelte";
 
 export interface Offered {
@@ -34,13 +39,41 @@ class Offers {
   error = $state<string | null>(null);
 
   /** Offers `vod`'s annotations, as last found, unless something else is
-   *  offered already, or it was just added and the offer is turned off
-   *  (`ask_to_use_vodscription`: its gift button still offers them). */
+   *  offered already. Just added (or refreshed), it goes by the setting:
+   *  used with no offer, or not offered (its gift button still offers them). */
   async offer(vod: Vod, afterAdd: boolean, unasked: string | null = null) {
-    if (this.shown || (afterAdd && !shows(settings.value, "ask_to_use_vodscription"))) return;
+    if (afterAdd) {
+      await settings.load();
+      const found = foundVodscription(settings.value);
+      if (found === "never") return;
+      if (found === "always") return this.#useUnasked(vod);
+    }
+    if (this.shown) return;
     const offer = await api.annotationsOffer(vod.id).catch(() => null);
     if (!offer || offer.available !== "available" || this.shown) return;
     this.#show({ vod, offer, afterAdd, unasked });
+  }
+
+  /** VODs whose annotations are being used unasked, so a second word of the
+   *  same (an add, then a refresh) doesn't fetch them twice. */
+  #usingUnasked = new Set<number>();
+
+  /** Uses `vod`'s annotations with no offer ("Use it" in Settings › Privacy),
+   *  unless it has the latest already, and says so in a toast naming it. No
+   *  undo: an import forgets the VOD's history (the app's annotations.rs). */
+  async #useUnasked(vod: Vod) {
+    if (this.#usingUnasked.has(vod.id)) return;
+    this.#usingUnasked.add(vod.id);
+    try {
+      const offer = await api.annotationsOffer(vod.id);
+      if (offer.available !== "available" || offer.up_to_date) return;
+      await api.fetchAnnotations(vod.id);
+      toast.show(`Found a VODscription for “${vod.title}”, and used it.`);
+    } catch (e) {
+      toast.error(`Couldn't use the VODscription for “${vod.title}”. ${String(e)}`);
+    } finally {
+      this.#usingUnasked.delete(vod.id);
+    }
   }
 
   #show(offered: Offered) {
@@ -102,11 +135,11 @@ class Offers {
     }
   }
 
-  /** Use, and with `hide` ("Don't ask again" ticked) stop offering after an add. */
+  /** Use, and with `hide` ("Don't ask again" ticked) use them unasked after an add from now on. */
   async use(hide = false) {
     const shown = this.shown;
     if (!shown || this.busy) return;
-    if (hide && shown.afterAdd) void this.#stop();
+    if (hide && shown.afterAdd) void this.#keep("always");
     this.busy = true;
     this.error = null;
     try {
@@ -123,16 +156,18 @@ class Offers {
     }
   }
 
-  /** "Don't ask again", answered: VODs added from now on aren't offered theirs.
-   *  The app still looks them up (`ask_for_annotations`), for the gift button. */
-  async #stop() {
-    await settings.update({ ask_to_use_vodscription: false });
+  /** "Don't ask again", answered: VODs added from now on get theirs used
+   *  ("always") or aren't offered them ("never"). Either way the app still
+   *  looks them up (`ask_for_annotations`), for the gift button. */
+  async #keep(answer: "always" | "never") {
+    await settings.update({ use_vodscription: answer });
   }
 
-  /** Closes it (Not now), and with `hide` ("Don't ask again" ticked) stops
-   *  offering after an add; one being fetched carries on, and says when it's done. */
+  /** Closes it (Not now, Escape, the close button), and with `hide` ("Don't
+   *  ask again" ticked) stops offering after an add; one being fetched
+   *  carries on, and says when it's done. */
   close(hide = false) {
-    if (hide && this.shown?.afterAdd) void this.#stop();
+    if (hide && this.shown?.afterAdd) void this.#keep("never");
     this.shown = null;
     this.error = null;
   }

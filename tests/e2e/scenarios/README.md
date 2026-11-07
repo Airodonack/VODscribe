@@ -7,7 +7,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `annotations-gone.mjs`: a VOD removed while the VODscription host is still answering about it.
 - `annotations-library.mjs`: the whole library checked against the host's filter of published VODs.
 - `annotations-lookup.mjs`: asking the host about VODs added from sites, and the setting that stops it.
-- `annotations-offer.mjs`: a published VODscription offered when its VOD is added, and used.
+- `annotations-offer.mjs`: a published VODscription offered when its VOD is added, and used; Use with Don't ask again uses the next one unasked.
 - `annotations.mjs`: an annotations file imported for a video file, and how the VOD shows it.
 - `captions-fullscreen.mjs`: captions drawn over the app's own player, seen on the screen, and full screen with F.
 - `captions-strip.mjs`: a site's VOD shows captions in a strip under its player, with room kept from the start.

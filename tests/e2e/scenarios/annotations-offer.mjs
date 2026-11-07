@@ -13,6 +13,9 @@
 // brought anew and a chapter of the user's own stays. The gift button asks the
 // file host first: with the file published anew it offers the newer ones; with asking
 // turned off it asks nothing and says its answer is from the last check.
+// Use with "Don't ask again" ticked uses that one and remembers the answer:
+// the next VOD added with one published gets it with no dialog, and a toast
+// names it; its gift button still shows the offer.
 //
 // Offline: the VOD is the stand-in yt-dlp's (lib/siteVod.mjs).
 
@@ -29,6 +32,16 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const ID = "xe2eoffer";
 const FILE = `/annotations/youtube/${ID}.json`;
+/** The VODs added after it: one answered Use with "Don't ask again", one then used unasked. */
+const TICKED = "xe2eofferticked";
+const UNASKED = "xe2eofferunasked";
+/** The file host's file for each VOD published, by its path. */
+const FILES = new Map(
+  [ID, TICKED, UNASKED].map((id) => [
+    `/annotations/youtube/${id}.json`,
+    readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${id}"`),
+  ]),
+);
 
 /** The offer's words, its boxes and buttons, or null while there's none. */
 const offer = (app) =>
@@ -91,12 +104,15 @@ export default {
       'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "VODscription found" says the VOD has the latest VODscription already, with "Not now" and a highlighted "Replace anyway", and no "Don\'t ask again" box.',
   },
   async run(app, ctx) {
-    const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${ID}"`);
-    // The file's version, as its ETag: published anew when this changes.
+    // The first file's version, as its ETag: published anew when this changes.
     let etag = '"v1"';
     const host = serveFiles((method, at) =>
-      at === FILE
-        ? { status: 200, headers: { ETag: etag, "Content-Type": "application/json" }, body: json }
+      FILES.has(at)
+        ? {
+            status: 200,
+            headers: { ETag: at === FILE ? etag : '"v1"', "Content-Type": "application/json" },
+            body: FILES.get(at),
+          }
         : { status: 404 },
     );
     try {
@@ -221,7 +237,72 @@ export default {
         await app.clickText("Not now");
         await until("the offer closed", async () => !(await offer(app)), 10_000);
 
-        // The Marks toggles: both on at first; each hides its own.
+        // Use with "Don't ask again" ticked: that one used, and the answer kept.
+        const ticked = await addSiteVod(app, TICKED);
+        await until("the offer for the next VOD", () => offer(app), MINUTE);
+        await app.js(
+          `const box = [...document.querySelectorAll(arguments[0] + " .offer label")].find((l) => l.textContent.trim() === "Don't ask again")?.querySelector("input[type=checkbox]");
+           if (!box) throw new Error("no Don't ask again box");
+           box.click();`,
+          OFFER,
+        );
+        await app.clickText("Use");
+        const remembered = await until(
+          "Use with Don't ask again, kept",
+          async () => {
+            const s = await app.invoke("get_settings");
+            return s.use_vodscription === "always" && s;
+          },
+          10_000,
+        ).catch(() => app.invoke("get_settings"));
+        if (remembered.use_vodscription !== "always" || remembered.ask_to_use_vodscription !== false)
+          wrong.push(
+            `Use with Don't ask again left the settings at ${remembered.use_vodscription}, ask ${remembered.ask_to_use_vodscription}`,
+          );
+        await until(
+          "the ticked one imported",
+          async () => {
+            const v = (await app.invoke("list_vods")).find((v) => v.id === ticked.id);
+            return v.transcribed === "all" && !(await offer(app));
+          },
+          MINUTE,
+        ).catch(() => wrong.push("Use with Don't ask again didn't use that one"));
+
+        // The next VOD published: used with no dialog, and a toast names it.
+        const quiet = await addSiteVod(app, UNASKED);
+        const getsFor = `“${quiet.title}”`;
+        const toasted = await until(
+          "the toast for the one used unasked",
+          async () => {
+            const said = await app.toastSays();
+            return said.includes(getsFor) && said.includes("VODscription") && said;
+          },
+          MINUTE,
+        ).catch(() => null);
+        if (!toasted) wrong.push(`no toast naming ${getsFor} for the VODscription used unasked`);
+        else ctx.log(`used unasked: "${toasted}"`);
+        await until(
+          "the one used unasked imported",
+          async () => {
+            const v = (await app.invoke("list_vods")).find((v) => v.id === quiet.id);
+            return v.transcribed === "all";
+          },
+          MINUTE,
+        ).catch(() => wrong.push("the VOD added with Use remembered didn't get its VODscription"));
+        if (await offer(app)) wrong.push("with Use remembered, the offer showed after an add");
+        // Asked for, by the gift button: the offer shows, so the person sees what they get.
+        await app.click(`.vod[data-key="${quiet.id}"] .actions button.gift`);
+        const askedFor = await until("the gift button's offer, Use remembered", () => offer(app), 10_000).catch(
+          () => null,
+        );
+        if (!askedFor) wrong.push("with Use remembered, the gift button offered nothing");
+        else {
+          await app.clickText("Not now");
+          await until("the offer closed", async () => !(await offer(app)), 10_000);
+        }
+
+        // The Marks toggles: both on at first; each hides its own (the first VOD's, shown again).
+        await show(app, vod.id);
         const first = await toggles(app);
         // Field by field: a page's object may come back with its keys in another order (Windows, macOS 12).
         if (!isDeepStrictEqual(first, { "Your marks": true, "Imported marks": true }))

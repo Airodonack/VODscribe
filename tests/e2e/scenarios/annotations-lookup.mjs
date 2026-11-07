@@ -2,10 +2,10 @@
 // and the settings that stop the offer and the asking. A VOD it has nothing
 // for: asked once, then nothing offered and no gift button. One it has
 // something for: offered, and its "Don't ask again" box, ticked, says where
-// it's turned back on; answered Not now, it turns the offer's switch off,
-// and only it.
-// The next VOD published is still asked about, and not offered; its gift
-// button offers it. With asking off in Settings › Privacy, a VOD added is
+// it's turned back on; closed with Escape, as Not now, it sets Settings ›
+// Privacy's "When a VODscription is found" to Don't use it, and only that.
+// The next VOD published is still asked about, and neither offered nor
+// given its VODscription; its gift button offers it. With asking off in Settings › Privacy, a VOD added is
 // never asked about, and its menu's "Check for a VODscription" says asking is
 // turned off; turned back on in Settings › Privacy, the same item asks, and
 // says when there's nothing. A VOD from another site (Dailymotion) is never
@@ -40,7 +40,7 @@ export default {
     "offer-stopped":
       'A small dialog titled "VODscription found" offers the VOD\'s VODscription; its box "Don\'t ask again" is ticked, with a gray line under it saying it can be turned back on in Settings › Privacy, then "Not now" and a highlighted "Use".',
     "lookup-setting":
-      'Settings at Privacy: under the paragraphs about privacy, an unticked box "Enable VODscription annotations for VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else, then an unticked box "Ask to use a VODscription when one is found" with its own gray line.',
+      'Settings at Privacy: under the paragraphs about privacy, an unticked box "Enable VODscription annotations for VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else, then "When a VODscription is found" over a row of three choices, Ask, Use it and Don\'t use it, with Don\'t use it picked, and a gray line under them.',
   },
   async run(app, ctx) {
     const host = serveFiles((method, at) =>
@@ -90,20 +90,24 @@ export default {
           10_000,
         );
         await ctx.checkpoint("offer-stopped");
-        if (!said.includes("You can turn it back on in Settings › Privacy."))
+        if (!said.includes("You can change this in Settings › Privacy."))
           wrong.push(`with "Don't ask again" ticked: "${said}"`);
-        if ((await app.invoke("get_settings")).ask_to_use_vodscription !== true)
-          wrong.push("ticking Don't ask again turned the offer off before it was answered");
-        await app.clickText("Not now");
+        if ((await app.invoke("get_settings")).use_vodscription !== "ask")
+          wrong.push("ticking Don't ask again changed the setting before it was answered");
+        // Escape (as the close button or the backdrop) answers Not now.
+        await app.key("Escape");
         const stopped = await until(
           "the offer turned off",
           async () => {
             const now = await app.invoke("get_settings");
-            return now.ask_to_use_vodscription === false && now;
+            return now.use_vodscription === "never" && now;
           },
           10_000,
         ).catch(() => app.invoke("get_settings"));
-        if (stopped.ask_to_use_vodscription !== false) wrong.push("Don't ask again, then Not now, left the offer on");
+        if (stopped.use_vodscription !== "never" || stopped.ask_to_use_vodscription !== false)
+          wrong.push(
+            `Don't ask again, then Escape, left the setting at ${stopped.use_vodscription}, ask ${stopped.ask_to_use_vodscription}`,
+          );
         if (stopped.ask_for_annotations !== true) wrong.push("Don't ask again turned asking the file host off");
         await until("the dialog closed", async () => !(await offerShown(app)), 10_000);
 
@@ -117,6 +121,8 @@ export default {
         );
         await sleep(1500);
         if (await offerShown(app)) wrong.push("offered after an add with the offer turned off");
+        if ((await app.invoke("list_vods")).find((v) => v.id === quiet.id)?.transcribed === "all")
+          wrong.push("with Don't use it, a VOD added got its VODscription");
         await app.click(gift(quiet.id));
         await until("the offer from the gift button", () => offerShown(app), 10_000).catch(() =>
           wrong.push("the gift button offered nothing with the offer turned off"),

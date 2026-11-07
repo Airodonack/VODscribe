@@ -1,12 +1,15 @@
 <script lang="ts">
   import Modal from "./Modal.svelte";
   import { offers } from "./offers.svelte";
-  import { WHERE_UNDONE } from "./permission";
 
   // The offer of a VOD's published annotations (offers.svelte.ts): Use or
   // Not now, and after an add "Don't ask again", as the other notes have it
-  // (ResolveNote.svelte), kept with whichever is answered. Already brought in
+  // (ResolveNote.svelte): ticked, the answer given is kept (Use: used
+  // unasked from now on; Not now, Escape or closing: not offered). Already brought in
   // and unchanged, it says so and offers to replace them anyway.
+
+  // Either answer can be kept, so where it's changed, not "turned back on".
+  const WHERE_CHANGED = "You can change this in Settings › Privacy.";
 
   let open = $state(false);
   let hide = $state(false);
@@ -48,7 +51,7 @@
       </p>
       {#if shown.afterAdd}
         <label><input type="checkbox" bind:checked={hide} /> Don't ask again</label>
-        {#if hide}<p class="muted">{WHERE_UNDONE}</p>{/if}
+        {#if hide}<p class="muted">{WHERE_CHANGED}</p>{/if}
       {/if}
       {#if offers.error}<p class="error-text">{offers.error}</p>{/if}
       <div class="buttons">

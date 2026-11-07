@@ -96,6 +96,21 @@ impl ClipEncoding {
     }
 }
 
+/// What's done with a VODscription found for a VOD just added or refreshed
+/// (the page's offers.svelte.ts). The offer asked for (its gift button, its
+/// row's menu) shows whatever this is.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UseVodscription {
+    /// Offered, with a "Don't ask again" box that keeps the answer given.
+    #[default]
+    Ask,
+    /// Used with no offer, and a toast says so.
+    Always,
+    /// Not offered; its gift button still offers it.
+    Never,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Settings {
@@ -148,10 +163,15 @@ pub struct Settings {
     /// resolve.rs): on until its "Don't ask again" is ticked or it's turned
     /// off in Settings.
     pub suggest_mov_for_resolve: bool,
-    /// Whether a VODscription found for a VOD just added is offered (the
-    /// page's offers.svelte.ts): on until the offer's "No, and don't ask
-    /// again" or it's turned off in Settings. Looking one up is
-    /// `ask_for_annotations`, apart from this. Only the page reads it.
+    /// What's done with a VODscription found (Settings › Privacy, or the
+    /// offer's "Don't ask again"); unset only in a file from before it was
+    /// a choice, read from `ask_to_use_vodscription` (`use_vodscription`).
+    /// Looking one up is `ask_for_annotations`, apart from this. Only the
+    /// page reads it.
+    pub use_vodscription: Option<UseVodscription>,
+    /// The offer's switch before `use_vodscription`, on or off: written as
+    /// on only while it's `Ask` (`normalized`), for a version that reads
+    /// only this.
     pub ask_to_use_vodscription: bool,
 }
 
@@ -171,6 +191,7 @@ impl Default for Settings {
             load_cast_pictures: true,
             ask_before_downloading: true,
             suggest_mov_for_resolve: true,
+            use_vodscription: None,
             ask_to_use_vodscription: true,
         }
     }
@@ -251,13 +272,28 @@ impl Settings {
         ClipEncoding { codec, quality: self.clip_quality.unwrap_or(then) }
     }
 
+    /// What's done with a VODscription found. Unset, as the switch before
+    /// it had it: on, asked; off, never.
+    pub fn use_vodscription(&self) -> UseVodscription {
+        self.use_vodscription.unwrap_or(if self.ask_to_use_vodscription {
+            UseVodscription::Ask
+        } else {
+            UseVodscription::Never
+        })
+    }
+
     /// The codec and quality set, and the format the one the codec goes in:
     /// the codec decides, so a page that changes it needn't change the format.
+    /// So with a VODscription found: what's done decides, and the switch
+    /// before it is written to match.
     pub fn normalized(mut self) -> Self {
         let ClipEncoding { codec, quality } = self.clip_encoding();
         self.clip_codec = Some(codec);
         self.clip_quality = Some(quality);
         self.clip_format = codec.format();
+        let found = self.use_vodscription();
+        self.use_vodscription = Some(found);
+        self.ask_to_use_vodscription = found == UseVodscription::Ask;
         self
     }
 
@@ -390,6 +426,24 @@ mod tests {
         assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve && !again.ask_to_use_vodscription);
         assert!(again.ask_for_annotations, "the offer's own switch, apart from looking up");
         assert!(!again.load_cast_pictures);
+    }
+
+    #[test]
+    fn a_vodscription_found_is_used_as_last_answered() {
+        let read =
+            |json: &str| serde_json::to_value(serde_json::from_str::<Settings>(json).unwrap().normalized()).unwrap();
+        // A settings.json from before the three answers: the offer's switch alone.
+        assert_eq!(read(r#"{"ask_to_use_vodscription": false}"#)["use_vodscription"], "never");
+        assert_eq!(read(r#"{"ask_to_use_vodscription": true}"#)["use_vodscription"], "ask");
+        assert_eq!(read("{}")["use_vodscription"], "ask");
+        // The answer decides, and the switch is written to match, for an app
+        // that reads only that: on only while the offer is asked.
+        for (answer, asks) in [("ask", true), ("always", false), ("never", false)] {
+            let saved = read(&format!(r#"{{"use_vodscription": "{answer}", "ask_to_use_vodscription": {}}}"#, !asks));
+            assert_eq!(saved["use_vodscription"], answer);
+            assert_eq!(saved["ask_to_use_vodscription"], asks, "{answer}");
+            assert_eq!(read(&saved.to_string())["use_vodscription"], answer, "{answer}, read again");
+        }
     }
 
     /// A key binding written by hand in the wrong shape (a string for a

@@ -21,7 +21,7 @@
   import { LICENSES, PRIVACY, SUPPORT } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, os, videoSize } from "./platform";
-  import { shows } from "./asks";
+  import { foundVodscription, shows } from "./asks";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
   import { SECTIONS, settingsWindow } from "./settingsWindow.svelte";
@@ -77,7 +77,14 @@
   // The notes that can be stopped (asks.ts): each switch on while its note shows.
   let askBeforeDownloading = $derived(shows(appSettings.value, "ask_before_downloading"));
   let suggestMov = $derived(shows(appSettings.value, "suggest_mov_for_resolve"));
-  let askToUseVodscription = $derived(shows(appSettings.value, "ask_to_use_vodscription"));
+  // What's done with a VODscription found after an add (asks.ts); the offer's
+  // "Don't ask again" picks Use it or Don't use it.
+  let foundVodscriptionIs = $derived(foundVodscription(appSettings.value));
+  const FOUND = [
+    { id: "ask", label: "Ask" },
+    { id: "always", label: "Use it" },
+    { id: "never", label: "Don't use it" },
+  ] as const;
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -498,15 +505,20 @@
           Enable VODscription annotations for VODs
         </label>
         <p class="muted hint">It sends a VOD's site and its id on that site, nothing else.</p>
-        <label class="toggle">
-          <input
-            type="checkbox"
-            checked={askToUseVodscription}
-            onchange={(e) => appSettings.update({ ask_to_use_vodscription: e.currentTarget.checked })}
-          />
-          Ask to use a VODscription when one is found
-        </label>
-        <p class="muted hint">After you add a VOD. Off, its gift button still offers it.</p>
+        <p class="label apart">When a VODscription is found</p>
+        <div class="segmented" role="radiogroup" aria-label="When a VODscription is found">
+          {#each FOUND as f (f.id)}
+            <button
+              role="radio"
+              aria-checked={foundVodscriptionIs === f.id}
+              class:on={foundVodscriptionIs === f.id}
+              onclick={() => appSettings.update({ use_vodscription: f.id })}
+            >
+              {f.label}
+            </button>
+          {/each}
+        </div>
+        <p class="muted hint">After you add or refresh a VOD. Its gift button always offers it.</p>
         <label class="toggle">
           <input
             type="checkbox"
@@ -745,7 +757,12 @@
     font-size: 13px;
   }
 
-  /* A row of choices, the chosen one filled (theme, video quality, clip format and quality). */
+  /* A label among the switches: as far from the one above as a switch is. */
+  .label.apart {
+    margin-top: 12px;
+  }
+
+  /* A row of choices, the chosen one filled (theme, video quality, clip format and quality, a VODscription found). */
   .segmented {
     display: inline-flex;
     margin-bottom: 12px;

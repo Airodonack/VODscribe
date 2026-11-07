@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { ASKS, BROUGHT_OVER, OLD_KEYS, broughtOver, shows } from "./asks.ts";
+import { ASKS, BROUGHT_OVER, OLD_KEYS, broughtOver, foundVodscription, shows } from "./asks.ts";
 
 /** @typedef {import("./asks.ts").Ask} Ask */
 /** The notes stopped under a key of 0.7.0's. */
@@ -12,7 +12,7 @@ const OLD = /** @type {Ask[]} */ (Object.keys(OLD_KEYS));
 /** @param {string} name */
 const source = (name) => readFileSync(new URL(name, import.meta.url), "utf8");
 /** The settings as they start, and after a reset. */
-const FRESH = { ask_before_downloading: true, suggest_mov_for_resolve: true, ask_to_use_vodscription: true };
+const FRESH = { ask_before_downloading: true, suggest_mov_for_resolve: true };
 
 test("a note shows unless its setting is off, also before the settings are in", () => {
   for (const ask of ASKS) {
@@ -36,8 +36,8 @@ test("a note stopped under its old key stays stopped, brought over once", () => 
   // The settings saved with the change: each note stays stopped.
   const settings = { ...FRESH, ...old?.change };
   for (const ask of OLD) assert.equal(shows(settings, ask), false);
-  // The VODscription offer's switch came later: nothing of 0.7.0's stops it.
-  assert.equal(shows(settings, "ask_to_use_vodscription"), true);
+  // The VODscription offer came later: nothing of 0.7.0's stops it.
+  assert.equal(foundVodscription(settings), "ask");
   // Marked once saved: not brought over again, so a reset brings them back.
   for (const key of old?.keys ?? []) kept.set(key, BROUGHT_OVER);
   assert.equal(broughtOver(load), null);
@@ -56,7 +56,13 @@ test("only a note stopped is brought over", () => {
 test("every note that can be stopped is listed, the ones with an old key among them", () => {
   assert.deepEqual([...ASKS].sort(), Object.keys(FRESH).sort());
   for (const ask of OLD) assert.ok(ASKS.includes(ask), ask);
-  assert.equal(OLD_KEYS.ask_to_use_vodscription, undefined);
+});
+
+test("a VODscription found is offered unless the answer was kept", () => {
+  assert.equal(foundVodscription(null), "ask");
+  assert.equal(foundVodscription({}), "ask");
+  for (const answer of /** @type {const} */ (["ask", "always", "never"]))
+    assert.equal(foundVodscription({ use_vodscription: answer }), answer);
 });
 
 test("the old keys are read only to bring them over", () => {

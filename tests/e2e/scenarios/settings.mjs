@@ -1,11 +1,11 @@
-// Settings are kept: a theme, a video quality and a clip format and quality
-// chosen in Settings are still chosen after a restart; Reset settings puts
-// them back.
+// Settings are kept: what's done when a VODscription is found, a theme, a
+// video quality and a clip format and quality chosen in Settings are still
+// chosen after a restart; Reset settings puts them back.
 // So is a note's switch: the note before downloading from a site, stopped
 // as 0.7.0 kept it, shows its switch off; turned on, the note comes back on
 // a site VOD's download button; turned off, it stays off after a restart,
-// and Reset settings turns it on again. The same for the VODscription
-// offer's switch, and on Linux the Resolve note's, both on at the start.
+// and Reset settings turns it on again. The same on Linux for the Resolve
+// note's, on at the start.
 //
 // Offline: the VOD is a file added here, made Dailymotion's (no player the
 // app can show, so its row downloads its video); nothing is downloaded.
@@ -18,6 +18,7 @@ import { dataDirs, makeSiteVod } from "../lib/data.mjs";
 
 /** The section of Settings each radio group is in. */
 const SECTION = {
+  "When a VODscription is found": "Privacy",
   Theme: "Appearance",
   "Video quality": "Storage",
   "Clip format": "Encoding",
@@ -42,7 +43,15 @@ const openSettings = async (app) => {
   await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Theme"]')`), MINUTE);
 };
 
-const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV ProRes", "Clip quality": "High" };
+/** Each group's choice for the test; the VODscription's first, so the
+ *  last section opened is still Encoding's. */
+const CHOICES = {
+  "When a VODscription is found": "Use it",
+  Theme: "Dark",
+  "Video quality": "480p",
+  "Clip format": "MOV ProRes",
+  "Clip quality": "High",
+};
 
 /** The switches of the notes that can be stopped (asks.ts): each one's
  *  words, its section of Settings and its setting. Resolve's is Linux's only. */
@@ -54,11 +63,6 @@ const RESOLVE = {
 };
 /** What's said under Resolve's switch. */
 const RESOLVE_HINT = "Resolve on Linux can't open MP4 clips.";
-const OFFER = {
-  label: "Ask to use a VODscription when one is found",
-  section: "Privacy",
-  key: "ask_to_use_vodscription",
-};
 /** Whether switch `which` is on, or null when it isn't shown. */
 const switchOn = (app, which) =>
   app.js(
@@ -133,8 +137,8 @@ export default {
     ctx.log(`"${ASK.label}" came in off, from 0.7.0's choice; turned on, the note showed again`);
     await setSwitch(app, ASK, false);
     const linux = process.platform === "linux";
-    // The other notes' switches, on at the start (0.7.0's choice stops neither).
-    const others = linux ? [OFFER, RESOLVE] : [OFFER];
+    // Resolve's note's switch, on at the start (0.7.0's choice doesn't stop it).
+    const others = linux ? [RESOLVE] : [];
     for (const which of others) {
       await switchIs(app, which, true, " at the start");
       await setSwitch(app, which, false);
@@ -150,13 +154,12 @@ export default {
       );
       if (hint !== RESOLVE_HINT) throw new Error(`under "${RESOLVE.label}": ${JSON.stringify(hint)}`);
     }
-    // Turning the offer off leaves looking VODscriptions up as it was.
-    if ((await app.invoke("get_settings")).ask_for_annotations !== true)
-      throw new Error("turning the VODscription offer off turned the lookups off");
 
     await openSettings(app);
     const before = await chosen(app, Object.keys(CHOICES));
     await ctx.checkpoint("settings");
+    if (before["When a VODscription is found"] !== "Ask")
+      throw new Error(`at the start, a VODscription found is "${before["When a VODscription is found"]}"`);
     for (const [group, option] of Object.entries(CHOICES)) {
       if (before[group] === option) throw new Error(`${group} is ${option} already: pick another for the test`);
       await app.openSettings(SECTION[group]);
@@ -190,11 +193,17 @@ export default {
           s.video_height === 480 &&
           s.clip_format === "mov" &&
           s.clip_codec === "prores" &&
-          s.clip_quality === "high"
+          s.clip_quality === "high" &&
+          s.use_vodscription === "always" &&
+          // As the switch before it was written, for an app that reads only that.
+          s.ask_to_use_vodscription === false
         );
       },
       10_000,
     );
+    // Using VODscriptions as found leaves looking them up as it was.
+    if ((await app.invoke("get_settings")).ask_for_annotations !== true)
+      throw new Error("choosing what's done with a VODscription found turned the lookups off");
 
     app = await ctx.restart();
     await app.toLibrary();
@@ -227,7 +236,9 @@ export default {
       saved.theme !== "system" ||
       saved.video_height !== null ||
       clips !== "mp4 h264 standard" ||
-      saved.ask_before_downloading !== true
+      saved.ask_before_downloading !== true ||
+      saved.use_vodscription !== "ask" ||
+      saved.ask_to_use_vodscription !== true
     )
       throw new Error(`after a reset the settings are ${JSON.stringify(saved)}`);
     for (const which of [ASK, ...others]) await switchIs(app, which, true, " after the reset");
