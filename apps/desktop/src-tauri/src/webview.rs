@@ -3,7 +3,7 @@
 use gtk::prelude::*;
 
 /// The page's view in `window`.
-pub(crate) fn page(window: &tauri::WebviewWindow) -> anyhow::Result<gtk::Widget> {
+pub(crate) fn page(window: &crate::WebviewWindow) -> anyhow::Result<gtk::Widget> {
     find_webview(window.gtk_window()?.upcast_ref()).ok_or_else(|| anyhow::anyhow!("no page in the window"))
 }
 

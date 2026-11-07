@@ -6,8 +6,9 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
-use tauri_plugin_opener::OpenerExt;
+use tauri::State;
+
+use crate::AppHandle;
 
 /// Why the library didn't open, if it didn't, and where it is: set as the
 /// app starts, and not changed after.
@@ -48,5 +49,5 @@ pub(crate) fn set_library_aside(problem: State<'_, Problem>) -> crate::CmdResult
 pub(crate) fn show_library(app: AppHandle, problem: State<'_, Problem>) -> crate::CmdResult<()> {
     let shown =
         if problem.db.is_file() { problem.db.clone() } else { problem.db.parent().unwrap_or(&problem.db).into() };
-    app.opener().reveal_item_in_dir(shown).map_err(crate::err)
+    crate::system::reveal(&app, &shown)
 }

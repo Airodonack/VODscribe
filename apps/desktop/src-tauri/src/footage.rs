@@ -13,13 +13,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, fetch, mkv, tools};
 use vodscribe_player::timeline::Timeline;
 
+use crate::AppHandle;
 use crate::AppState;
 
 /// Sections no edit uses go once unused this long: the sites' terms don't
@@ -47,6 +48,12 @@ pub(crate) struct Footage {
     current: Mutex<Option<(Ask, Arc<AtomicBool>)>>,
     /// The section downloading, and how far it's in.
     growing: Mutex<Option<Growing>>,
+    /// Ended (`close`): its threads stop; the tidying waits on `ended`.
+    closed: Mutex<bool>,
+    ended: Condvar,
+    /// Its threads, for `close` to wait for.
+    #[cfg(test)]
+    threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 /// How far a section's download is: to `usable` (the VOD's time) its footage
@@ -223,22 +230,35 @@ pub(crate) async fn vod_frame(
 impl Footage {
     /// Starts fetching what's asked, once the app's state is in place; first, tidies the folder.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
-        std::thread::Builder::new().name("footage".into()).spawn(move || {
+        let thread = std::thread::Builder::new().name("footage".into()).spawn(move || {
             let state = app.state::<AppState>();
             tidy(&app, false);
             // And now and then, so what's unused goes though nothing more is fetched.
             let every = app.clone();
-            let _ = std::thread::Builder::new().name("footage-tidy".into()).spawn(move || {
+            let tidying = std::thread::Builder::new().name("footage-tidy".into()).spawn(move || {
+                let footage = &every.state::<AppState>().footage;
                 loop {
-                    std::thread::sleep(TIDY_EVERY);
+                    let closed = footage.closed.lock().unwrap();
+                    if *footage.ended.wait_timeout_while(closed, TIDY_EVERY, |closed| !*closed).unwrap().0 {
+                        return;
+                    }
                     tidy(&every, false);
                 }
             });
+            #[cfg(test)]
+            if let Ok(tidying) = tidying {
+                state.footage.threads.lock().unwrap().push(tidying);
+            }
+            #[cfg(not(test))]
+            drop(tidying);
             loop {
                 let stop = Arc::new(AtomicBool::new(false));
                 let (vod_id, start, end) = {
                     let mut waiting = state.footage.waiting.lock().unwrap();
                     let next = loop {
+                        if *state.footage.closed.lock().unwrap() {
+                            return;
+                        }
                         if let Some(next) = waiting.pop_front() {
                             break next;
                         }
@@ -261,7 +281,36 @@ impl Footage {
                 crate::page::emit(&app, "footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
             }
         })?;
+        #[cfg(test)]
+        self.threads.lock().unwrap().push(thread);
+        #[cfg(not(test))]
+        drop(thread);
         Ok(())
+    }
+
+    /// Ends the queue for good: what's waiting is dropped, the download
+    /// under way is stopped, and its threads end; returns once they have.
+    /// For the tests' app (`testkit`), which ends with its test.
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        // Under the queue's lock, where the thread takes its next and says
+        // what it's fetching: it either sees `closed` before it takes one,
+        // or what it took is stopped here.
+        {
+            let mut waiting = self.waiting.lock().unwrap();
+            *self.closed.lock().unwrap() = true;
+            if let Some((_, stop)) = &*self.current.lock().unwrap() {
+                stop.store(true, Ordering::Relaxed);
+            }
+            waiting.clear();
+            self.wake.notify_all();
+        }
+        self.ended.notify_all();
+        // Till none is left: the main thread adds the tidying's.
+        loop {
+            let Some(thread) = self.threads.lock().unwrap().pop() else { break };
+            let _ = thread.join();
+        }
     }
 
     /// Stops fetching VOD `vod_id`'s footage (it's being removed): what's

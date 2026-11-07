@@ -170,11 +170,12 @@ mod taking {
     use std::time::{Duration, Instant};
 
     use serde::Serialize;
-    use tauri::{AppHandle, Emitter, Manager};
+    use tauri::{Emitter, Manager};
 
     use super::{Receiving, file_name, free_name, part_of, rename_new};
     use dragndrop_target::{Destination, Item};
 
+    use crate::AppHandle;
     use crate::AppState;
     use crate::drop_target::{self, Event};
 
@@ -192,7 +193,7 @@ mod taking {
     /// Takes the drops on `window` (built without Tauri's drag-drop handler)
     /// with the app's own drop target, the web view's own turned off.
     #[cfg(windows)]
-    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    pub(crate) fn take_drops(window: &crate::WebviewWindow) -> tauri::Result<()> {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller4;
         use windows_core::Interface;
 
@@ -216,7 +217,7 @@ mod taking {
     /// Takes the drops of file promises on `window`'s web view (wry's drop
     /// target, hooked), and the promises' types.
     #[cfg(target_os = "macos")]
-    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    pub(crate) fn take_drops(window: &crate::WebviewWindow) -> tauri::Result<()> {
         let target = Window { app: window.app_handle().clone(), label: window.label().to_string() };
         window.with_webview(move |webview| match drop_target::register(webview.inner(), Box::new(target), trace) {
             Ok(()) => trace("taking promised files on the web view"),
@@ -227,7 +228,7 @@ mod taking {
     /// Takes the drops on `window`'s page that its web view can't (files with
     /// no address yet); the web view keeps the rest.
     #[cfg(target_os = "linux")]
-    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    pub(crate) fn take_drops(window: &crate::WebviewWindow) -> tauri::Result<()> {
         let target = Window { app: window.app_handle().clone(), label: window.label().to_string() };
         match crate::webview::page(window) {
             Ok(page) => {

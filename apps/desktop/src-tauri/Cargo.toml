@@ -47,6 +47,12 @@ dragndrop-target = { path = "../../../crates/dragndrop-target" }
 # starts each system's drag).
 dragndrop-source = { path = "../../../crates/dragndrop-source" }
 
+[dev-dependencies]
+# The commands run on Tauri's mock runtime in the tests (src/testkit.rs).
+tauri = { version = "2", features = ["test"] }
+# The fakes the tests stand in for programs and the network with.
+vodscribe-core = { path = "../../../crates/core", features = ["testkit"] }
+
 # macOS: the app starts the drag itself (drag_source), and takes drops
 # (drop_target).
 [target.'cfg(target_os = "macos")'.dependencies]

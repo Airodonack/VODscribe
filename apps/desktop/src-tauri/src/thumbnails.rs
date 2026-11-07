@@ -1,9 +1,10 @@
 //! Local copies of VOD thumbnails: fetched when a VOD is added (or at startup,
 //! for VODs that don't have one yet) and handed to the UI over IPC.
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 use vodscribe_core::thumbs;
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, emit_vod, err};
 
 /// A thumbnail's bytes, by the file name in `Vod::thumb`, and nothing else.

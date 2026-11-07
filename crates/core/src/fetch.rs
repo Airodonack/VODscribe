@@ -161,14 +161,12 @@ fn is_kick_host(url: &str) -> bool {
 }
 
 fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> Result<(Value, Vec<u8>)> {
-    let mut child = cmd
-        .args(["-J", "--no-playlist", "--no-warnings", "--", url])
+    cmd.args(["-J", "--no-playlist", "--no-warnings", "--", url])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("run yt-dlp")?;
-    let _tracked = tools::track(&child);
+        .stderr(Stdio::piped());
+    let mut child = tools::spawn(&mut cmd).context("run yt-dlp")?;
+    let _tracked = child.track();
     let read = |mut pipe: Box<dyn std::io::Read + Send>| {
         std::thread::spawn(move || {
             let mut out = Vec::new();
@@ -176,12 +174,12 @@ fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> 
             out
         })
     };
-    let stdout = read(Box::new(child.stdout.take().unwrap()));
-    let stderr = read(Box::new(child.stderr.take().unwrap()));
+    let stdout = read(child.stdout.take().unwrap());
+    let stderr = read(child.stderr.take().unwrap());
     // Polled, so a stop takes effect while yt-dlp is still looking.
     let status = loop {
         if cancel.load(Ordering::Relaxed) {
-            tools::kill_tree(&mut child);
+            child.kill_tree();
             return Err(crate::Canceled.into());
         }
         if let Some(status) = child.try_wait()? {
@@ -358,8 +356,7 @@ pub fn download(
         _ => None,
     };
     let mut expected: Option<f64> = None;
-    let mut child = cmd
-        .args(["-N", "8", "--no-mtime", "--newline", "--progress"])
+    cmd.args(["-N", "8", "--no-mtime", "--newline", "--progress"])
         .args(["--progress-template", &template])
         // A runaway download (a stream that never ends) stops instead of filling the disk.
         .args(["--max-filesize", "40G"])
@@ -367,10 +364,9 @@ pub fn download(
         .arg(format!("{}.%(ext)s", out_stem.display()))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start yt-dlp")?;
-    let _tracked = tools::track(&child);
+        .stderr(Stdio::piped());
+    let mut child = tools::spawn(&mut cmd).context("start yt-dlp")?;
+    let _tracked = child.track();
 
     // Where progress lands depends on yt-dlp's flags, so read both streams.
     let (tx, rx) = mpsc::channel::<String>();
@@ -389,7 +385,7 @@ pub fn download(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         if cancel.load(Ordering::Relaxed) {
-            tools::kill_tree(&mut child);
+            child.kill_tree();
             return Err(crate::Canceled.into());
         }
         if let Some(bytes) = expected {

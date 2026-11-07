@@ -15,6 +15,8 @@ use anyhow::Result;
 struct Queue<J> {
     waiting: VecDeque<J>,
     running: Option<(J, Arc<AtomicBool>)>,
+    /// Ended (`close`): its thread stops.
+    closed: bool,
 }
 
 /// What's told of each change to a queue (`Jobs::watch`).
@@ -24,15 +26,20 @@ pub(crate) struct Jobs<J> {
     shared: Arc<(Mutex<Queue<J>>, Condvar)>,
     started: AtomicBool,
     watcher: Watcher,
+    /// Its thread, for `close` to wait for.
+    #[cfg(test)]
+    thread: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl<J: Clone + Send + 'static> Jobs<J> {
     pub(crate) fn new() -> Self {
-        let queue = Queue { waiting: VecDeque::new(), running: None };
+        let queue = Queue { waiting: VecDeque::new(), running: None, closed: false };
         Jobs {
             shared: Arc::new((Mutex::new(queue), Condvar::new())),
             started: AtomicBool::new(false),
             watcher: Arc::default(),
+            #[cfg(test)]
+            thread: Mutex::default(),
         }
     }
 
@@ -238,12 +245,15 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         }
         let shared = self.shared.clone();
         let watcher = self.watcher.clone();
-        std::thread::Builder::new().name(name.into()).spawn(move || {
+        let thread = std::thread::Builder::new().name(name.into()).spawn(move || {
             let (queue, wake) = &*shared;
             loop {
                 let (job, stop) = {
                     let mut queue = queue.lock().unwrap();
                     let job = loop {
+                        if queue.closed {
+                            return;
+                        }
                         if let Some(job) = queue.waiting.pop_front() {
                             break job;
                         }
@@ -266,7 +276,33 @@ impl<J: Clone + Send + 'static> Jobs<J> {
                 tell(&watcher);
             }
         })?;
+        #[cfg(test)]
+        {
+            *self.thread.lock().unwrap() = Some(thread);
+        }
+        #[cfg(not(test))]
+        drop(thread);
         Ok(())
+    }
+
+    /// Ends the queue for good: what's waiting is dropped, the job running
+    /// is stopped, and its thread ends; returns once it has. For the tests'
+    /// app (`testkit`), which ends with its test.
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        let (queue, wake) = &*self.shared;
+        {
+            let mut queue = queue.lock().unwrap();
+            queue.closed = true;
+            queue.waiting.clear();
+            if let Some((_, stop)) = &queue.running {
+                stop.store(true, Ordering::Relaxed);
+            }
+        }
+        wake.notify_all();
+        if let Some(thread) = self.thread.lock().unwrap().take() {
+            let _ = thread.join();
+        }
     }
 }
 

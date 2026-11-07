@@ -556,13 +556,9 @@ fn run_worker(
             spec.lib_dirs.iter().cloned().chain(std::env::split_paths(&existing)).filter(|p| !p.as_os_str().is_empty());
         cmd.env(var, std::env::join_paths(paths)?);
     }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("start {}", tools::shown(&spec.program)))?;
-    let _tracked = tools::track(&child);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = tools::spawn(&mut cmd).with_context(|| format!("start {}", tools::shown(&spec.program)))?;
+    let _tracked = child.track();
     // Never written to: the worker stops when it closes, which it does
     // however this process ends, even where quitting's `stop_tracked` never
     // runs (a crash, a kill) or runs before the worker is tracked.
@@ -612,7 +608,7 @@ fn run_worker(
         }
     })();
     if result.is_err() {
-        tools::kill_tree(&mut child);
+        child.kill_tree();
         // On a stop, the words held back are written too (the lines they
         // replace already went), so it ends, or resumes, where the audio
         // was transcribed to. Failing to (the app quitting) loses nothing:

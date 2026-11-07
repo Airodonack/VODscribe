@@ -475,6 +475,105 @@ fn group_left(id: u32) -> bool {
     !(found == 0 && unsafe { info.si_pid() } == id as libc::pid_t)
 }
 
+/// A program the app started (`spawn`): the process, or in a test build a
+/// fake that answers as the program does (`testkit::tools`). Its pipes are
+/// taken as a `std::process::Child`'s are.
+pub struct Child {
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
+    pub stdout: Option<Box<dyn std::io::Read + Send>>,
+    pub stderr: Option<Box<dyn std::io::Read + Send>>,
+    process: Box<dyn Running>,
+}
+
+/// What `Child` asks of what's running: the process, or a test's fake.
+pub(crate) trait Running: Send {
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus>;
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>>;
+    /// Stops it and all it started, and waits till they're gone (`kill_tree`).
+    fn kill_tree(&mut self);
+    /// `track`; None for a fake, which quitting needn't stop.
+    fn track(&self) -> Option<Tracked>;
+}
+
+impl Running for std::process::Child {
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        std::process::Child::wait(self)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        std::process::Child::try_wait(self)
+    }
+    fn kill_tree(&mut self) {
+        kill_tree(self)
+    }
+    fn track(&self) -> Option<Tracked> {
+        Some(track(self))
+    }
+}
+
+impl Child {
+    pub(crate) fn new(
+        stdin: Option<Box<dyn std::io::Write + Send>>,
+        stdout: Option<Box<dyn std::io::Read + Send>>,
+        stderr: Option<Box<dyn std::io::Read + Send>>,
+        process: Box<dyn Running>,
+    ) -> Self {
+        Self { stdin, stdout, stderr, process }
+    }
+
+    /// As `std::process::Child::wait`, which closes its stdin first.
+    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.stdin = None;
+        self.process.wait()
+    }
+
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.process.try_wait()
+    }
+
+    /// `kill_tree` for this program.
+    pub fn kill_tree(&mut self) {
+        self.process.kill_tree()
+    }
+
+    /// `track` for this program, until the guard is dropped.
+    pub fn track(&self) -> Option<Tracked> {
+        self.process.track()
+    }
+}
+
+/// Starts `cmd` (made by `command`), its pipes as `cmd` sets them. In a test
+/// build, a program a test has faked (`testkit::tools::fake`) runs as that
+/// fake instead.
+pub fn spawn(cmd: &mut Command) -> std::io::Result<Child> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(child) = crate::testkit::tools::spawn(cmd) {
+        return child;
+    }
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take().map(|p| Box::new(p) as Box<dyn std::io::Write + Send>);
+    let stdout = child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    let stderr = child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    Ok(Child::new(stdin, stdout, stderr, Box::new(child)))
+}
+
+/// `cmd.output()`, or a faked program's (`spawn`).
+pub fn output(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(output) = crate::testkit::tools::output(cmd) {
+        return output;
+    }
+    cmd.output()
+}
+
+/// `cmd.status()`, or a faked program's (`spawn`).
+pub fn status(cmd: &mut Command) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(output) = crate::testkit::tools::output(cmd) {
+        return output.map(|o| o.status);
+    }
+    cmd.status()
+}
+
 /// Runs ffmpeg's `cmd`, which writes to `part` and was given `-progress
 /// pipe:1`, reporting how far it is through `length` seconds of output from 0
 /// to 1; once done, `part` becomes `out` (so `out` is never half written).
@@ -492,14 +591,14 @@ pub fn encode(
     use std::process::Stdio;
     use std::sync::atomic::Ordering;
     let mut child =
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("start ffmpeg")?;
-    let _tracked = track(&child);
+        spawn(cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())).context("start ffmpeg")?;
+    let _tracked = child.track();
     let errors = drain(child.stderr.take().context("ffmpeg's errors")?);
     let mut canceled = false;
     for line in BufReader::new(child.stdout.take().context("ffmpeg's progress")?).lines() {
         if cancel.load(Ordering::Relaxed) {
             canceled = true;
-            kill_tree(&mut child);
+            child.kill_tree();
             break;
         }
         if let Some(us) = line?.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {

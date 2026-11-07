@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod, give_way};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
@@ -18,6 +18,7 @@ use vodscribe_core::settings::{ClipEncoding, ClipFormat};
 use vodscribe_core::stretches::{self, Stretch};
 use vodscribe_core::{Paths, clips, fetch, local, pipeline, thumbs, tools};
 
+use crate::AppHandle;
 use crate::worker::{self, Stop};
 use crate::{AppState, CmdResult, emit_vod, err, thumbnails};
 
@@ -298,14 +299,13 @@ fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) 
 /// built-in player can't play. Takes the VOD's id, not a path.
 #[tauri::command]
 pub(crate) async fn open_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
     let source = state.db.lock().unwrap().vod(id).map_err(err)?.and_then(|v| v.source_path);
     let source = source.ok_or("That VOD isn't a file on this computer.")?;
     // Opening a program would run it, so only ever open media files.
     if !local::is_media(Path::new(&source)) {
         return Err("Only video and audio files can be opened.".into());
     }
-    app.opener().open_path(source, None::<String>).map_err(err)
+    crate::system::open(&app, Path::new(&source))
 }
 
 /// The file extensions VODscribe accepts, for the file picker.
@@ -320,10 +320,9 @@ pub(crate) async fn media_extensions() -> CmdResult<Vec<&'static str>> {
 /// Takes the VOD's id, not a path, so the UI can't point it anywhere else.
 #[tauri::command]
 pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
     let file = pipeline::file_on_disk(&state.db.lock().unwrap(), &state.paths, id).map_err(err)?;
     let file = file.ok_or("That VOD has no file on this computer.")?;
-    app.opener().reveal_item_in_dir(file).map_err(err)
+    crate::system::reveal(&app, Path::new(&file))
 }
 
 #[tauri::command]
@@ -551,6 +550,12 @@ pub(crate) struct Sweeper {
 impl Sweeper {
     pub(crate) fn new() -> Self {
         Sweeper { jobs: crate::jobs::Jobs::new() }
+    }
+
+    /// Ends the queue for good (`Jobs::close`).
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        self.jobs.close();
     }
 
     /// Starts erasing, with what was left from before.

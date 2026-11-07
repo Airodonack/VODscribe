@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{Progress, deps, model, tools};
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, err};
 
 #[derive(Serialize)]
@@ -75,8 +76,7 @@ pub(crate) async fn data_dir(state: State<'_, AppState>) -> CmdResult<String> {
 /// UI can't use it to open anything else.
 #[tauri::command]
 pub(crate) async fn open_data_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
-    app.opener().open_path(state.paths.root.display().to_string(), None::<String>).map_err(err)
+    crate::system::open(&app, &state.paths.root)
 }
 
 /// A `setup-progress` event: which item, and its `Progress`.

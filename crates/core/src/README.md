@@ -18,7 +18,7 @@ One module per subject.
 - `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
 - `gpu.rs`: the optional NVIDIA GPU add-on.
 - `deps.rs`: the pinned ffmpeg and Deno downloads.
-- `tools.rs`: finds and updates yt-dlp and ffmpeg.
+- `tools.rs`: finds and updates yt-dlp and ffmpeg, and starts programs.
 - `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
 - `net.rs`: downloads, with stall and cancel handling.
 - `query.rs`: the search box's language, parsed.
@@ -29,6 +29,7 @@ One module per subject.
 - `word_emotes.rs`: 7TV, BetterTTV and FrankerFaceZ emotes that chat writes as words.
 - `layers.rs`: saved chat searches drawn on the timeline.
 - `clips.rs`: clips cut to the frame with ffmpeg, in the codec and quality Settings picks.
+- [`clips`](clips): clips' tests.
 - `edits.rs`: edits, documents of pieces of VODs.
 - `render.rs`: renders an edit as one file, encoded as clips are.
 - `footage.rs`: where a stretch's picture and sound come from.
@@ -43,4 +44,6 @@ One module per subject.
 - `playable.rs`: what this computer's web view can play.
 - `settings.rs`: the app's settings.
 - `choices.rs`: the small choices the page remembers.
+- `testkit.rs`: what tests stand in for programs, the network and media with; tests and the `testkit` feature only.
+- [`testkit`](testkit): the fakes, the library helper, and how to write a test with them.
 - [`bin`](bin): the developer CLI.

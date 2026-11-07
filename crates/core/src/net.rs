@@ -225,6 +225,16 @@ fn is_public(ip: std::net::IpAddr) -> bool {
 /// known. Reads fail when `cancel` is set (within `CANCEL_POLL`) or when no
 /// data arrives for `STALL_TIMEOUT`, rather than blocking on a dead connection.
 pub fn get<'a>(url: &str, cancel: &'a AtomicBool) -> Result<(impl Read + 'a, Option<u64>)> {
+    // A test's recorded answer (`testkit::net`), read as a body is.
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(answer) = crate::testkit::net::answer(url) {
+        let body = answer.with_context(|| format!("GET {}", redact(url)))?;
+        let len = Some(body.len() as u64);
+        let (tx, rx) = mpsc::sync_channel::<io::Result<Vec<u8>>>(2);
+        let _ = tx.send(Ok(body));
+        let _ = tx.send(Ok(Vec::new()));
+        return Ok((GuardedReader { rx, pending: Vec::new(), offset: 0, eof: false, cancel }, len));
+    }
     let resp = agent().get(url).call().with_context(|| format!("GET {}", redact(url)))?;
     let len = resp.body().content_length();
     let mut body = resp.into_body().into_reader();

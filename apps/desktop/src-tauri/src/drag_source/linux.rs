@@ -26,7 +26,7 @@ use super::{Event, Item, ReleasedEarly};
 /// while its mouse button is down. On the main thread. `on` hears how it
 /// goes; `resolve` watches it for DaVinci Resolve.
 pub(crate) fn start(
-    window: &tauri::WebviewWindow,
+    window: &crate::WebviewWindow,
     items: Vec<Box<dyn Item>>,
     image: &[u8],
     resolve: Arc<crate::resolve::Watch>,

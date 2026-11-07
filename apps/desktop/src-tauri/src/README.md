@@ -4,6 +4,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 
 - `main.rs`: starts the app.
 - `lib.rs`: the app's state and startup, and the list of commands.
+- `system.rs`: what the commands ask of the desktop: showing and opening files, the save dialog.
 - `vods.rs`: the library's commands: adding, ordering and controlling VODs, refreshing a site's VOD's details, and reading transcripts.
 - `setup.rs`: first-run setup, settings, the GPU add-on and storage.
 - `recovery.rs`: the recovery screen's commands, when the library won't open.
@@ -34,5 +35,8 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `webview.rs`: the window's WebKitGTK view on Linux.
 - `receive.rs`: files dropped with no path, written into the library.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.
+- `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes.
+- [`testkit`](testkit): the app kit's own tests.
+- [`clips`](clips): clips' tests.
 - [`drag_source`](drag_source): dragging clips out before they're made.
 - [`drop_target`](drop_target): taking drops on Windows, macOS and Linux, virtual files and file promises included.

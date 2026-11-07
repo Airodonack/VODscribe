@@ -11,6 +11,9 @@ publish.workspace = true
 asr = ["dep:sherpa-onnx"]
 static = ["asr", "sherpa-onnx/static"]
 shared = ["asr", "sherpa-onnx/shared"]
+# The fakes tests stand in for programs and the network with (src/testkit.rs),
+# for the app's tests; never in a release.
+testkit = []
 
 [[bin]]
 name = "vodscribe-cli"

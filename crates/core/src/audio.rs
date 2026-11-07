@@ -31,16 +31,14 @@ pub fn decode(
     if let Some(end) = end {
         cmd.args(["-t", &format!("{:.3}", (end - start).max(0.0))]);
     }
-    let mut child = cmd
-        .arg("-i")
+    cmd.arg("-i")
         .arg(input)
         .args(["-vn", "-ac", "1", "-ar", &SAMPLE_RATE.to_string(), "-f", "s16le", "pipe:1"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start ffmpeg")?;
-    let _tracked = tools::track(&child);
+        .stderr(Stdio::piped());
+    let mut child = tools::spawn(&mut cmd).context("start ffmpeg")?;
+    let _tracked = child.track();
 
     let stderr_thread = tools::drain(child.stderr.take().unwrap());
 
@@ -71,7 +69,7 @@ pub fn decode(
     })();
 
     if result.is_err() {
-        tools::kill_tree(&mut child);
+        child.kill_tree();
     }
     let status = child.wait()?;
     let err_text = stderr_thread.join().unwrap_or_default();

@@ -9,13 +9,14 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::annotations::{self, Found, Offer, VodAnnotations};
 use vodscribe_core::annotations_filter;
 use vodscribe_core::chat::ChatMessage;
 use vodscribe_core::db::Vod;
 use vodscribe_core::settings::Settings;
 
+use crate::AppHandle;
 use crate::history::Doc;
 use crate::{AppState, CmdResult, emit_vod, err};
 

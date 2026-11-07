@@ -15,13 +15,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 use vodscribe_core::db::{Db, Vod};
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::stretches::Stretch;
 use vodscribe_core::{Paths, fetch, local, pipeline, tools};
 
+use crate::AppHandle;
 use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err};
 
@@ -58,6 +59,12 @@ impl VideoProgress {
 impl Videos {
     pub(crate) fn new() -> Self {
         Videos(Jobs::new(), Mutex::default())
+    }
+
+    /// Ends the queue for good (`Jobs::close`).
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        self.0.close();
     }
 
     /// Held while a VOD's video files are deleted, and by a download as it
@@ -381,10 +388,9 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
 /// takes no path, so the interface can't open anything else with it.
 #[tauri::command]
 pub(crate) async fn open_videos_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
     let dir = state.paths.media();
     std::fs::create_dir_all(&dir).map_err(err)?;
-    app.opener().open_path(dir.display().to_string(), None::<String>).map_err(err)
+    crate::system::open(&app, &dir)
 }
 
 #[cfg(test)]

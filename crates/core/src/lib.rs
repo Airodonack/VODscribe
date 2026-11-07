@@ -35,6 +35,8 @@ pub mod searcher;
 pub mod settings;
 pub mod sources;
 pub mod stretches;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 pub mod thumbs;
 pub mod time;
 pub mod tools;
@@ -448,46 +450,10 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
-/// A fresh folder for a test, removed when it's dropped, even when the test
-/// fails. Use it as the `Path` it derefs to.
+/// The tests' temporary folders (`testkit::TempDir`), as the tests here
+/// name them.
 #[cfg(test)]
-pub(crate) struct TempDir(PathBuf);
-
-#[cfg(test)]
-impl TempDir {
-    /// `vodscribe-<name>-…` in the system's temporary folder, unique to this
-    /// process and call, so tests running at once don't share one.
-    pub(crate) fn new(name: &str) -> Self {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("vodscribe-{name}-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        TempDir(dir)
-    }
-}
-
-#[cfg(test)]
-impl std::ops::Deref for TempDir {
-    type Target = std::path::Path;
-    fn deref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-#[cfg(test)]
-impl AsRef<std::path::Path> for TempDir {
-    fn as_ref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-#[cfg(test)]
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+pub(crate) use testkit::TempDir;
 
 #[cfg(test)]
 mod tests {
@@ -578,11 +544,13 @@ mod tests {
                     dirs.push(path);
                     continue;
                 }
-                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("crates/core/src/lib.rs") {
+                // Tests make folders of their own as they like, in files of
+                // their own (`clips/tests.rs`) or a module's `mod tests`.
+                let tests = path.file_name().is_some_and(|n| n == "tests.rs");
+                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("crates/core/src/lib.rs") || tests {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
-                // Tests make folders of their own as they like.
                 let code = text.split("\nmod tests {").next().unwrap_or_default();
                 for (n, line) in code.lines().enumerate() {
                     if by_hand(line) {

@@ -14,12 +14,13 @@ use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::clipboard::{Copied, CopiedKind, Paste};
 use vodscribe_core::db::{Clip, ClipStatus, Db};
 use vodscribe_core::edits::{self, ItemState, Put};
 use vodscribe_core::settings::ClipEncoding;
 
+use crate::AppHandle;
 use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err};
 

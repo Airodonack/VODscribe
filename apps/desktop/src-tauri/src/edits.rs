@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 use vodscribe_core::db::{ClipStatus, Db};
 use vodscribe_core::edits::{self, Edit, EditPiece};
 use vodscribe_core::settings::{ClipEncoding, Settings};
 use vodscribe_core::{clips, render, tools};
 
+use crate::AppHandle;
 use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err};
 
@@ -536,10 +537,9 @@ fn handed_out(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
 /// from there it's the user's to take.
 #[tauri::command]
 pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
     let path = handed_out(&app, id)?;
     let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
-    app.opener().reveal_item_in_dir(path).map_err(err)
+    crate::system::reveal(&app, &path)
 }
 
 /// Starts dragging edit `id`'s video out of the window, as for a clip
@@ -549,7 +549,7 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 #[tauri::command]
 pub(crate) async fn drag_edit(
     app: AppHandle,
-    window: tauri::WebviewWindow,
+    window: crate::WebviewWindow,
     id: i64,
     drag: Option<u64>,
 ) -> CmdResult<bool> {

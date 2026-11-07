@@ -11,9 +11,10 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::db::Db;
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult};
 
 /// What a job makes.
@@ -59,6 +60,9 @@ pub(crate) struct JobList {
     /// The progress of each queue's running job, by its id.
     rendering: Mutex<Option<Reported>>,
     erasing: Mutex<Option<Reported>>,
+    /// Its thread, for `close` to wait for.
+    #[cfg(test)]
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 /// A running job's id and how far it is (NaN: not known yet).
@@ -66,15 +70,37 @@ type Reported = (i64, f64);
 
 impl JobList {
     pub(crate) fn new() -> Self {
-        JobList { word: Mutex::default(), rendering: Mutex::default(), erasing: Mutex::default() }
+        JobList {
+            word: Mutex::default(),
+            rendering: Mutex::default(),
+            erasing: Mutex::default(),
+            #[cfg(test)]
+            thread: Mutex::default(),
+        }
     }
 
     /// Starts the thread that sends the list as it changes.
     pub(crate) fn run(&self, app: AppHandle) -> anyhow::Result<()> {
         let (word, heard) = mpsc::channel();
         *self.word.lock().unwrap() = Some(word);
-        std::thread::Builder::new().name("job-list".into()).spawn(move || send_changes(&app, heard))?;
+        let thread = std::thread::Builder::new().name("job-list".into()).spawn(move || send_changes(&app, heard))?;
+        #[cfg(test)]
+        {
+            *self.thread.lock().unwrap() = Some(thread);
+        }
+        #[cfg(not(test))]
+        drop(thread);
         Ok(())
+    }
+
+    /// Ends the thread that sends the list, once its word is all sent, and
+    /// waits for it (`Jobs::close`).
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        self.word.lock().unwrap().take();
+        if let Some(thread) = self.thread.lock().unwrap().take() {
+            let _ = thread.join();
+        }
     }
 
     fn progress(&self, queue: Queue) -> &Mutex<Option<Reported>> {
