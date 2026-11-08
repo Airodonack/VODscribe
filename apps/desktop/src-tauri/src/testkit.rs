@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 use tauri::{Listener, Manager};
 use vodscribe_core::db::{Clip, ClipStatus, Db, Vod};
-use vodscribe_core::testkit::{Ffmpeg, Media, TempDir, YtDlp, eventually, library, yt_dlp};
+use vodscribe_core::testkit::{Ffmpeg, Gate, Media, TempDir, YtDlp, eventually, library, yt_dlp};
 
 use crate::{AppHandle, AppState, CmdResult, Rt, WebviewWindow};
 
@@ -118,6 +118,13 @@ impl Drop for TestApp {
         self.ffmpeg.end();
         self.yt_dlp.end();
         no_links().retain(|dir| *dir != self.paths().clips());
+        held_copies().retain(|(dir, gate)| {
+            let ours = *dir == self.paths().clips();
+            if ours {
+                gate.open();
+            }
+            !ours
+        });
         let state = self.state();
         state.clips.close();
         state.sweeper.close();
@@ -240,6 +247,13 @@ impl TestApp {
     /// does there.
     pub(crate) fn takes_no_hard_links(&self) {
         no_links().push(self.paths().clips());
+    }
+
+    /// A pasted clip's copy of its file waits at `gate` once it's copied,
+    /// before the library is taken to record it (`clipboard::copy_file`), as
+    /// on a slow disk the copy itself would take a while.
+    pub(crate) fn holds_copies(&self, gate: &Gate) {
+        held_copies().push((self.paths().clips(), gate.clone()));
     }
 
     /// The library, held until the guard is dropped (as a command holds it).
@@ -404,6 +418,23 @@ fn no_links() -> MutexGuard<'static, Vec<PathBuf>> {
 /// Whether a hard link at `at` fails, its disk taking none.
 pub(crate) fn refuses_links(at: &Path) -> bool {
     no_links().iter().any(|dir| at.starts_with(dir))
+}
+
+/// The gates pasted clips' copies wait at (`TestApp::holds_copies`), each
+/// with the clips folder it's for.
+static HELD_COPIES: Mutex<Vec<(PathBuf, Gate)>> = Mutex::new(Vec::new());
+
+fn held_copies() -> MutexGuard<'static, Vec<(PathBuf, Gate)>> {
+    HELD_COPIES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A pasted clip's file was just copied to `to`: it waits there if its
+/// test holds copies (`TestApp::holds_copies`).
+pub(crate) fn copied(to: &Path) {
+    let gate = held_copies().iter().find(|(dir, _)| to.starts_with(dir)).map(|(_, gate)| gate.clone());
+    if let Some(gate) = gate {
+        gate.wait();
+    }
 }
 
 /// `stamp` (`0:10`, `1:02:03.5`, `75`) in seconds.

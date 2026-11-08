@@ -529,3 +529,111 @@ fn a_clip_made_again_before_the_drop_keeps_the_name_the_drag_gave() {
     drag.taken();
     assert!(given.is_file(), "the name the drag handed out went with the remake");
 }
+
+/// Clip `clip` dragged out of the window and let go on an app that takes
+/// copies written for it (Finder, Explorer), through the kit's drag: the
+/// name its copy was written from, which that app never took.
+fn copied_out(app: &TestApp, clip: &Clip) -> PathBuf {
+    use crate::testkit::{LetGo, Receiver};
+    app.drag_out(&[clip.id]).unwrap();
+    let drag = app.drags().last();
+    drag.let_go(LetGo::On(Receiver::taking_copies("Finder")));
+    assert_eq!(app.drag_ended()["delivered"], json!(true), "clip {} not copied out", clip.id);
+    let given = drag.given();
+    assert_eq!(given.len(), 1, "clip {} not handed out", clip.id);
+    given[0].clone()
+}
+
+/// Every file left in the library's clips folder, at any depth.
+fn left_in_clips(app: &TestApp) -> Vec<PathBuf> {
+    let mut left = Vec::new();
+    let mut dirs = vec![app.paths().clips()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                dirs.push(entry.path());
+            } else {
+                left.push(entry.path());
+            }
+        }
+    }
+    left
+}
+
+/// A clip copied out to an app that takes copies, then made again and
+/// deleted, leaves nothing in the library: the name its copy was written
+/// from was never another app's, so it goes with the make it held (`cut`;
+/// `delete_clip`: "its file unless that was dragged out"; the 0.7.3 races
+/// review, finding 2).
+#[test]
+fn a_clip_copied_out_then_made_again_and_deleted_leaves_nothing() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let name = copied_out(&app, &clip);
+    assert!(name.starts_with(app.paths().clip_names(clip.id)), "a name: {name:?}");
+    resized(&app, &clip, "0:30", "0:35");
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    let left = left_in_clips(&app);
+    assert!(left.is_empty(), "files left in the clips folder after the clip went: {left:?}");
+}
+
+/// The same made again by a change in the editor, which renders it
+/// (`edits::render_edit`).
+#[test]
+fn a_clip_copied_out_then_changed_in_the_editor_and_deleted_leaves_nothing() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    copied_out(&app, &clip);
+    app.invoke("remove_stretch", json!({ "id": clip.id, "from": 1.0, "to": 10.0 })).unwrap();
+    app.made(clip.id);
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    let left = left_in_clips(&app);
+    assert!(left.is_empty(), "files left in the clips folder after the clip went: {left:?}");
+}
+
+/// A name another app took stays through a remake and the clip's delete,
+/// though the make it held is gone (plans/clips-pilot.md "Decided" 4b: "the
+/// one before goes as now unless it was handed out, then it stays").
+#[test]
+fn a_name_another_app_took_stays_when_its_clip_is_made_again_and_deleted() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let given = dragged_out(&app, &clip);
+    let before = as_given(&given);
+    resized(&app, &clip, "0:30", "0:35");
+    assert_eq!(as_given(&given), before, "the name another app took went with the remake");
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    assert_eq!(as_given(&given), before, "the name another app took went with its clip");
+}
+
+/// An edit's video rendered again while a drag of it is under way: the name
+/// the drag gave stays, as the app it's let go on may yet take it, and that
+/// app gets it (`edits::drag_edit`, `let_go_make`).
+#[test]
+fn an_edit_rendered_again_during_its_drag_keeps_the_name_the_drag_gave() {
+    use crate::testkit::{LetGo, Receiver};
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let edit = app.db().add_edit("Best of").unwrap().id;
+    app.db().add_piece(edit, vod.id, (0.0, 30.0), "a", None).unwrap();
+    app.invoke("render_edit_now", json!({ "id": edit })).unwrap();
+    let video = rendered(&app, edit, None);
+    app.invoke("drag_edit", json!({ "id": edit, "drag": 1 })).unwrap();
+    let drag = app.drags().last();
+    let mut names: Vec<_> =
+        left_in_clips(&app).into_iter().filter(|f| f.starts_with(app.paths().clip_names(edit))).collect();
+    assert_eq!(names.len(), 1, "handed out as {names:?}");
+    let name = names.remove(0);
+    let before = as_given(&name);
+    app.invoke("render_edit_now", json!({ "id": edit })).unwrap();
+    rendered(&app, edit, Some(&video));
+    assert_eq!(as_given(&name), before, "the name the drag gave went with the render");
+    drag.let_go(LetGo::On(Receiver::taking_files("Kdenlive")));
+    app.drag_ended();
+    assert_eq!(drag.given(), std::slice::from_ref(&name));
+    app.invoke("delete_edit", json!({ "id": edit })).unwrap();
+    assert_eq!(as_given(&name), before, "the name another app took went with its edit");
+}

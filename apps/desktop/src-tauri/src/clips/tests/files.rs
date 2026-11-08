@@ -870,6 +870,30 @@ fn a_cut_clip_pasted_gets_its_own_file_without_being_made_again() {
     assert_eq!(app.clip_media(&app.made(id)), media, "the pasted clip's file went with it");
 }
 
+/// A piece added to a pasted clip in the editor while its file is copied is
+/// in its file: the copy is recorded as of what was copied, not of what the
+/// clip holds by then, so the change makes it again (clipboard.rs
+/// `copy_file`, as `edits::render_edit` does; the 0.7.3 races review,
+/// finding 1). The copy is held once written, before the library is taken,
+/// as a large clip on a slow disk would hold it (`TestApp::holds_copies`).
+#[test]
+fn a_piece_added_as_a_pasted_clip_s_file_is_copied_is_in_its_file() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    ctrl_c(&app, &[clip.id]);
+    let copying = Gate::new();
+    app.holds_copies(&copying);
+    let [id] = ctrl_v(&app, json!({ "kind": "vod", "id": vod.id }))[..] else { panic!("pasted not one") };
+    copying.reached();
+    let changed = app.ffmpeg.runs().len();
+    app.invoke("add_range_to_edit", json!({ "editId": id, "vodId": vod.id, "start": 30.0, "end": 40.0 })).unwrap();
+    copying.open();
+    let (made, again) = made_again_since(&app, id, changed);
+    assert_eq!(made.status, ClipStatus::Ready, "{:?}", made.error);
+    assert!(again, "made and current with its first piece alone: {:?}", made.file_path);
+}
+
 /// A cut clip pasted on an edit's clip bar comes back there with its file
 /// (0.7.3: "so Ctrl+V brings it back at once").
 #[test]

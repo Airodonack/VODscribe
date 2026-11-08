@@ -38,6 +38,15 @@ fn library() -> (Db, i64) {
     (db, vod)
 }
 
+/// Clip `id` once made, and whether ffmpeg wrote a file (a cut or a render,
+/// told by its progress) since its `from`th run: made again after a change
+/// then, not left as it was.
+fn made_again_since(app: &crate::testkit::TestApp, id: i64, from: usize) -> (Clip, bool) {
+    let clip = app.made(id);
+    let written = app.ffmpeg.runs().iter().skip(from).any(|run| run.iter().any(|a| a == "-progress"));
+    (clip, written)
+}
+
 mod codecs;
 mod drag;
 mod encoding;
