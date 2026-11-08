@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "targets": ["appimage"],
+    "createUpdaterArtifacts": false,
+    "externalBin": ["binaries/vodscribe-worker"],
+    "resources": ["THIRD-PARTY-NOTICES.txt"],
+    "linux": {
+      "appimage": { "bundleMediaFramework": true }
+    }
+  }
+}
