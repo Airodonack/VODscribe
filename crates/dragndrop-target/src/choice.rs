@@ -1,6 +1,6 @@
 //! Which of a drag's two offers of its files to take on macOS, the file
 //! URLs or the file promises, told from what each pasteboard item says it
-//! is. Kept apart from the AppKit calls so that it's tested everywhere.
+//! is, item by item. Kept apart from the AppKit calls so that it's tested everywhere.
 
 /// One pasteboard item of a drag, by the types it offers its file as.
 #[derive(Clone, Copy, Debug, Default)]
@@ -14,16 +14,41 @@ pub(crate) struct Offered<'a> {
     pub promised: Option<&'a str>,
 }
 
-/// Whether a drag of `items` is taken as its promises rather than its file
-/// URLs; `conforms(a, b)` says whether type `a` is a kind of type `b`.
+/// How one pasteboard item of a drag is taken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Taken {
+    /// As the file at its file URL.
+    File,
+    /// As its promise, received once let go.
+    Promise,
+    /// Not at all: it offers no file.
+    Nothing,
+}
+
+/// How each of a drag's `items` is taken; `conforms(a, b)` says whether
+/// type `a` is a kind of type `b`.
 ///
 /// A file URL beside a promise of the same type is taken as the file (Photos
 /// gives a photo's original, or a JPEG of it), and better: nothing is copied. One of another
 /// type stands in for the promised file (Photos gives a video's frame as a
 /// JPEG), and one promise like that is enough to take the drag's promises,
 /// which name the files the source means. A promise with no file URL is
-/// taken too; one of an unsaid type leaves its file URL be.
-pub(crate) fn promises_taken(items: &[Offered], conforms: impl Fn(&str, &str) -> bool) -> bool {
+/// taken too; one of an unsaid type leaves its file URL be. Taking the
+/// promises leaves an item that promises nothing its file URL: a drag may
+/// mix the two.
+pub(crate) fn taken(items: &[Offered], conforms: impl Fn(&str, &str) -> bool) -> Vec<Taken> {
+    let promises = promises_taken(items, conforms);
+    let each = |i: &Offered| match (i.promise, i.file) {
+        (true, _) if promises => Taken::Promise,
+        (_, Some(_)) => Taken::File,
+        _ => Taken::Nothing,
+    };
+    items.iter().map(each).collect()
+}
+
+/// Whether a drag of `items` is taken as its promises rather than its file
+/// URLs (`taken`).
+fn promises_taken(items: &[Offered], conforms: impl Fn(&str, &str) -> bool) -> bool {
     items.iter().filter(|i| i.promise).any(|i| match (i.file, i.promised) {
         (None, _) => true,
         (Some(file), Some(promised)) => !conforms(file, promised),
@@ -37,6 +62,10 @@ mod tests {
 
     fn taken(items: &[Offered]) -> bool {
         promises_taken(items, |a, b| a == b)
+    }
+
+    fn each(items: &[Offered]) -> Vec<Taken> {
+        super::taken(items, |a, b| a == b)
     }
 
     /// A video dragged out of Photos (macOS 26): its file URL is a JPEG of
@@ -95,5 +124,25 @@ mod tests {
     #[test]
     fn nothing_offered_is_no_promises() {
         assert!(!taken(&[]));
+        assert!(each(&[]).is_empty());
+    }
+
+    /// A drag mixing a promise that's taken (Photos' video) with a file
+    /// that promises nothing: the file is taken as itself beside the
+    /// promise, not left out.
+    #[test]
+    fn a_file_beside_promises_taken_is_its_file() {
+        let file = Offered { file: Some("public.mpeg-4"), ..Default::default() };
+        assert_eq!(each(&[PHOTOS_VIDEO, file]), [Taken::Promise, Taken::File]);
+        let promise = Offered { promise: true, promised: Some("public.mpeg-4"), ..Default::default() };
+        assert_eq!(each(&[file, promise]), [Taken::File, Taken::Promise]);
+    }
+
+    /// Promises not taken, each item is its file, or nothing with none.
+    #[test]
+    fn files_not_beside_promises_taken_are_their_files() {
+        let photo = Offered { file: Some("public.jpeg"), promise: true, promised: Some("public.jpeg") };
+        let file = Offered { file: Some("public.mpeg-4"), ..Default::default() };
+        assert_eq!(each(&[photo, file, Offered::default()]), [Taken::File, Taken::File, Taken::Nothing]);
     }
 }

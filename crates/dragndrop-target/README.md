@@ -1,6 +1,6 @@
 # dragndrop-target
 
-Read what a drag dropped on your window offers: the plain paths, and the virtual files that have no path yet. A video dragged out of a zip folder in Explorer arrives as nothing in most apps; with this crate it arrives as a file.
+Read what a drag dropped on your window offers: the plain paths, the virtual files that have no path yet, and on Windows and macOS the web links of a link dragged from a browser. A video dragged out of a zip folder in Explorer arrives as nothing in most apps; with this crate it arrives as a file.
 
 It reads data only. Your drop target stays yours: from its drop handler you pass the native drag object, and you get the paths, the virtual items (a name, a size if known), and a fetch of each item into a folder or a writer, with progress and cancel.
 

@@ -10,7 +10,9 @@
 //   app. Explorer offers it only as a virtual file (no path).
 // - macOS: a test app beside the app's window gives it as a file promise
 //   only (written a second after it's let go, as an app that makes or copies
-//   out its file does).
+//   out its file does). Then the same app gives a promise and, in the same
+//   drag, another video as a plain file: both come in, the plain one
+//   played where it is.
 // - Linux (X11): the video inside a zip, open in an archive manager (File
 //   Roller before 43, Engrampa or Ark, lib/archives.mjs), which saves it
 //   where the app says once it's let go; where there's none, a stand-in that
@@ -38,6 +40,8 @@ const NAME = process.platform === "darwin" ? "promised landing.mp4" : "zipped la
 const SENT = "portal landing.mp4";
 /** The name of the video its app fails to give. */
 const MISSING = "missing landing.mp4";
+/** The names of the promise and the plain file dragged together (macOS). */
+const MIXED = { promised: "promised beside.mp4", plain: "plain beside.mp4" };
 
 export default {
   name: "drop-virtual",
@@ -62,6 +66,7 @@ export default {
     } finally {
       giver?.close();
     }
+    if (process.platform === "darwin") await promiseAndFile(app, ctx, work, received);
     await failedReceive(app, ctx, work, received);
     if (process.platform === "linux") await fromSandbox(app, ctx, work, received);
   },
@@ -240,6 +245,46 @@ async function receivedIntoLibrary(app, ctx, received) {
   await until("nothing left beside the video", () => leftovers().length === 0, 10_000).catch(() => {
     throw new Error(`left in ${received}: ${leftovers().join(", ")}`);
   });
+}
+
+/** macOS: a promise and a plain file in one drag, from the giver: the promise received, the file played where it is. */
+async function promiseAndFile(app, ctx, work, received) {
+  const { openPromiseGiver } = await import("../lib/fileManager.mjs");
+  const mixed = path.join(work, "mixed");
+  mkdirSync(mixed, { recursive: true });
+  const plain = path.join(mixed, MIXED.plain);
+  copyFileSync(videos(path.join(ctx.out, "fixtures")).video, plain);
+  const video = videos(path.join(ctx.out, "fixtures")).video;
+  const giver = await openPromiseGiver(app, ctx, mixed, video, MIXED.promised, { also: plain });
+  try {
+    await dragOntoLibrary(app, giver.from);
+    const got = await until(
+      "both videos in the library",
+      async () => {
+        const vods = await app.invoke("list_vods");
+        const [promised, file] = [MIXED.promised, MIXED.plain].map((n) =>
+          vods.find((v) => v.title === path.parse(n).name),
+        );
+        return promised && file && { promised, file };
+      },
+      2 * MINUTE,
+    ).catch(async (e) => {
+      ctx.log(`the giver said: ${giver.said().join(" | ")}`);
+      offered(app, ctx);
+      const titles = (await app.invoke("list_vods")).map((v) => v.title);
+      ctx.log(`the library has: ${titles.join(", ")}`);
+      throw e;
+    });
+    offered(app, ctx);
+    if (got.file.source_path !== plain)
+      throw new Error(`the plain file isn't played where it is: ${got.file.source_path}`);
+    if (path.dirname(got.promised.source_path ?? "").toLowerCase() !== received.toLowerCase())
+      throw new Error(`the promise isn't received into ${received}: ${got.promised.source_path}`);
+    ctx.log("a promise and a plain file dragged together: both came in");
+    await until("the job's gone", async () => (await app.invoke("list_jobs")).length === 0, 30_000);
+  } finally {
+    giver.close();
+  }
 }
 
 /** A video its app fails to give (macOS, Linux): said in a toast, with no job, VOD or file left. */

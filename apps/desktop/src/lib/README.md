@@ -100,6 +100,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `pressToDrag.ts`: a press that becomes a drag.
 - `selection.svelte.ts`: several things picked at once.
 - `pick.ts`: the picking rule, as in a file manager.
+- `insideDrag.ts`: which native drops come from a drag that started inside the page.
 - `bulk.ts`: what's done with everything picked.
 - `where.ts`: where Ctrl+A selects and Ctrl+V pastes.
 - `copyPaste.ts`: Ctrl+C, Ctrl+X and Ctrl+V.

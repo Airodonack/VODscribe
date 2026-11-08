@@ -1,4 +1,4 @@
-//! The window's drop target on Windows (OLE). A drag is taken one of two
+//! The window's drop target on Windows (OLE). A drag is taken one of three
 //! ways, as it comes over the window:
 //!
 //! - as paths (CF_HDROP), told to the target as they are: files dropped from
@@ -9,9 +9,13 @@
 //!   Once let go, each is read from the app it comes from into what the
 //!   target gives for it (`dragndrop_target::windows::fetch`: on a thread of
 //!   its own if that app copies asynchronously, as Explorer does, else before
-//!   the drop returns). The fetches are kept here until they end.
+//!   the drop returns). The fetches are kept here until they end;
+//! - else as web links, when it has some (a link from a browser:
+//!   UniformResourceLocatorW, or text that is links only), told to the
+//!   target as they are.
 //!
-//! A drag offering both is taken as paths. Anything else is refused.
+//! A drag offering both paths and virtual files is taken as paths. Anything
+//! else is refused.
 //!
 //! WebView2 would take drops itself (its AllowExternalDrop, which the app
 //! turns off) and wry would put its own target over it (Tauri's drag-drop
@@ -21,7 +25,7 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use dragndrop_target::windows::{fetch, formats, items, paths};
+use dragndrop_target::windows::{fetch, formats, items, links, paths};
 use dragndrop_target::{Fetch, Item};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::ScreenToClient;
@@ -89,6 +93,7 @@ fn class_of(w: HWND) -> String {
 enum Offer {
     Paths(Vec<PathBuf>),
     Virtual(Vec<Item>),
+    Links(Vec<String>),
     Nothing,
 }
 
@@ -114,13 +119,17 @@ impl DropTarget {
     }
 
     /// How `data` is taken: its paths, else the virtual files in it the
-    /// target takes, else not.
+    /// target takes, else its links, else not.
     fn offer_of(&self, data: &IDataObject) -> Offer {
         if let Some(paths) = paths(data) {
             return Offer::Paths(paths);
         }
         let taken: Vec<Item> = items(data).into_iter().filter(|f| self.target.takes(f.name())).collect();
-        if taken.is_empty() { Offer::Nothing } else { Offer::Virtual(taken) }
+        if !taken.is_empty() {
+            return Offer::Virtual(taken);
+        }
+        let links = links(data);
+        if links.is_empty() { Offer::Nothing } else { Offer::Links(links) }
     }
 
     /// Receives the virtual files `files` of `data`, let go on the window.
@@ -153,10 +162,15 @@ impl IDropTarget_Impl for DropTarget_Impl {
         let offer = self.offer_of(data);
         let at = self.at(pt);
         match &offer {
-            Offer::Paths(paths) => self.target.heard(Event::Enter { paths: paths.clone(), names: vec![], at }),
+            Offer::Paths(paths) => {
+                self.target.heard(Event::Enter { paths: paths.clone(), names: vec![], links: vec![], at })
+            }
             Offer::Virtual(files) => {
                 let names = files.iter().map(|f| f.name().to_string()).collect();
-                self.target.heard(Event::Enter { paths: vec![], names, at })
+                self.target.heard(Event::Enter { paths: vec![], names, links: vec![], at })
+            }
+            Offer::Links(links) => {
+                self.target.heard(Event::Enter { paths: vec![], names: vec![], links: links.clone(), at })
             }
             Offer::Nothing => {}
         }
@@ -197,11 +211,17 @@ impl IDropTarget_Impl for DropTarget_Impl {
         let at = self.at(pt);
         match offer {
             // Asked again: the app's own drag answers with the files made by now.
-            Offer::Paths(_) => self.target.heard(Event::Drop { paths: paths(data).unwrap_or_default(), at }),
+            Offer::Paths(_) => {
+                self.target.heard(Event::Drop { paths: paths(data).unwrap_or_default(), links: vec![], at })
+            }
             Offer::Virtual(files) => {
                 (self.trace)(&format!("let go with {} virtual file(s) to receive", files.len()));
-                self.target.heard(Event::Drop { paths: vec![], at });
+                self.target.heard(Event::Drop { paths: vec![], links: vec![], at });
                 self.receive(data, files);
+            }
+            Offer::Links(links) => {
+                (self.trace)(&format!("let go with {} link(s)", links.len()));
+                self.target.heard(Event::Drop { paths: vec![], links, at });
             }
             Offer::Nothing => {}
         }
@@ -223,5 +243,6 @@ mod tests {
         assert_eq!(answer(&Offer::Nothing), DROPEFFECT_NONE);
         assert_eq!(answer(&Offer::Paths(vec![])), DROPEFFECT_COPY, "the app's own, nothing made yet");
         assert_eq!(answer(&Offer::Virtual(vec![])), DROPEFFECT_COPY);
+        assert_eq!(answer(&Offer::Links(vec!["https://example.com".into()])), DROPEFFECT_COPY);
     }
 }

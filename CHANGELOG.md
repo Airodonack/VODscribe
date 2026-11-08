@@ -6,8 +6,11 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 - The search filter shows how to search. Its panel names what the search box takes and links to the full list.
 - Refresh details is quicker. On Twitch and YouTube it takes under a second instead of several, and Check for a VODscription shows in the row that it is asking.
+- Drop links from your browser. A VOD link dragged onto VODscribe from a browser or another app adds it on Windows and macOS too, as it already did on Linux.
 - Fixes:
   - Settings shows over an edit's picture. After a clip of the edit's clip bar was opened, the edit's picture drew over Settings and menus until you left the edit.
+  - A Mac drop keeps every file. A video dragged in together with one its app hands over only once dropped is no longer left out.
+
 ## 0.7.2 — 2026-11-07
 
 Transcribing now starts from the captions button, and a name in a VODscription opens a card with who they are and their links. Clips come in H.265 and ProRes as well, and videos dropped from zips and other apps are copied into the library. On a fresh Linux system, Twitch and YouTube now play.

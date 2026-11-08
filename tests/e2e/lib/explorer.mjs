@@ -2,7 +2,8 @@
 // Explorer as a source of drags into it (drop-virtual): File
 // Explorer on a folder of the test's own, an app that takes real files only
 // (a WinForms form taking FileDrop, as many apps do), Explorer's copy
-// dialogs, and the app's own windows. All through PowerShell, in the
+// dialogs, and the app's own windows. Also a form that drags a link as a
+// browser does (drop-link). All through PowerShell, in the
 // signed-in session the tests run in (runners.mjs starts them there). Each
 // opens its window where it's told, beside the app's, and closes only its own.
 
@@ -214,6 +215,67 @@ export async function openFilesOnly(work, rect, { refuses = false } = {}) {
   await sleep(500);
   return {
     drop: { x: rect.x + Math.round(rect.w / 2), y: rect.y + Math.round(rect.h / 2) },
+    said,
+    close: () => child.kill(),
+  };
+}
+
+/** The WinForms link giver: pressed and dragged from, it drags $link as a
+ *  browser does a link (UniformResourceLocatorW and its text), or with
+ *  $textOnly as selected text alone (CF_UNICODETEXT); logs how the drag ended. */
+const LINK_GIVER = `param([string]$log, [string]$link, [int]$textOnly, [int]$x, [int]$y, [int]$w, [int]$h)
+Add-Type -AssemblyName System.Windows.Forms
+function L($m) { Add-Content $log $m }
+$f = New-Object System.Windows.Forms.Form
+$f.Text = 'Link giver'; $f.TopMost = $true; $f.BackColor = 'Teal'
+$f.StartPosition = 'Manual'; $f.Location = New-Object System.Drawing.Point($x, $y); $f.Size = New-Object System.Drawing.Size($w, $h)
+$script:dragging = $false
+$f.Add_MouseDown({ $script:dragging = $false })
+$f.Add_MouseMove({ param($s, $e)
+  if ($e.Button -ne 'Left' -or $script:dragging) { return }
+  $script:dragging = $true
+  $data = New-Object System.Windows.Forms.DataObject
+  if (-not $textOnly) {
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes($link + [char]0)
+    $data.SetData('UniformResourceLocatorW', (New-Object System.IO.MemoryStream(,$bytes)))
+  }
+  $data.SetData([System.Windows.Forms.DataFormats]::UnicodeText, $link)
+  L 'drag begins'
+  $done = $f.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]'Copy, Link')
+  L "ended with $done" })
+$f.Add_Shown({ L 'ready' })
+[System.Windows.Forms.Application]::Run($f)
+`;
+
+/**
+ * Opens the link giver (`LINK_GIVER`) for `link` at `rect`, its script and
+ * log in folder `work`: where to press to drag from it (`from`), what it has
+ * said (`said()`), and `close()`. With `textOnly`, the link goes as text alone.
+ */
+export async function openLinkGiver(work, rect, link, { textOnly = false } = {}) {
+  const script = path.join(work, "link-giver.ps1");
+  const log = path.join(work, "link-giver.log");
+  writeFileSync(script, LINK_GIVER);
+  writeFileSync(log, "");
+  const child = spawn(
+    "powershell.exe",
+    [
+      ...["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, log, link],
+      ...[textOnly ? 1 : 0, rect.x, rect.y, rect.w, rect.h].map(String),
+    ],
+    { stdio: "ignore" },
+  );
+  const said = () => (existsSync(log) ? readFileSync(log, "utf8").split(/\r?\n/).filter(Boolean) : []);
+  for (let waited = 0; !said().includes("ready"); waited += 100) {
+    if (waited > 20_000) {
+      child.kill();
+      throw new Error("the link giver didn't open");
+    }
+    await sleep(100);
+  }
+  await sleep(500);
+  return {
+    from: { x: rect.x + Math.round(rect.w / 2), y: rect.y + Math.round(rect.h / 2) },
     said,
     close: () => child.kill(),
   };

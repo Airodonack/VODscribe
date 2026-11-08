@@ -3,7 +3,8 @@
 //!
 //! Call these from your `IDropTarget`, on its thread: [`paths`] and [`items`]
 //! (or [`offer`]) in `DragEnter` to decide whether to take the drag, again in
-//! `Drop`, then [`fetch`] in `Drop` with the items you take.
+//! `Drop`, then [`fetch`] in `Drop` with the items you take. A drag of
+//! neither may be of web links ([`links`]).
 //!
 //! The paths are CF_HDROP. The items are FileGroupDescriptorW, each item's
 //! bytes FileContents at its index, as an IStream or an HGLOBAL. A source
@@ -20,17 +21,17 @@ use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::{E_ABORT, HGLOBAL, S_OK};
 use windows::Win32::System::Com::{
     COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize, DATADIR_GET, DVASPECT_CONTENT, FORMATETC,
-    IDataObject, IStream, TYMED, TYMED_HGLOBAL, TYMED_ISTREAM,
+    IDataObject, IStream, STGMEDIUM, TYMED, TYMED_HGLOBAL, TYMED_ISTREAM,
 };
 use windows::Win32::System::DataExchange::{GetClipboardFormatNameW, RegisterClipboardFormatW};
 use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
-use windows::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY, ReleaseStgMedium};
+use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, ReleaseStgMedium};
 use windows::Win32::UI::Shell::{
     CFSTR_FILECONTENTS, CFSTR_FILEDESCRIPTORW, DragQueryFileW, HDROP, IDataObjectAsyncCapability,
 };
-use windows::core::{AgileReference, Interface, PCWSTR};
+use windows::core::{AgileReference, Interface, PCWSTR, w};
 
-use crate::{Destination, Error, Fetch, Item, Job, Offer, Shared, descriptor};
+use crate::{Destination, Error, Fetch, Item, Job, Offer, Shared, descriptor, links};
 
 /// How much of an item is read at a time.
 const CHUNK: usize = 1 << 20;
@@ -41,7 +42,7 @@ const CHUNK: usize = 1 << 20;
 pub fn paths(data: &IDataObject) -> Option<Vec<PathBuf>> {
     // SAFETY: the medium is read while held, then released.
     unsafe {
-        let mut medium = data.GetData(&format(CF_HDROP.0, -1, TYMED_HGLOBAL)).ok()?;
+        let mut medium = hglobal(data.GetData(&format(CF_HDROP.0, -1, TYMED_HGLOBAL)).ok()?)?;
         let drop = HDROP(medium.u.hGlobal.0);
         let mut paths = vec![];
         for i in 0..DragQueryFileW(drop, u32::MAX, None) {
@@ -61,7 +62,9 @@ pub fn items(data: &IDataObject) -> Vec<Item> {
     let descriptor = registered(CFSTR_FILEDESCRIPTORW);
     // SAFETY: the block is read within its size while locked, then released.
     unsafe {
-        let Ok(mut medium) = data.GetData(&format(descriptor, -1, TYMED_HGLOBAL)) else { return vec![] };
+        let Some(mut medium) = data.GetData(&format(descriptor, -1, TYMED_HGLOBAL)).ok().and_then(hglobal) else {
+            return vec![];
+        };
         let block = medium.u.hGlobal;
         let at = GlobalLock(block) as *const u8;
         let items = match at.is_null() {
@@ -74,6 +77,35 @@ pub fn items(data: &IDataObject) -> Vec<Item> {
         };
         ReleaseStgMedium(&mut medium);
         items
+    }
+}
+
+/// The web links (http and https) `data` offers: a browser's link
+/// (UniformResourceLocatorW, one), else its text (CF_UNICODETEXT) when
+/// that's links only, one a line.
+pub fn links(data: &IDataObject) -> Vec<String> {
+    let link = text_of(data, registered(w!("UniformResourceLocatorW"))).and_then(|l| links::web_link(&l));
+    if let Some(link) = link {
+        return vec![link];
+    }
+    text_of(data, CF_UNICODETEXT.0).map(|t| links::links_in(&t)).unwrap_or_default()
+}
+
+/// The UTF-16 text `data` offers as clipboard format `cf`, up to its first
+/// NUL, if it does, in a memory block, within `links::MAX_TEXT`.
+fn text_of(data: &IDataObject, cf: u16) -> Option<String> {
+    // SAFETY: the block is read within its size while locked, then released.
+    unsafe {
+        let mut medium = hglobal(data.GetData(&format(cf, -1, TYMED_HGLOBAL)).ok()?)?;
+        let block = medium.u.hGlobal;
+        let at = GlobalLock(block) as *const u16;
+        let text = (!at.is_null()).then(|| {
+            let text = links::text_of_utf16(std::slice::from_raw_parts(at, GlobalSize(block) / 2));
+            let _ = GlobalUnlock(block);
+            text
+        });
+        ReleaseStgMedium(&mut medium);
+        text.flatten()
     }
 }
 
@@ -171,6 +203,17 @@ fn format_name(cf: u16) -> String {
     // SAFETY: the buffer's length is passed with it.
     let len = unsafe { GetClipboardFormatNameW(u32::from(cf), &mut name) };
     if len > 0 { String::from_utf16_lossy(&name[..len as usize]) } else { format!("#{cf}") }
+}
+
+/// `medium` if it's the memory block asked for; else released, None (a
+/// source that answers with another medium isn't read as one).
+fn hglobal(mut medium: STGMEDIUM) -> Option<STGMEDIUM> {
+    if medium.tymed == TYMED_HGLOBAL.0 as u32 {
+        return Some(medium);
+    }
+    // SAFETY: the source's medium, released once, unread.
+    unsafe { ReleaseStgMedium(&mut medium) };
+    None
 }
 
 /// The clipboard format registered as `name`.
