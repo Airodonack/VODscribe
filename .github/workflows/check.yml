@@ -3,7 +3,8 @@ name: Checks
 # On every push and pull request (and by hand): the workflows themselves (actionlint, which
 # also runs shellcheck on their scripts), formatting (the same check as
 # .githooks/pre-commit), type checks and the website build, the third-party
-# notices, the core's lints and tests, and the player's.
+# notices, the core's lints and tests, the player's, and the desktop app's
+# tests on Linux, macOS and Windows.
 on:
   push:
   pull_request:
@@ -94,8 +95,8 @@ jobs:
           cargo fetch --locked
           python3 scripts/third-party-notices.py --check
 
-  # The core's tests and lints. The desktop app and the worker need system
-  # libraries and sherpa-onnx, so the release build (build.yml) covers those.
+  # The core's tests and lints. The worker needs sherpa-onnx, so the release
+  # build (build.yml) covers it; the tests job runs the desktop app's tests.
   rust:
     timeout-minutes: 20
     runs-on: ubuntu-22.04
@@ -150,3 +151,51 @@ jobs:
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           VODSCRIBE_TESTS_NEED_ALL: "1"
+
+  # The desktop app's tests, with and without the e2e feature, and the drop
+  # target's, on each system; the core's on macOS and Windows (the rust job
+  # runs them on Linux). On Windows .cargo/config.toml's crt-static applies,
+  # as RUSTFLAGS isn't set here.
+  tests:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          # Keep in step with rust-toolchain.toml.
+          toolchain: "1.99.0"
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev
+
+      # tauri-build checks that the bundle's sidecars and libraries exist; no
+      # test runs them, so empty files stand in for prepare-sidecars' builds.
+      - name: Sidecar stand-ins
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          cd apps/desktop/src-tauri
+          mkdir -p binaries lib
+          case "$triple" in
+            *linux*) touch "binaries/vodscribe-worker-$triple" "binaries/vodscribe-worker-cuda-$triple" lib/libsherpa-onnx-c-api.so ;;
+            *windows*) touch "binaries/vodscribe-worker-$triple.exe" "binaries/vodscribe-worker-cuda-$triple.exe" lib/sherpa-onnx-c-api.dll ;;
+            *) touch "binaries/vodscribe-worker-$triple" ;;
+          esac
+
+      - if: runner.os != 'Linux'
+        run: cargo test --locked -p vodscribe-core
+      - run: cargo test --locked -p vodscribe
+      - run: cargo test --locked -p vodscribe --features e2e
+      - run: cargo test --locked -p dragndrop-target

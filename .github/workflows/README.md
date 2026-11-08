@@ -2,7 +2,7 @@
 
 GitHub Actions for this repository.
 
-- `check.yml`: Checks, on every push and pull request: the workflows, formatting, type checks, the website build, the third-party notices, and the core's and the player's lints and tests.
+- `check.yml`: Checks, on every push and pull request: the workflows, formatting, type checks, the website build, the third-party notices, the core's and the player's lints and tests, and the desktop app's tests on Linux, macOS and Windows.
 - `build.yml`: Build installers, in a fast or a full lane, then the end-to-end tests; a tag's run also publishes the release.
 - `e2e.yml`: the end-to-end tests of a build's installers in shards, also of an earlier run's without building again.
 - `notices.yml`: regenerates the third-party notices on a Dependabot pull request and pushes them to its branch.
