@@ -2,6 +2,8 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)". An entry opens with two or three plain sentences on what's new, as you'd tell a friend, then its changes. Each change opens with a headline of six words or fewer (eight when a feature's name takes two), a plain statement ending in a full stop with no colon, dash or parenthesis, then one sentence of detail (a second only for a key, a menu name or a limit). A change goes beside the others about the same part of the app (the player and its timeline, clips and the editor, the transcript and search, chat, chapters, highlights and VODscriptions, the library, settings and privacy, the website), the bigger first, and the fixes under the closing "Fixes:" are grouped the same way.
 
+## 0.7.4 (unreleased)
+
 ## 0.7.3 — 2026-11-08
 
 Cut clips now wait for a paste, formats your ffmpeg can't make are grayed out, and a link dragged from a browser adds a VOD on Windows and macOS too. Clips hold up better: a file another app is using stays put, Undo changes the right clip, and starting over keeps your videos. If your library is on exFAT or a network drive, don't go back to 0.7.2, which can overwrite a clip file another app is using.
