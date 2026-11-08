@@ -206,7 +206,7 @@ export default {
 
     // C: a clip of each, in the order picked.
     await app.key("c");
-    const made = await until(
+    let made = await until(
       "two clips, made",
       async () => {
         const list = (await app.invoke("list_clips", { vodId: vod.id })).filter((c) => c.shown);
@@ -383,6 +383,14 @@ export default {
     const toast = await app.js(`return document.querySelector(".toast .message")?.textContent ?? ""`);
     ctx.log(`one undo: "${toast}"`);
     if (!/Clips deleted/.test(toast)) throw new Error(`the undo says "${toast}"`);
+    // Undo makes them again under new ids (an id is never given twice): from
+    // here on, the pills are the clips brought back, each of the same stretch.
+    const again = await shown();
+    made = made.map((c) => {
+      const same = again.find((b) => b.start === c.start && b.end === c.end);
+      if (!same) throw new Error(`no clip of ${c.start}-${c.end} s back: ${JSON.stringify(again)}`);
+      return same;
+    });
 
     // A box from empty space in the clip bar, right of the pills, over both.
     await until("two pills again", () => app.js(`return document.querySelectorAll(".chip").length === 2`), MINUTE);
@@ -742,7 +750,7 @@ export default {
     const editsBefore = new Set((await app.invoke("list_edits")).map((e) => e.id));
     const plainCount = (await shown()).length;
     // Made first, so picked first: 2-3 s, then 1-2 s.
-    const inOrder = [...made].sort((x, y) => x.id - y.id);
+    const inOrder = [2, 1].map((start) => made.find((c) => Math.round(c.start) === start));
     for (const clip of inOrder)
       await app.js(
         `${TOGGLE}

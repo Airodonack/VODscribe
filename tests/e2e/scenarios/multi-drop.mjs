@@ -239,7 +239,9 @@ export default {
     await until("the clip bar lit", () => app.js(`return !!document.querySelector(".clip-bar.over")`), 10_000);
     await ctx.checkpoint("stretches-over-the-clip-bar");
     await letGo();
-    const barClips = () => app.invoke("edit_clips", { id: edit.id });
+    // The clips the carry made ahead for a drag out (not shown) are deleted
+    // and new ones put on the clip bar, under new ids: the pills are those.
+    const barClips = async () => (await app.invoke("edit_clips", { id: edit.id })).filter((c) => c.shown);
     const onBar = await until(
       "a clip of each on the edit's clip bar, in the order picked",
       async () => {
