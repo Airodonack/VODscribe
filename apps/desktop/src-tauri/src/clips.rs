@@ -430,9 +430,12 @@ pub(crate) fn file_to_let_go(db: &Db, id: i64, file: Option<String>) -> Result<O
 }
 
 /// Whether `a` and `b` are the same file, or copies of it as it is: the
-/// same length and time changed (a link shares both).
+/// same length and time changed (a hard link shares both). Both must be
+/// files themselves, not symbolic links, which are never followed: a
+/// library from elsewhere may hold one to a file outside it.
 fn same_file(a: &Path, b: &Path) -> bool {
-    let stat = |p: &Path| std::fs::metadata(p).ok().map(|m| (m.len(), m.modified().ok()));
+    let stat =
+        |p: &Path| std::fs::symlink_metadata(p).ok().filter(|m| m.is_file()).map(|m| (m.len(), m.modified().ok()));
     stat(a).is_some_and(|a| Some(a) == stat(b))
 }
 
@@ -455,7 +458,7 @@ pub(crate) fn tidy_at_start(paths: &vodscribe_core::Paths, db: &Db) -> Result<()
     for (id, file, handed_out) in db.forget_hidden_clips()? {
         let_go_files(paths, id, file.as_deref(), handed_out);
     }
-    crate::files::keep_leftovers_in(paths.leftovers());
+    crate::files::keep_leftovers_in(paths);
     Ok(())
 }
 
@@ -468,10 +471,14 @@ pub(crate) fn let_go_files(paths: &vodscribe_core::Paths, id: i64, file: Option<
         if !handed_out {
             // Only those that are this clip's file: a library from before
             // 0.7.3 may give its last deleted clip's id once more, and that
-            // clip may have left names another app took.
-            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-                if same_file(&entry.path(), Path::new(file)) {
-                    delete_file(entry.path());
+            // clip may have left names another app took. And only in a real
+            // folder: one that's a link (a library from elsewhere may hold
+            // one) would lead out of the clips folder.
+            if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    if same_file(&entry.path(), Path::new(file)) {
+                        delete_file(entry.path());
+                    }
                 }
             }
         }
