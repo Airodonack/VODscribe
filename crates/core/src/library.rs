@@ -347,10 +347,11 @@ fn same_file(a: &Path, b: &Path) -> bool {
     stat(a).is_some_and(|a| Some(a) == stat(b))
 }
 
-/// Whether `settle` may take the file at `path` from folder `dir`: inside
-/// it by its name as written (`named_inside`), looked at only then, and
-/// inside it on disk too, so a link there to a file elsewhere isn't.
-fn may_take(path: &Path, dir: &Path) -> bool {
+/// Whether the file at `path` is the app's to take (`settle`) or delete
+/// from folder `dir`: inside it by its name as written (`named_inside`),
+/// looked at only then, and inside it on disk too, so a link there to a
+/// file elsewhere isn't.
+pub fn may_take(path: &Path, dir: &Path) -> bool {
     named_inside(path, dir) && inside(path, dir)
 }
 

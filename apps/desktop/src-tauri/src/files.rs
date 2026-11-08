@@ -43,11 +43,14 @@ impl Leftovers {
     }
 
     /// Keeps the list in `store` from now: what it held (the files left when
-    /// the app last quit) is added and tried again.
-    pub(crate) fn keep_in(&mut self, store: PathBuf) {
+    /// the app last quit) is added and tried again. Only what it names in
+    /// `clips`, the one folder the app deletes in, on disk as well as by name
+    /// (`library::may_take`): the store is in the library's folder, and a
+    /// library from elsewhere may bring one listing a file anywhere.
+    pub(crate) fn keep_in(&mut self, store: PathBuf, clips: &Path) {
         let kept: Vec<Leftover> =
             std::fs::read(&store).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
-        for left in kept {
+        for left in kept.into_iter().filter(|l| vodscribe_core::library::may_take(&l.path, clips)) {
             if !self.list.contains(&left) {
                 self.list.push(left);
             }
@@ -182,24 +185,25 @@ pub(crate) fn delete_leftovers() {
     with_leftovers(None, |l| l.retry());
 }
 
-/// At start: the leftovers are kept in `store` from now, and those the app
-/// last quit with are tried again (`Leftovers::keep_in`).
+/// At start: the leftovers are kept in the library's folder (`paths`) from
+/// now, and those the app last quit with are tried again (`Leftovers::keep_in`).
 #[cfg(not(test))]
-pub(crate) fn keep_leftovers_in(store: PathBuf) {
-    with_leftovers(None, move |l| l.keep_in(store));
+pub(crate) fn keep_leftovers_in(paths: &vodscribe_core::Paths) {
+    with_leftovers(None, |l| l.keep_in(paths.leftovers(), &paths.clips()));
 }
 
 /// At a test app's start (`keep_leftovers_in`): its library's list begins
 /// anew from its store, as the app's does at a start after a quit.
 #[cfg(test)]
-pub(crate) fn keep_leftovers_in(store: PathBuf) {
+pub(crate) fn keep_leftovers_in(paths: &vodscribe_core::Paths) {
+    let store = paths.leftovers();
     let mut lists = LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner());
     if lists.is_empty() {
         lists.push(Leftovers::new());
     }
     lists.retain(|l| l.store.as_ref() != Some(&store));
     let mut list = Leftovers::new();
-    list.keep_in(store);
+    list.keep_in(store, &paths.clips());
     lists.push(list);
 }
 

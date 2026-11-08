@@ -1095,7 +1095,7 @@ fn a_file_that_could_not_be_deleted_goes_at_the_next_start() {
     std::fs::write(&rewritten, b"clip").unwrap();
     let store = dir.join("leftovers.json");
     let mut running = crate::files::Leftovers::default();
-    running.keep_in(store.clone());
+    running.keep_in(store.clone(), &folder);
     // A folder that can't be written to holds its files, as Windows holds one open.
     let mode = |m| std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(m)).unwrap();
     mode(0o555);
@@ -1110,8 +1110,52 @@ fn a_file_that_could_not_be_deleted_goes_at_the_next_start() {
     std::fs::write(&rewritten, b"another clip").unwrap();
 
     let mut next = crate::files::Leftovers::default();
-    next.keep_in(store.clone());
+    next.keep_in(store.clone(), &folder);
     assert!(!stuck.exists(), "left after the next start");
     assert!(rewritten.is_file(), "a file written anew at its path deleted");
     assert!(next.listed().is_empty() && !store.exists(), "still listed");
+}
+
+/// The list of files left to delete is read from the library's folder, so a
+/// library from elsewhere (restored, shared) can carry one of its own: only
+/// what it names inside the library's clips folder, where the app deletes,
+/// goes at start; a file elsewhere stays, even with its size and time listed
+/// (files.rs, `Leftovers::keep_in`).
+#[test]
+fn a_library_s_list_of_leftovers_deletes_nothing_outside_its_clips() {
+    let dir = vodscribe_core::testkit::TempDir::new("leftovers-outside");
+    let paths = vodscribe_core::Paths::new(dir.join("library"));
+    std::fs::create_dir_all(paths.clips()).unwrap();
+    let outside = dir.join("outside").join("notes.txt");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    std::fs::write(&outside, b"the user's own file").unwrap();
+    let meta = std::fs::metadata(&outside).unwrap();
+    // As the app writes the list (`Leftover`: path, size, modified).
+    let listed = json!([{ "path": outside, "size": meta.len(), "modified": meta.modified().unwrap() }]);
+    std::fs::write(paths.leftovers(), serde_json::to_vec(&listed).unwrap()).unwrap();
+    let mut list = crate::files::Leftovers::default();
+    list.keep_in(paths.leftovers(), &paths.clips());
+    assert!(outside.is_file(), "a file outside the library, at {}, was deleted at start", outside.display());
+}
+
+/// A clip's delete (or the start's tidy of a hidden one) deletes the names it
+/// was handed out by in `clips/<id>/`: never through a link there, so a
+/// library from elsewhere whose `clips/<id>` and clip file are links to
+/// another folder and a file in it deletes nothing there (`let_go_files`).
+#[cfg(unix)]
+#[test]
+fn a_clip_s_delete_follows_no_link_out_of_the_clips_folder() {
+    use std::os::unix::fs::symlink;
+    let dir = vodscribe_core::testkit::TempDir::new("names-linked");
+    let paths = vodscribe_core::Paths::new(dir.join("library"));
+    std::fs::create_dir_all(paths.clips()).unwrap();
+    let outside = dir.join("outside").join("id_ed25519");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    std::fs::write(&outside, b"secret").unwrap();
+    // Relative links, as a tar or zip of a library carries them.
+    symlink(Path::new("../../outside"), paths.clip_names(5)).unwrap();
+    let file = paths.clip_file(5, "mp4");
+    symlink(Path::new("../../outside/id_ed25519"), &file).unwrap();
+    let_go_files(&paths, 5, Some(&file.to_string_lossy()), false);
+    assert!(outside.is_file(), "a file outside the library, at {}, was deleted", outside.display());
 }
