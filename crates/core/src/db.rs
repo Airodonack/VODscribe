@@ -1205,14 +1205,19 @@ fn tidy_copies(path: &Path, max_age: std::time::Duration) {
 /// copies as old), and its first VODs and clips would write over them.
 /// All or nothing: if one can't be moved, what was goes back, and the
 /// error names a file another app has open (`in_use`), the one reason
-/// Windows refuses, or, if something couldn't go back, what's left in the
-/// set-aside folder. Returns the folder its file went to.
+/// Windows refuses, or, if something couldn't go back, what's left set
+/// aside. Returns the folder its file went to.
 pub fn set_aside(paths: &crate::Paths) -> Result<PathBuf> {
-    set_aside_with(paths, &|from, to| std::fs::rename(from, to))
+    set_aside_with(paths, &|from, to| std::fs::rename(from, to), &in_use)
 }
 
-/// `set_aside`, moving each file or folder with `rename`.
-fn set_aside_with(paths: &crate::Paths, rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>) -> Result<PathBuf> {
+/// `set_aside`, moving each file or folder with `rename` and asking
+/// `in_use` which file another app has open when a move fails.
+fn set_aside_with(
+    paths: &crate::Paths,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+    in_use: &dyn Fn(&Path) -> Option<PathBuf>,
+) -> Result<PathBuf> {
     let date = date_of(now());
     let name = (1..)
         .map(|n| if n == 1 { format!("library-broken-{date}") } else { format!("library-broken-{date}-{n}") })
@@ -1239,6 +1244,8 @@ fn set_aside_with(paths: &crate::Paths, rename: &dyn Fn(&Path, &Path) -> std::io
     }
     moves.extend(paths.library_files().into_iter().zip(aside.library_files()));
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // The file another app has open, if that's what stopped a move.
+    let mut open = None;
     let moving = (|| {
         std::fs::create_dir_all(&aside.root)?;
         std::fs::create_dir_all(&aside.local)?;
@@ -1248,12 +1255,7 @@ fn set_aside_with(paths: &crate::Paths, rename: &dyn Fn(&Path, &Path) -> std::io
                 continue;
             }
             if let Err(e) = rename(&from, &to) {
-                if let Some(open) = in_use(&from) {
-                    anyhow::bail!(
-                        "{} is open in another app. Close that app, then start a new library again.",
-                        crate::tools::shown(&open)
-                    );
-                }
+                open = in_use(&from);
                 return Err(e)
                     .with_context(|| format!("move {} to {}", crate::tools::shown(&from), crate::tools::shown(&to)));
             }
@@ -1271,15 +1273,27 @@ fn set_aside_with(paths: &crate::Paths, rename: &dyn Fn(&Path, &Path) -> std::io
     if stuck.is_empty() {
         let _ = std::fs::remove_dir(&aside.local);
         let _ = std::fs::remove_dir(&aside.root);
-        return Err(e);
+        return Err(match open {
+            Some(open) => anyhow::anyhow!(
+                "{} is open in another app. Close that app, then start a new library again.",
+                crate::tools::shown(&open)
+            ),
+            None => e,
+        });
     }
-    // Part of the library is in the set-aside folder: a new start would
-    // begin without it, so it's named, to be moved back by hand first.
+    // Part of the library is set aside: a new start would begin without
+    // it, so it's named, to be moved back by hand first. The paths are
+    // whole, as the split layout sets aside into two folders; the cause is
+    // only what went wrong, as the in-use sentence's own advice (start
+    // again) is the opposite of this one's.
+    let cause = match open {
+        Some(open) => format!("{} is open in another app", crate::tools::shown(&open)),
+        None => format!("{e:#}"),
+    };
     Err(anyhow::anyhow!(
-        "The library is partly set aside: {} couldn't be moved back from {} after this failed: {e:#}. \
-         Move them back beside the library before trying again.",
-        stuck.join(", "),
-        crate::tools::shown(&aside.root)
+        "The library is partly set aside: {} couldn't be moved back after this failed: {cause}. \
+         Move them back where they were before trying again.",
+        stuck.join(", ")
     ))
 }
 
@@ -2900,13 +2914,79 @@ mod tests {
             }
             std::fs::rename(from, to)
         };
-        let failed = format!("{:#}", set_aside_with(&paths, &rename).unwrap_err());
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
         assert!(failed.contains("couldn't be moved back") && failed.contains("thumbs"), "{failed}");
         assert!(!failed.contains("start a new library again"), "{failed}");
         let aside = dir.join("data").join(format!("library-broken-{}", date_of(now())));
         assert!(aside.join("thumbs").is_dir(), "the thumbnails are in the set-aside folder, as it says");
         assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "the rest is back");
         assert!(paths.source_video(1, "mp4").exists());
+    }
+
+    /// Split (Windows: Roaming and Local), what's stuck is in Local's
+    /// set-aside folder: the message names it by its whole path, not the
+    /// Roaming one, and doesn't send it "beside the library" (the database).
+    #[test]
+    fn a_library_partly_set_aside_in_two_folders_names_each_path() {
+        let dir = crate::TempDir::new("set-aside-split-stuck");
+        let paths = crate::Paths::split(dir.join("roaming"), dir.join("local"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        let (work, thumbs) = (paths.work(), paths.thumbs());
+        let rename = |from: &Path, to: &Path| {
+            if from == work || to == thumbs {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        let name = format!("library-broken-{}", date_of(now()));
+        let stuck = dir.join("local").join(&name).join("thumbs");
+        assert!(stuck.is_dir());
+        assert!(failed.contains(&crate::tools::shown(&stuck)), "{failed}");
+        let roaming = crate::tools::shown(dir.join("roaming").join(&name));
+        assert!(!failed.contains(&format!("{roaming} ")), "names the Roaming folder: {failed}");
+        assert!(failed.ends_with("Move them back where they were before trying again."), "{failed}");
+    }
+
+    /// A file another app has open stops the move, and something can't go
+    /// back: the message names the file as the cause, without the in-use
+    /// message's own advice to start again.
+    #[test]
+    fn a_library_partly_set_aside_by_an_open_file_says_only_which() {
+        let dir = crate::TempDir::new("set-aside-open-stuck");
+        let paths = crate::Paths::new(dir.join("data"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        let (work, thumbs) = (paths.work(), paths.thumbs());
+        let open = work.join("1.mp4");
+        let rename = |from: &Path, to: &Path| {
+            if from == work || to == thumbs {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let in_use = |from: &Path| (from == work).then(|| open.clone());
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        let shown = crate::tools::shown(&open);
+        assert!(
+            failed.contains(&format!(
+                "after this failed: {shown} is open in another app. Move them back where they were before trying again."
+            )),
+            "{failed}"
+        );
+        assert!(!failed.contains("..") && !failed.contains("start a new library again"), "{failed}");
+        // With everything back, the in-use message is the whole answer.
+        std::fs::rename(dir.join("data").join(format!("library-broken-{}", date_of(now()))).join("thumbs"), &thumbs)
+            .unwrap();
+        let rename = |from: &Path, to: &Path| {
+            if from == work {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        assert_eq!(failed, format!("{shown} is open in another app. Close that app, then start a new library again."));
     }
 
     /// A library whose folders can't all be moved is left as it was.
