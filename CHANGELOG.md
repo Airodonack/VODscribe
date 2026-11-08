@@ -24,7 +24,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - A resized clip leaves the jobs list. A clip resized while it waited its turn was still listed as waiting once it was made.
   - New clips wait their turn. After several waiting clips were deleted at once, the next new clip could jump ahead of others.
   - A Mac drop keeps every file. A video dragged in together with one its app hands over only once dropped is no longer left out.
-  - Starting over keeps your videos. Start a new library, offered when the library can't be opened, no longer deletes the old one's videos and clips, which move with it to its library-broken folder.
+  - Starting over keeps your videos. Start a new library, offered when the library can't be opened, no longer deletes the old one's videos and clips, which are kept with it in library-broken folders.
 
 ## 0.7.2 — 2026-11-07
 
