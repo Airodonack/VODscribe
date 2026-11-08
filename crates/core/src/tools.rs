@@ -83,12 +83,19 @@ pub fn find_js_runtime(bin_dir: &Path) -> Option<(&'static str, PathBuf)> {
     })
 }
 
+/// VODscribe's own ffmpeg in `bin_dir`, else the system's on PATH.
 pub fn find_ffmpeg(bin_dir: &Path) -> Option<PathBuf> {
     let local = crate::deps::managed_path(bin_dir, "ffmpeg");
     if local.is_file() {
         return Some(local);
     }
     which::which("ffmpeg").ok()
+}
+
+/// Whether `ffmpeg` (as `find_ffmpeg` found it) is VODscribe's own, the one
+/// it downloaded into `bin_dir`, rather than the system's.
+pub fn own_ffmpeg(bin_dir: &Path, ffmpeg: &Path) -> bool {
+    ffmpeg == crate::deps::managed_path(bin_dir, "ffmpeg")
 }
 
 /// What tells one ffmpeg at a path from another there: its file's size and

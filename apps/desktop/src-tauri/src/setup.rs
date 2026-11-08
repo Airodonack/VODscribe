@@ -282,13 +282,27 @@ pub(crate) async fn set_settings(state: State<'_, AppState>, settings: Settings)
     settings.save(&state.paths.settings()).map_err(err)
 }
 
+/// The codecs the ffmpeg in use can't make, and whose it is.
+#[derive(Serialize)]
+pub(crate) struct FfmpegCodecs {
+    missing: Vec<ClipCodec>,
+    /// VODscribe's own (`tools::own_ffmpeg`), else the system's: the page
+    /// says which can't make a format. With none found, its own, which
+    /// setup downloads.
+    own: bool,
+}
+
 /// The codecs Settings › Encoding offers that the ffmpeg in use can't make,
 /// for the page to grey out; asked of that ffmpeg once (`tools::encoders`).
 #[tauri::command]
-pub(crate) async fn missing_clip_codecs(state: State<'_, AppState>) -> CmdResult<Vec<ClipCodec>> {
+pub(crate) async fn missing_clip_codecs(state: State<'_, AppState>) -> CmdResult<FfmpegCodecs> {
     let bin = state.paths.bin();
-    tauri::async_runtime::spawn_blocking(move || {
-        tools::find_ffmpeg(&bin).map(|ffmpeg| vodscribe_core::clips::missing_codecs(&ffmpeg)).unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(move || match tools::find_ffmpeg(&bin) {
+        Some(ffmpeg) => FfmpegCodecs {
+            missing: vodscribe_core::clips::missing_codecs(&ffmpeg),
+            own: tools::own_ffmpeg(&bin, &ffmpeg),
+        },
+        None => FfmpegCodecs { missing: Vec::new(), own: true },
     })
     .await
     .map_err(err)

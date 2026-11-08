@@ -110,7 +110,7 @@ exec '${real}' "$@"
       // 2. The ffmpeg back: asked again, it has every codec, and H.265 is picked.
       putBack();
       // (Asked outright too: Settings reopened may show nothing greyed before its answer.)
-      const missing = await app.invoke("missing_clip_codecs");
+      const { missing } = await app.invoke("missing_clip_codecs");
       if (missing.length) throw new Error(`with the ffmpeg back, missing: ${missing}`);
       await openEncoding(app, everyCodec);
       ctx.log("with the ffmpeg back, nothing greyed out");

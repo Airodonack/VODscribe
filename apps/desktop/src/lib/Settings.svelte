@@ -15,6 +15,7 @@
     type ClipQuality,
     type Device,
     type DownloadProgress,
+    type FfmpegCodecs,
     type GpuStatus,
     type UnlistenFn,
   } from "./api";
@@ -74,7 +75,7 @@
   // Only the latest answer applies, as with `refresh`.
   // Null until the first answer, which comes in a moment: a format clicked
   // meanwhile is held, and picked then unless it's one of them.
-  let missingCodecs = $state<ClipCodec[] | null>(null);
+  let missingCodecs = $state<FfmpegCodecs | null>(null);
   let heldPick: (typeof CODECS)[number] | null = null;
   let askedCodecs = 0;
   $effect(() => {
@@ -82,13 +83,13 @@
     const n = ++askedCodecs;
     api
       .missingClipCodecs()
-      .catch((): ClipCodec[] => [])
-      .then((missing) => {
+      .catch((): FfmpegCodecs => ({ missing: [], own: true }))
+      .then((ffmpeg) => {
         if (n !== askedCodecs) return;
-        missingCodecs = missing;
+        missingCodecs = ffmpeg;
         const held = heldPick;
         heldPick = null;
-        if (held && !missing.includes(held.id)) pickCodec(held);
+        if (held && !ffmpeg.missing.includes(held.id)) pickCodec(held);
       });
   });
   let codecs = $derived(codecChoices(CODECS, clipCodec, missingCodecs));

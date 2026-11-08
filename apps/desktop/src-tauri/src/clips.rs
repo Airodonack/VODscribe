@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
-use vodscribe_core::settings::{ClipEncoding, Settings};
+use vodscribe_core::settings::{ClipEncoding, ClipQuality, Settings};
 use vodscribe_core::{clips, tools};
 
 use crate::AppHandle;
@@ -512,6 +512,32 @@ fn fail(app: &AppHandle, id: i64, e: &anyhow::Error) {
     }
 }
 
+/// `encoding`, refused with the app's sentence when `ffmpeg` can't make it
+/// with a picture (`video`) or sound alone (`clips::can_make`).
+fn makeable(app: &AppHandle, ffmpeg: &Path, encoding: ClipEncoding, video: bool) -> Result<ClipEncoding> {
+    clips::can_make(ffmpeg, &app.state::<AppState>().paths.bin(), encoding, video)?;
+    Ok(encoding)
+}
+
+/// The encoding clips and edits are made in (Settings › Encoding), refused
+/// when `ffmpeg` can't make it (`makeable`).
+pub(crate) fn encoding_to_make(app: &AppHandle, ffmpeg: &Path, video: bool) -> Result<ClipEncoding> {
+    let encoding = Settings::load(&app.state::<AppState>().paths.settings()).clip_encoding();
+    makeable(app, ffmpeg, encoding, video)
+}
+
+/// The encoding a stretch an edit keeps of a VOD whose video is deleted is
+/// made in (`vods::realize`). It replaces the VOD's footage, so it's made as
+/// it always was, H.264 at CRF 18, whatever quality clips are made in; only
+/// an ffmpeg without that makes it in the codec Settings › Encoding names,
+/// at High quality, and refuses if it can't make that either.
+pub(crate) fn encoding_to_keep(app: &AppHandle, ffmpeg: &Path, video: bool) -> Result<ClipEncoding> {
+    makeable(app, ffmpeg, ClipEncoding::default(), video).or_else(|_| {
+        let chosen = Settings::load(&app.state::<AppState>().paths.settings()).clip_encoding();
+        makeable(app, ffmpeg, ClipEncoding { quality: ClipQuality::High, ..chosen }, video)
+    })
+}
+
 /// Makes clip `id`'s file, if it's waiting and its VOD plays from a file here
 /// (and isn't being removed: `removing`).
 fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) -> Result<()> {
@@ -526,9 +552,8 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
-    let encoding = Settings::load(&state.paths.settings()).clip_encoding();
     // Before its footage is fetched; failed here, it's shown by `fail`.
-    clips::can_make(&ffmpeg, encoding, !vod.audio_only)?;
+    let encoding = encoding_to_make(app, &ffmpeg, !vod.audio_only)?;
     // A file of its own for each make (`Db::next_clip_file`): the one before,
     // which another app may have been given, is never written over.
     let ext = clips::extension(vod.audio_only, encoding.format());

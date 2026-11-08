@@ -133,8 +133,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         // Before its footage is fetched, and with the library let go: the
         // first ask of an ffmpeg runs it.
         let ffmpeg = ffmpeg?;
-        let encoding = Settings::load(&state.paths.settings()).clip_encoding();
-        clips::can_make(&ffmpeg, encoding, !sound_alone)?;
+        let encoding = crate::clips::encoding_to_make(app, &ffmpeg, !sound_alone)?;
         for (vod_id, start, end) in missing {
             crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
         }
