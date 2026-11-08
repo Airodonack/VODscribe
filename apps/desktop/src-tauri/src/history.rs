@@ -279,6 +279,12 @@ pub(crate) trait BarQueue {
     fn added(&self, id: i64);
     /// Clip `id` is taken off, its file too unless it was dragged out.
     fn remove(&self, db: &Db, id: i64) -> Result<()>;
+    /// The clip a cut holds off `doc`'s bar that is clip `id` made of
+    /// `made` (`clipboard::unhold`), put back itself with its file: false if
+    /// none is, to make it anew.
+    fn unhold(&self, _db: &Db, _doc: Doc, _id: i64, _made: &EditState) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 impl BarQueue for AppHandle {
@@ -292,8 +298,17 @@ impl BarQueue for AppHandle {
         self.state::<AppState>().clips.queue(id);
     }
 
+    /// A cut redone holds its clip again rather than deleting it
+    /// (`clipboard::hold_again`).
     fn remove(&self, db: &Db, id: i64) -> Result<()> {
+        if crate::clipboard::hold_again(self, db, id)? {
+            return Ok(());
+        }
         crate::clips::remove(self, db, id)
+    }
+
+    fn unhold(&self, db: &Db, doc: Doc, id: i64, made: &EditState) -> Result<bool> {
+        crate::clipboard::unhold(self, db, doc, id, made)
     }
 }
 
@@ -309,7 +324,12 @@ fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &S
             if was != state {
                 db.restore_edit(id, state)?;
             }
-            let add = |db: &Db, want: &BarClip<EditState>| db.add_bar_clip(id, &want.made);
+            let add = |db: &Db, want: &BarClip<EditState>| {
+                if queue.unhold(db, doc, want.id, &want.made)? {
+                    return Ok(None);
+                }
+                db.add_bar_clip(id, &want.made).map(Some)
+            };
             restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
             order_bar(db, id, bar, &edit_bar(db, id)?)?;
         }
@@ -318,7 +338,10 @@ fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &S
                 db.restore_marks(id, marks)?;
             }
             let add = |db: &Db, want: &BarClip<EditState>| {
-                db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made)
+                if queue.unhold(db, doc, want.id, &want.made)? {
+                    return Ok(None);
+                }
+                db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made).map(Some)
             };
             restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
             if let Some(bar) = db.vod_clip(id)? {
@@ -426,8 +449,8 @@ fn bar_steps<'a, M: Made>(from: &[BarClip<M>], to: &'a [BarClip<M>], now: &[BarC
 
 /// Puts back what one change did to a clip bar, `now` as it is
 /// (`bar_steps`): a clip renamed back, made of what it was (`remake`, and
-/// made again), taken off (its file too, unless dragged out), or made anew
-/// (`add`, its id).
+/// made again), taken off (its file too, unless dragged out), or put back
+/// (`add`: the clip a cut holds, None, or else one made anew, its id).
 fn restore_bar<M: Made>(
     queue: &impl BarQueue,
     db: &Db,
@@ -435,7 +458,7 @@ fn restore_bar<M: Made>(
     to: &[BarClip<M>],
     now: &[BarClip<M>],
     remake: impl Fn(&Db, i64, &BarClip<M>) -> Result<()>,
-    add: impl Fn(&Db, &BarClip<M>) -> Result<i64>,
+    add: impl Fn(&Db, &BarClip<M>) -> Result<Option<i64>>,
 ) -> Result<()> {
     for step in bar_steps(from, to, now) {
         match step {
@@ -445,7 +468,11 @@ fn restore_bar<M: Made>(
             }
             BarStep::Rename(id, title) => db.rename_clip(id, title)?,
             BarStep::Remove(id) => queue.remove(db, id)?,
-            BarStep::Add(want) => queue.added(add(db, want)?),
+            BarStep::Add(want) => {
+                if let Some(id) = add(db, want)? {
+                    queue.added(id);
+                }
+            }
         }
     }
     Ok(())

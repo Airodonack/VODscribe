@@ -21,9 +21,9 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `thumbnails.rs`: VOD thumbnails for the page.
 - `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - `history.rs`: undo and redo, per document.
-- `clipboard.rs`: Ctrl+C and Ctrl+V.
+- `clipboard.rs`: Ctrl+C, Ctrl+X and Ctrl+V: what was copied, and the clips a cut holds.
 - `choices.rs`: the page's small choices, read at start and written as they change.
-- `files.rs`: deleting made files, later where Windows still has them open.
+- `files.rs`: deleting made files, later where Windows still has them open, or at the next start.
 - `player.rs`: the app's own player, driven by the page.
 - `screen.rs`: the native surface the player draws on.
 - `embed.rs`, `embed_shim.js`: a site's video drawn in the app's player under the site's; the `embed-takeover` feature only.

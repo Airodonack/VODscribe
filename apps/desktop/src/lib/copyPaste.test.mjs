@@ -55,6 +55,10 @@ let answer = () => {};
 const fake = {
   /** The clips deleted, by each call. @type {number[][]} */
   deleted: [],
+  /** The clips cut (held for a paste), by each call. @type {number[][]} */
+  cut: [],
+  /** What each edit's removeFrom was asked: pieces, stretches, clips, cut. @type {unknown[][]} */
+  removed: [],
   /** Where Undo was asked. @type {unknown[]} */
   undone: [],
   /** What the toasts said, with their action if any. @type {{ message: string, action?: { run: () => void } }[]} */
@@ -71,6 +75,8 @@ const fake = {
     copiedText: async () => {},
     /** @param {number[]} ids */
     deleteClips: async (ids) => void fake.deleted.push(ids),
+    /** @param {number[]} ids */
+    cutClips: async (ids) => void fake.cut.push(ids),
     /** @param {unknown[]} args */
     pasteItems: async (...args) => void fake.pastes.push(args),
   },
@@ -103,7 +109,13 @@ const fake = {
     },
     clearSelection() {},
   },
-  edits: { openId: null, open: null },
+  edits: {
+    /** @type {number | null} */
+    openId: null,
+    open: null,
+    /** @param {unknown[]} args */
+    removeFrom: async (...args) => (fake.removed.push(args), true),
+  },
   snippets: {
     /** @type {({ kind: string, id: number } | { kind: string, start: number, end: number })[]} */
     items: [],
@@ -126,7 +138,10 @@ const { clipboardKey, clipboardPaste } = await import("./copyPaste.ts");
 /** VOD 1 open, its clips 1, 2 and 3 on the clip bar, `picked` of them picked. @param {number[]} picked */
 function reset(picked) {
   fake.deleted.length = 0;
+  fake.cut.length = 0;
+  fake.removed.length = 0;
   fake.undone.length = 0;
+  fake.edits.openId = null;
   fake.toasts.length = 0;
   fake.clips.doc = { kind: "vod", id: 1 };
   fake.clips.shown = [{ id: 1 }, { id: 2 }, { id: 3 }];
@@ -144,7 +159,7 @@ test("Ctrl+X takes out the clips picked, with Undo for their clip bar", async ()
   reset([1, 3]);
   assert.equal(cut(), true);
   await copied();
-  assert.deepEqual(fake.deleted, [[1, 3]]);
+  assert.deepEqual(fake.cut, [[1, 3]]);
   assert.deepEqual(fake.snippets.items, []);
   fake.toasts.at(-1)?.action?.run();
   assert.deepEqual(fake.undone, [{ kind: "vod", id: 1 }]);
@@ -155,7 +170,7 @@ test("Ctrl+X takes out the clips it copied, not another clicked while the copy i
   cut();
   fake.snippets.items = [{ kind: "clip", id: 2 }];
   await copied();
-  assert.deepEqual(fake.deleted, [[1]]);
+  assert.deepEqual(fake.cut, [[1]]);
 });
 
 test("Ctrl+X takes out the clips it copied, not those of another VOD opened meanwhile", async () => {
@@ -165,9 +180,29 @@ test("Ctrl+X takes out the clips it copied, not those of another VOD opened mean
   fake.clips.shown = [{ id: 7 }];
   fake.snippets.items = [{ kind: "clip", id: 7 }];
   await copied();
-  assert.deepEqual(fake.deleted, [[1]]);
+  assert.deepEqual(fake.cut, [[1]]);
   fake.toasts.at(-1)?.action?.run();
   assert.deepEqual(fake.undone, [{ kind: "vod", id: 1 }]);
+});
+
+// Owner, walkthrough 2026-11-07: "Shouldn't Ctrl-X be cut? As in it's
+// intended to be pasted somewhere? So the video should not actually be
+// deleted until the clipboard is erased (through quit or overwritten or etc)".
+test("Ctrl+X holds the clips it takes off a VOD's bar for a paste, not deleted", async () => {
+  reset([2]);
+  cut();
+  await copied();
+  assert.deepEqual([fake.cut, fake.deleted], [[[2]], []]);
+});
+
+test("Ctrl+X holds the clips it takes off an edit's bar for a paste, not deleted", async () => {
+  reset([2]);
+  fake.clips.doc = { kind: "edit", id: 5 };
+  fake.edits.openId = 5;
+  cut();
+  await copied();
+  assert.deepEqual(fake.removed, [[[], [], [2], true]]);
+  assert.deepEqual(fake.deleted, []);
 });
 
 /** Ctrl+V's paste, bringing what was copied: true if the app took it. */

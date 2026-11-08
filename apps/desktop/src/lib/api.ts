@@ -814,9 +814,10 @@ export const api = {
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
-  /** Takes `pieces`, `stretches` (of its timeline) and clips `clips` of its clip bar out of edit `id`, as one change. */
-  removeFromEdit: (id: number, pieces: number[], stretches: [number, number][], clips: number[]) =>
-    invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips }),
+  /** Takes `pieces`, `stretches` (of its timeline) and clips `clips` of its clip bar out of edit
+   *  `id`, as one change; with `cut` (Ctrl+X, copied just before), the clips are held for its pastes. */
+  removeFromEdit: (id: number, pieces: number[], stretches: [number, number][], clips: number[], cut = false) =>
+    invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips, cut }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
   /** The jobs as they are now (then the `jobs` news). */
@@ -846,6 +847,9 @@ export const api = {
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
   /** Deletes clips `ids`, as one change in each clip bar's history. */
   deleteClips: (ids: number[]) => invoke<void>("delete_clips", { ids }),
+  /** Ctrl+X's taking off of clips `ids`, copied just before: as `deleteClips`, but each one made
+   *  is held, with its file, for the cut's pastes until the next copy or cut, or quit. */
+  cutClips: (ids: number[]) => invoke<void>("cut_clips", { ids }),
   /** Takes clips whose file was deleted outside the app off `doc`'s clip bar (`clip-removed` for each). */
   forgetGoneClips: (doc: Doc) =>
     invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),

@@ -1581,6 +1581,19 @@ impl Db {
         })
     }
 
+    /// Takes clip `id` off the clip bar, kept with its file (a cut held for a
+    /// paste): like one only dragged out, it's forgotten at the next start
+    /// (`forget_hidden_clips`) unless something puts it back first.
+    pub fn hide_clip(&self, id: i64) -> Result<()> {
+        let bar: Option<i64> =
+            self.conn.query_row("SELECT bar_of FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
+        let Some(bar) = bar else { return Ok(()) };
+        self.change(bar, None, |db| {
+            db.conn.execute("UPDATE clips SET shown = 0 WHERE id = ?1", [id])?;
+            Ok(())
+        })
+    }
+
     /// Notes that clip `id`'s file was dragged out of the app: it's someone
     /// else's now, so it stays when the clip goes.
     pub fn hand_out_clip(&self, id: i64) -> Result<()> {

@@ -100,11 +100,7 @@ impl Cutter {
         let unfinished = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
-            // Clips made only to be dragged out: forgotten, the names they
-            // were handed out by kept for whoever took them (`let_go_files`).
-            for (id, file, handed_out) in db.forget_hidden_clips()? {
-                let_go_files(&state.paths, id, file.as_deref(), handed_out);
-            }
+            tidy_at_start(&state.paths, &db)?;
             // Edits left rendering when the app stopped wait to be asked again.
             db.reset_renders()?;
             db.unfinished_clips()?
@@ -399,6 +395,21 @@ pub(crate) fn own_file(paths: &vodscribe_core::Paths, file: &str) -> bool {
     Path::new(file).starts_with(paths.clips())
 }
 
+/// What the clips' files need at start, before any is made: the clips made
+/// only to be dragged out, and those a cut held when the app last stopped,
+/// forgotten, the names they were handed out by kept for whoever took them
+/// (`let_go_files`); then the files the app couldn't delete when it last
+/// ran tried again, kept in the library's folder from now
+/// (`files::keep_leftovers_in`). Nothing else in the clips folder is
+/// touched: a file no clip here has may be a library's set aside.
+pub(crate) fn tidy_at_start(paths: &vodscribe_core::Paths, db: &Db) -> Result<()> {
+    for (id, file, handed_out) in db.forget_hidden_clips()? {
+        let_go_files(paths, id, file.as_deref(), handed_out);
+    }
+    crate::files::keep_leftovers_in(paths.leftovers());
+    Ok(())
+}
+
 /// What's left of clip `id`'s files once it's gone: its own file (`file`)
 /// deleted; the names it was handed out by kept if another app took them
 /// (`handed_out`), as its project may use them, else deleted with it.
@@ -545,7 +556,7 @@ fn on_bar_of(db: &Db, id: i64, vod_id: i64) -> bool {
 
 /// The history a change to `clip` goes in: that of the VOD or edit whose
 /// clip bar it's on.
-fn bar_doc(clip: &Clip) -> Doc {
+pub(crate) fn bar_doc(clip: &Clip) -> Doc {
     match clip.bar {
         Some(ClipBar::Edit { id }) => Doc::Edit(id),
         Some(ClipBar::Vod { id }) => Doc::Vod(id),
@@ -750,6 +761,36 @@ pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids
     Ok(())
 }
 
+/// Ctrl+X's taking off of clips `ids` (copied just before, `copy_items`),
+/// as one change in each clip bar's history, as `delete_clips` does: a clip
+/// whose file the copy has is held for the cut's pastes (`clipboard::hold`),
+/// off its bar with its file; one not made yet is deleted, as there's
+/// nothing to keep.
+#[tauri::command]
+pub(crate) async fn cut_clips(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
+    let files = crate::clipboard::copied_files(&app);
+    let db = state.db.lock().unwrap();
+    let holds = |clip: &Clip| held_by(clip, &files);
+    let (gone, held) = take_off_in(&db, &state.history, &ids, holds, CUT, |id| state.clips.stop(id)).map_err(err)?;
+    crate::clipboard::hold(&app, &held);
+    for id in held {
+        emit(&app, &db, id);
+    }
+    for (clip, handed_out) in gone {
+        after_delete(&app, clip.id, clip.file_path, handed_out);
+    }
+    Ok(())
+}
+
+/// What a cut is called in undo, of one clip or several.
+pub(crate) const CUT: (&str, &str) = ("Clip cut", "Clips cut");
+
+/// Whether a cut holds `clip`: made, with its file one of `files` (those the
+/// cut's copy has).
+pub(crate) fn held_by(clip: &Clip, files: &[PathBuf]) -> bool {
+    clip.status == ClipStatus::Ready && clip.file_path.as_ref().is_some_and(|f| files.iter().any(|c| c == Path::new(f)))
+}
+
 /// What `delete_clips` does in the library: clips `ids` deleted in one
 /// transaction, each clip bar's change recorded in `history`. One that's
 /// gone, or one that can't be deleted, leaves all of them as they were and
@@ -757,6 +798,24 @@ pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids
 /// being made is stopped). Returns those deleted, each with whether its file
 /// was dragged out of the app (not the app's to delete then).
 fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl Fn(i64)) -> Result<Vec<(Clip, bool)>> {
+    Ok(take_off_in(db, history, ids, |_| false, ("Clip deleted", "Clips deleted"), stop)?.0)
+}
+
+/// A clip deleted, with whether its file was dragged out of the app.
+type Gone = (Clip, bool);
+
+/// `delete_clips_in`, but the clips `hold` says are held instead (a cut):
+/// off their bar, kept with their files and not stopped. Each bar's change
+/// is recorded as `labels` says, for one clip or several. Those deleted, as
+/// `delete_clips_in` gives them, and the ids of those held.
+fn take_off_in(
+    db: &Db,
+    history: &history::History,
+    ids: &[i64],
+    hold: impl Fn(&Clip) -> bool,
+    labels: (&'static str, &'static str),
+    stop: impl Fn(i64),
+) -> Result<(Vec<Gone>, Vec<i64>)> {
     let mut gone = Vec::new();
     for &id in ids {
         let clip = db.clip(id)?.context("That clip is gone.")?;
@@ -771,16 +830,20 @@ fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl 
             docs.push((doc, history::snapshot(db, doc).ok().flatten()));
         }
     }
+    let (held, gone): (Vec<_>, Vec<_>) = gone.into_iter().partition(|(clip, _)| hold(clip));
     for (clip, _) in &gone {
         stop(clip.id);
     }
-    db.atomically(|db| gone.iter().try_for_each(|(clip, _)| db.delete_clip(clip.id)))?;
+    db.atomically(|db| {
+        gone.iter().try_for_each(|(clip, _)| db.delete_clip(clip.id))?;
+        held.iter().try_for_each(|(clip, _)| db.hide_clip(clip.id))
+    })?;
     for (doc, before) in docs {
-        let label =
-            if gone.iter().filter(|(c, _)| bar_doc(c) == doc).count() == 1 { "Clip deleted" } else { "Clips deleted" };
+        let of_doc = |list: &[Gone]| list.iter().filter(|(c, _)| bar_doc(c) == doc).count();
+        let label = if of_doc(&gone) + of_doc(&held) == 1 { labels.0 } else { labels.1 };
         history.record(db, doc, label, before);
     }
-    Ok(gone)
+    Ok((gone, held.into_iter().map(|(clip, _)| clip.id).collect()))
 }
 
 /// Takes off a clip bar (VOD `vod_id`'s, or edit `edit_id`'s) the clips
@@ -853,6 +916,7 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
 /// What's left of clip `id` once it's gone from the library: its files
 /// (`let_go_files`) and its thumbnail deleted, and the page told.
 pub(crate) fn after_delete(app: &AppHandle, id: i64, file: Option<String>, handed_out: bool) {
+    crate::clipboard::forget(app, id);
     let_go_files(&app.state::<AppState>().paths, id, file.as_deref(), handed_out);
     let _ = std::fs::remove_file(thumb_path(app, id));
     crate::page::emit(app, "clip-removed", id);

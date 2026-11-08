@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cut-clips"
+description = "Enables the cut_clips command without any pre-configured scope."
+commands.allow = ["cut_clips"]
+
+[[permission]]
+identifier = "deny-cut-clips"
+description = "Denies the cut_clips command without any pre-configured scope."
+commands.deny = ["cut_clips"]

@@ -464,7 +464,8 @@ pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView>
 /// and its clip bar), as one change: the stretches `stretches` (seconds of
 /// its timeline, as `remove_stretch` takes one) and the pieces `pieces` (as
 /// `remove_piece`), `Db::remove_from_edit`, then the clips `clips` of its
-/// clip bar (as `delete_clip`).
+/// clip bar (as `delete_clip`). With `cut` (Ctrl+X, copied just before),
+/// those clips are held for the cut's pastes as `clips::cut_clips` holds them.
 #[tauri::command]
 pub(crate) async fn remove_from_edit(
     app: AppHandle,
@@ -472,15 +473,36 @@ pub(crate) async fn remove_from_edit(
     pieces: Vec<i64>,
     stretches: Vec<(f64, f64)>,
     clips: Vec<i64>,
+    cut: Option<bool>,
 ) -> CmdResult<EditView> {
-    let label = if pieces.is_empty() && stretches.is_empty() { "Clips deleted" } else { "Pieces removed" };
+    let cut = cut.unwrap_or(false);
+    let label = match (pieces.is_empty() && stretches.is_empty(), cut) {
+        (true, false) => "Clips deleted",
+        (true, true) => crate::clips::CUT.1,
+        (false, _) => "Pieces removed",
+    };
+    let files = if cut { crate::clipboard::copied_files(&app) } else { Vec::new() };
     changing(&app, id, label, |db| {
         db.remove_from_edit(id, &stretches, &pieces)?;
+        let mut held = Vec::new();
         for clip in clips {
             // Only a clip of this edit's own clip bar.
-            if db.clip(clip)?.is_some_and(|c| c.bar == Some(vodscribe_core::db::ClipBar::Edit { id })) {
-                crate::clips::remove(&app, db, clip)?;
+            match db.clip(clip)? {
+                Some(c) if c.bar != Some(vodscribe_core::db::ClipBar::Edit { id }) => {}
+                Some(c) if crate::clips::held_by(&c, &files) => {
+                    db.hide_clip(clip)?;
+                    held.push(clip);
+                }
+                Some(_) => crate::clips::remove(&app, db, clip)?,
+                None => {}
             }
+        }
+        // Held with the library's lock still taken, as `clips::cut_clips`
+        // holds them: an undo or a copy in between would find them hidden
+        // and not held.
+        crate::clipboard::hold(&app, &held);
+        for &clip in &held {
+            crate::clips::emit(&app, db, clip);
         }
         Ok(())
     })

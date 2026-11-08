@@ -43,6 +43,7 @@ permissions = [
   "allow-keep-clip",
   "allow-delete-clip",
   "allow-delete-clips",
+  "allow-cut-clips",
   "allow-forget-gone-clips",
   "allow-show-clip",
   "allow-drag-clip",

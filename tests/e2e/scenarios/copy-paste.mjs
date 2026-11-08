@@ -25,12 +25,15 @@
 // copied and pasted in the edit: the edit holds both VODs; on the first
 // VOD's own bar it's refused, nothing made. The edit's clip open in the
 // editor takes a paste at its playhead, and is made again. Ctrl+X on a pill
-// takes it off its bar, and Ctrl+V brings a copy back. Something else
+// takes it off its bar, held with its file, and Ctrl+V brings it back with
+// that file: ready without being cut, the same bytes. Something else
 // copied since (the clipboard's text not the copy's): Ctrl+V does nothing.
 // In a text field Ctrl+C and Ctrl+V (and the paste it makes) are the
 // field's. A third file's
 // stretch copied, the file then removed with nothing using it: pasted, the
-// app says its VOD is gone and the edit stays as it was.
+// app says its VOD is gone and the edit stays as it was; that copy let the
+// cut pill go, its file with it. The pasted pill cut, then the app quit:
+// at the next start it's gone, its file too.
 //
 // The clipboard is the page's: its plugin's write is answered in the page
 // (the text written is kept there), and Ctrl+V is its key, let through to
@@ -538,24 +541,35 @@ export default {
     const remade = (await news(barClip.id)).slice(newsBefore);
     if (!remade.includes("cutting")) throw new Error(`the clip pasted into wasn't made again: ${remade.join(", ")}`);
 
-    // 9. Ctrl+X on a picked pill: off the bar; Ctrl+V: a copy back.
+    // 9. Ctrl+X on a picked pill: off the bar, held with its file; Ctrl+V:
+    // it's back, ready at once with the same bytes.
     // Back from the editor, its pill is picked already (a click would let it go).
     if ((await picked()).join() !== String(barClip.id))
       await app.click(`section.edit-view .clip-bar .chip[data-clip="${barClip.id}"]`);
     await until("the edit's pill picked", async () => (await picked()).join() === String(barClip.id), 10_000);
+    const cutFile = (await ready(async () => (await barClips()).find((c) => c.id === barClip.id), "the clip made"))
+      .file_path;
+    const cutBytes = sha(cutFile);
     before = (await written()).length;
     await app.key("x", { cmd: true });
     await copiedSince(before, "Ctrl+X");
     await until("Ctrl+X took it off", async () => (await barClips()).length === 0, 10_000);
+    if (!existsSync(cutFile)) throw new Error(`Ctrl+X deleted the clip's file ${cutFile}`);
     await pointAt(".clip-bar");
     await paste();
-    const [back] = await until(
-      "Ctrl+V brought a copy back",
+    const [pastedBack] = await until(
+      "Ctrl+V brought it back",
       async () => (await barClips()).length === 1 && barClips(),
       10_000,
     );
-    if (back.id === barClip.id || back.title !== barClip.title)
-      throw new Error(`pasted back as ${back.id} "${back.title}", cut ${barClip.id} "${barClip.title}"`);
+    if (pastedBack.id === barClip.id || pastedBack.title !== barClip.title)
+      throw new Error(`pasted back as ${pastedBack.id} "${pastedBack.title}", cut ${barClip.id} "${barClip.title}"`);
+    const back = await ready(async () => (await barClips()).find((c) => c.id === pastedBack.id), "the pasted clip");
+    const backNews = await news(back.id);
+    if (backNews.includes("cutting")) throw new Error(`the cut clip pasted was cut again: ${backNews.join(", ")}`);
+    if (sha(back.file_path) !== cutBytes)
+      throw new Error(`the cut clip pasted has ${back.file_path}, not a copy of ${cutFile}`);
+    ctx.log(`Ctrl+X then Ctrl+V: ${back.id} back, ready (${backNews.join(", ")}), its file a copy of the cut one`);
 
     // 10. Something else copied since: Ctrl+V pastes nothing, and says nothing.
     await app.invoke("plugin:clipboard-manager|write_text", { text: "hello" });
@@ -599,6 +613,10 @@ export default {
     // uses it): pasted, the app says it's gone, and the edit stays as it was.
     await openTimeline(third.id);
     await copyWhole("the third file");
+    // That copy let the cut clip go, as Delete would.
+    await until("the cut clip gone at the next copy", async () => !existsSync(cutFile), 10_000);
+    if ((await app.invoke("edit_clips", { id: created.id })).some((c) => c.id === barClip.id))
+      throw new Error("the cut clip stayed in the library after the next copy");
     await app.invoke("delete_vod", { id: third.id });
     await openEdit();
     const was = await pieces();
@@ -615,5 +633,23 @@ export default {
     // Said and read: dismissed, so it isn't taken for an error left showing.
     await app.click(".toast button.close");
     await until("the toast dismissed", async () => (await app.toastSays()) === "", 10_000);
+
+    // 13. The pasted pill cut, then the app quit: at the next start it's
+    // gone, its file too. On Linux WebDriver ends the app from outside, so
+    // its quit never runs and this is the start-up sweep's work
+    // (forget_hidden_clips); through the test hook (Windows, macOS) the quit
+    // lets it go first. The kit's spec covers the quit itself.
+    await app.click(`section.edit-view .clip-bar .chip[data-clip="${back.id}"]`);
+    await until("the pasted pill picked", async () => (await picked()).join() === String(back.id), 10_000);
+    before = (await written()).length;
+    await app.key("x", { cmd: true });
+    await copiedSince(before, "Ctrl+X");
+    await until("Ctrl+X took it off", async () => (await barClips()).length === 0, 10_000);
+    if (!existsSync(back.file_path)) throw new Error(`Ctrl+X deleted the clip's file ${back.file_path}`);
+    app = await ctx.restart();
+    if (existsSync(back.file_path)) throw new Error(`cut and quit, its file ${back.file_path} is still there`);
+    if ((await app.invoke("edit_clips", { id: created.id })).some((c) => c.id === back.id))
+      throw new Error("cut and quit, the clip is still in the library");
+    ctx.log("cut, then quit: gone at the next start, with its file");
   },
 };

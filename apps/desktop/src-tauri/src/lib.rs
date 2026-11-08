@@ -496,6 +496,7 @@ fn commands() -> impl Fn(tauri::ipc::Invoke<Rt>) -> bool + Send + Sync + 'static
         clips::keep_clip,
         clips::delete_clip,
         clips::delete_clips,
+        clips::cut_clips,
         clips::forget_gone_clips,
         clips::show_clip,
         clips::drag_clip,
@@ -646,7 +647,7 @@ fn quit(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
         trace_exit("library's lock taken");
-        let _ = db.stop_writes();
+        quit_library(app, &db);
         trace_exit("library's writes stopped");
         // Held till the process ends.
         std::mem::forget(db);
@@ -655,6 +656,14 @@ fn quit(app: &AppHandle) {
     trace_exit("started processes stopped");
     files::delete_leftovers();
     trace_exit("leftover files deleted");
+}
+
+/// `quit`'s work in the library (`db`, its lock taken): a cut not pasted
+/// goes with the copy (`clipboard::quit`), then nothing more is written.
+pub(crate) fn quit_library(app: &AppHandle, db: &vodscribe_core::db::Db) {
+    clipboard::quit(app, db);
+    trace_exit("clips cut and not pasted deleted");
+    let _ = db.stop_writes();
 }
 
 /// Quits, as closing the window does (Ctrl+Q, ⌘Q): the event loop ends and

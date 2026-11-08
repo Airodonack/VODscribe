@@ -318,6 +318,13 @@ impl Paths {
         self.clips().join(clip_id.to_string())
     }
 
+    /// The files the app couldn't delete as it last ran (Windows had them
+    /// open), to try again at the next start: beside the clips folder they're
+    /// in, on this computer.
+    pub fn leftovers(&self) -> PathBuf {
+        self.local.join("leftovers.json")
+    }
+
     /// Clips' first frames (`clip_thumb`).
     pub fn clip_thumbs(&self) -> PathBuf {
         self.local.join("clip-thumbs")

@@ -23,7 +23,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `controls.mjs`: keyboard controls changed in Settings › Controls take effect.
 - `copy-chapters.mjs`: Copy chapters puts each chapter's time and title on the clipboard.
 - `copy-moment.mjs`: the header's timestamp copies a link to the playhead's moment; needs the network.
-- `copy-paste.mjs`: Ctrl+C and Ctrl+V copy and paste clips and stretches as copies.
+- `copy-paste.mjs`: Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste clips and stretches; a cut keeps its file for the paste.
 - `download-play.mjs`: a VOD from a site without a usable player plays as its video downloads.
 - `drag-file-time.mjs`: how long a clip dragged out takes to land whole in a file manager.
 - `drag-note.mjs`: a site's clip dragged out before the download note was answered starts no drag.
