@@ -316,18 +316,16 @@ fn a_clip_cut_from_an_edits_bar_is_held_too() {
     assert_eq!(app.clip_media(&app.made(id)), media);
 }
 
-/// Undo of a delete brings back the clip deleted, not a cut clip that was
-/// given its id since (ids are given again), held off another VOD's bar
-/// (review of the cut, 2026-11-07).
+/// Undo of a delete brings back the clip deleted, not a cut clip made
+/// since, held off another VOD's bar (review of the cut, 2026-11-07).
 #[test]
-fn undo_of_a_delete_brings_back_that_clip_not_a_cut_one_given_its_id() {
+fn undo_of_a_delete_brings_back_that_clip_not_a_cut_one_made_since() {
     let app = TestApp::new();
     let a = app.add_video_file("A.mp4", 60.0);
     let b = app.add_video_file("B.mp4", 60.0);
     let deleted = app.make_clip(a.id, "0:10", "0:20");
     app.invoke("delete_clip", json!({ "id": deleted.id })).unwrap();
     let cut = app.make_clip(b.id, "0:30", "0:40");
-    assert_eq!(cut.id, deleted.id, "the id given again");
     ctrl_x(&app, &[cut.id]);
     app.invoke("undo", json!({ "view": { "kind": "vod", "id": a.id } })).unwrap();
     let on =
@@ -337,8 +335,8 @@ fn undo_of_a_delete_brings_back_that_clip_not_a_cut_one_given_its_id() {
 }
 
 /// Undo past a cut on one bar brings back the clip deleted before it, not
-/// the cut one that took its id: Delete a pill, C a new one, Ctrl+X it,
-/// then undo three times (review of the cut, 2026-11-07).
+/// the cut one made after: Delete a pill, C a new one, Ctrl+X it, then
+/// undo three times (review of the cut, 2026-11-07).
 #[test]
 fn undo_past_a_cut_brings_back_the_clip_deleted_before_it() {
     let app = TestApp::new();
@@ -346,7 +344,6 @@ fn undo_past_a_cut_brings_back_the_clip_deleted_before_it() {
     let deleted = app.make_clip(vod.id, "0:10", "0:20");
     app.invoke("delete_clip", json!({ "id": deleted.id })).unwrap();
     let cut = app.make_clip(vod.id, "0:30", "0:40");
-    assert_eq!(cut.id, deleted.id, "the id given again");
     ctrl_x(&app, &[cut.id]);
     let view = json!({ "view": { "kind": "vod", "id": vod.id } });
     for _ in 0..3 {

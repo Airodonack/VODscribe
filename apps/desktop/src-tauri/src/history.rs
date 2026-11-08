@@ -316,8 +316,16 @@ impl BarQueue for AppHandle {
 /// the change left it, or as an undo of it did) to `to`. Only that: what the
 /// change didn't touch stays as it is now, so a clip that went meanwhile
 /// without a change of its own (its file deleted outside the app) stays gone.
-/// A clip is made again unless its file is as clips are made `now`.
-fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+/// A clip is made again unless its file is as clips are made `now`. The
+/// clips made anew, each with the id it had in `to` (`renumber`).
+fn restore(
+    queue: &impl BarQueue,
+    db: &Db,
+    now: ClipEncoding,
+    doc: Doc,
+    from: &Snapshot,
+    to: &Snapshot,
+) -> Result<Vec<(i64, i64)>> {
     let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| remake_clip(db, now, clip, want);
     match (doc, from, to) {
         (Doc::Edit(id), Snapshot::Edit { state: was, bar: had }, Snapshot::Edit { state, bar }) => {
@@ -330,8 +338,9 @@ fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &S
                 }
                 db.add_bar_clip(id, &want.made).map(Some)
             };
-            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
+            let made = restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
             order_bar(db, id, bar, &edit_bar(db, id)?)?;
+            Ok(made)
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
@@ -343,14 +352,14 @@ fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &S
                 }
                 db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made).map(Some)
             };
-            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
+            let made = restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
             if let Some(bar) = db.vod_clip(id)? {
                 order_bar(db, bar, clips, &vod_bar(db, id)?)?;
             }
+            Ok(made)
         }
-        _ => {}
+        _ => Ok(Vec::new()),
     }
-    Ok(())
 }
 
 /// Clip `clip` of a clip bar made of what `want` holds and titled as it:
@@ -450,7 +459,8 @@ fn bar_steps<'a, M: Made>(from: &[BarClip<M>], to: &'a [BarClip<M>], now: &[BarC
 /// Puts back what one change did to a clip bar, `now` as it is
 /// (`bar_steps`): a clip renamed back, made of what it was (`remake`, and
 /// made again), taken off (its file too, unless dragged out), or put back
-/// (`add`: the clip a cut holds, None, or else one made anew, its id).
+/// (`add`: the clip a cut holds, None, or else one made anew, its id). The
+/// clips made anew, each as (the id it had, its id now).
 fn restore_bar<M: Made>(
     queue: &impl BarQueue,
     db: &Db,
@@ -459,7 +469,8 @@ fn restore_bar<M: Made>(
     now: &[BarClip<M>],
     remake: impl Fn(&Db, i64, &BarClip<M>) -> Result<()>,
     add: impl Fn(&Db, &BarClip<M>) -> Result<Option<i64>>,
-) -> Result<()> {
+) -> Result<Vec<(i64, i64)>> {
+    let mut made = Vec::new();
     for step in bar_steps(from, to, now) {
         match step {
             BarStep::Remake(id, want) => {
@@ -471,11 +482,55 @@ fn restore_bar<M: Made>(
             BarStep::Add(want) => {
                 if let Some(id) = add(db, want)? {
                     queue.added(id);
+                    made.push((want.id, id));
                 }
             }
         }
     }
-    Ok(())
+    Ok(made)
+}
+
+/// Clips an undo or redo made anew (`restore`), under ids never given
+/// before, each as (the id it had, its id now): every step that names one
+/// by the id it had (a change to it before it was deleted, `entry` among
+/// them) names it by its id now, as if it had kept its id, and its own
+/// history (a clip opened in the editor) is under its id now.
+fn renumber(s: &mut Stacks, entry: &mut Entry, made: &[(i64, i64)]) {
+    if made.is_empty() {
+        return;
+    }
+    for &(was, now) in made {
+        for stacks in [&mut s.undo, &mut s.redo] {
+            if let Some(list) = stacks.remove(&Doc::Edit(was)) {
+                stacks.insert(Doc::Edit(now), list);
+            }
+        }
+    }
+    let stacks = s.undo.values_mut().chain(s.redo.values_mut()).flatten();
+    for e in stacks.chain(std::iter::once(entry)) {
+        e.renumber(made);
+    }
+}
+
+impl Entry {
+    fn renumber(&mut self, made: &[(i64, i64)]) {
+        let new = |id: i64| made.iter().find(|(was, _)| *was == id).map_or(id, |&(_, now)| now);
+        if let Doc::Edit(id) = self.doc {
+            self.doc = Doc::Edit(new(id));
+        }
+        if let Some(Doc::Edit(id)) = self.origin {
+            self.origin = Some(Doc::Edit(new(id)));
+        }
+        for snapshot in [&mut self.before, &mut self.after] {
+            let (Snapshot::Edit { bar: clips, .. } | Snapshot::Vod { clips, .. }) = snapshot;
+            for clip in clips {
+                clip.id = new(clip.id);
+            }
+        }
+        for e in &mut self.cleared {
+            e.renumber(made);
+        }
+    }
 }
 
 /// The order `now`'s clips go in for clip bar `to`'s order: those that are
@@ -512,12 +567,16 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let mut s = state.history.0.lock().unwrap();
     let Some(mut entry) = History::take(&mut s, view, undo) else { return Ok(None) };
     let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
-    if let Err(e) = restore(app, &db, crate::edits::made_now(app), entry.doc, from, to) {
-        // Kept, to try again: it's the newest of its stack still.
-        let stacks = if undo { &mut s.undo } else { &mut s.redo };
-        stacks.entry(entry.doc).or_default().push(entry);
-        return Err(err(e));
-    }
+    let made = match restore(app, &db, crate::edits::made_now(app), entry.doc, from, to) {
+        Ok(made) => made,
+        Err(e) => {
+            // Kept, to try again: it's the newest of its stack still.
+            let stacks = if undo { &mut s.undo } else { &mut s.redo };
+            stacks.entry(entry.doc).or_default().push(entry);
+            return Err(err(e));
+        }
+    };
+    renumber(&mut s, &mut entry, &made);
     s.count += 1;
     entry.at = s.count;
     entry.revision = revision(&db, entry.doc);
@@ -596,6 +655,81 @@ mod tests {
         assert!(s.take_back(vod, &empty()));
         assert_eq!(History::take(&mut s, vod, false).map(|e| e.label), Some("Cut added"));
         assert!(s.undo.get(&vod).is_none_or(Vec::is_empty));
+    }
+
+    /// Undo in a clip opened from the clip bar puts back what was done to
+    /// that clip, not to one deleted before it: the new clip's id is one
+    /// never given before (core db.rs `clip_ids_are_never_reused`), so the
+    /// deleted clip's steps, kept under its id, aren't the new one's.
+    #[test]
+    fn undo_in_a_new_clip_never_brings_back_a_deleted_one() {
+        use serde_json::{Value, json};
+        let app = crate::testkit::TestApp::new();
+        let vod = app.add_video_file("Day 3.mp4", 60.0);
+        let old = app.make_clip(vod.id, "0:10", "0:20");
+        // Opened in the editor, a stretch of it taken out: a step to undo.
+        app.invoke("remove_stretch", json!({ "id": old.id, "from": 2.0, "to": 3.0 })).unwrap();
+        app.invoke("delete_clip", json!({ "id": old.id })).unwrap();
+        let new = app.make_clip(vod.id, "0:30", "0:40");
+        let undone = app.invoke("undo", json!({ "view": { "kind": "edit", "id": new.id } })).unwrap();
+        assert_eq!(undone, Value::Null, "nothing to undo in the new clip");
+        let clip = app.clip(new.id).unwrap();
+        assert_eq!((clip.start, clip.end), (30.0, 40.0), "the new clip as it was made");
+        assert_ne!(new.id, old.id, "the deleted clip's id isn't given out again");
+    }
+
+    /// Undo of a delete brings the clip back, made anew under a new id, and
+    /// an undo past it of a change to that clip changes the clip brought
+    /// back, rather than making another beside it (the clip e2e scenario:
+    /// resized, deleted, then both undone).
+    #[test]
+    fn undo_past_a_delete_changes_the_clip_it_brought_back() {
+        use serde_json::json;
+        let app = crate::testkit::TestApp::new();
+        let vod = app.add_video_file("Day 3.mp4", 60.0);
+        let clip = app.make_clip(vod.id, "0:01", "0:03");
+        app.invoke("set_clip_range", json!({ "id": clip.id, "start": 1.0, "end": 4.0 })).unwrap();
+        app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+        let view = json!({ "view": { "kind": "vod", "id": vod.id } });
+        app.invoke("undo", view.clone()).unwrap();
+        let on = || -> Vec<_> { app.clips(vod.id).into_iter().map(|c| (c.start, c.end)).collect() };
+        assert_eq!(on(), [(1.0, 4.0)], "the delete undone");
+        app.invoke("undo", view.clone()).unwrap();
+        assert_eq!(on(), [(1.0, 3.0)], "the resize undone, on the clip brought back");
+        // Redone twice: resized again, then deleted.
+        app.invoke("redo", view.clone()).unwrap();
+        assert_eq!(on(), [(1.0, 4.0)], "the resize redone");
+        app.invoke("redo", view).unwrap();
+        assert_eq!(on(), [], "the delete redone");
+        // Its files made or stopped before the test ends.
+        for c in app.clips(vod.id) {
+            app.made(c.id);
+        }
+    }
+
+    /// As above with a clip that isn't the newest, which an undo of its
+    /// delete made anew under a new id in 0.7.2 too: undone past the
+    /// delete, the resize changes the clip brought back, and the other
+    /// clip stays as it is.
+    #[test]
+    fn undo_past_the_delete_of_an_older_clip_changes_the_clip_it_brought_back() {
+        use serde_json::json;
+        let app = crate::testkit::TestApp::new();
+        let vod = app.add_video_file("Day 3.mp4", 60.0);
+        let older = app.make_clip(vod.id, "0:01", "0:03");
+        app.make_clip(vod.id, "0:10", "0:12");
+        app.invoke("set_clip_range", json!({ "id": older.id, "start": 1.0, "end": 4.0 })).unwrap();
+        app.invoke("delete_clip", json!({ "id": older.id })).unwrap();
+        let view = json!({ "view": { "kind": "vod", "id": vod.id } });
+        app.invoke("undo", view.clone()).unwrap();
+        app.invoke("undo", view).unwrap();
+        let mut on: Vec<_> = app.clips(vod.id).into_iter().map(|c| (c.start, c.end)).collect();
+        on.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(on, [(1.0, 3.0), (10.0, 12.0)], "the resize undone, on the clip brought back");
+        // Their files made before the test ends.
+        for c in app.clips(vod.id) {
+            app.made(c.id);
+        }
     }
 
     fn library() -> (Db, i64) {

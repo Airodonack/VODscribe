@@ -140,8 +140,8 @@ fn is_cut(app: &AppHandle, id: i64) -> bool {
     app.state::<AppState>().clipboard.lock().unwrap().as_ref().is_some_and(|c| c.cut.contains(&id))
 }
 
-/// Clip `id` is gone from the library: not held any more, so a clip given
-/// its id later is never taken for it.
+/// Clip `id` is gone from the library: not held any more, so a cut lets go
+/// of only the clips still in it.
 pub(crate) fn forget(app: &AppHandle, id: i64) {
     if let Some(clipboard) = app.state::<AppState>().clipboard.lock().unwrap().as_mut() {
         clipboard.cut.retain(|&c| c != id);
@@ -149,10 +149,10 @@ pub(crate) fn forget(app: &AppHandle, id: i64) {
 }
 
 /// Puts clip `id` back on `doc`'s bar if the cut holds it and it's the clip
-/// an undo of the cut wants, made of `made` (ids are given again, so a held
-/// clip may have the id of another, deleted, that an undo brings back): the
-/// clip itself, with its file. False otherwise, for the undo to make the
-/// clip anew.
+/// an undo of the cut wants, on that bar and made of `made`: the clip
+/// itself, with its file. False otherwise, for the undo to make the clip
+/// anew. The check is only a guard, now that a deleted clip's id is never
+/// given to another (`MIGRATE_V42` in core db.rs).
 pub(crate) fn unhold(app: &AppHandle, db: &Db, doc: Doc, id: i64, made: &EditState) -> Result<bool> {
     let Some(clip) = db.clip(id)?.filter(|c| !c.shown) else { return Ok(false) };
     let wanted = crate::clips::bar_doc(&clip) == doc

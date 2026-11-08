@@ -742,17 +742,24 @@ impl Db {
         Ok(id)
     }
 
-    /// A new, empty clip titled `title`, where `place` says; its id.
+    /// A new, empty clip titled `title`, where `place` says; its id, one
+    /// never given before (`db::MIGRATE_V42`). Every clip, edit and VOD's
+    /// own clip is made here.
     pub(crate) fn new_clip(&self, title: &str, place: Place) -> Result<i64> {
+        const ID: &str = "(SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM clips)) FROM clip_ids)";
         match place {
             Place::Listed => self.conn.execute(
-                "INSERT INTO clips (title, created_at, position)
-                 VALUES (?1, ?2, (SELECT coalesce(min(position), 0) - 1 FROM clips))",
+                &format!(
+                    "INSERT INTO clips (id, title, created_at, position)
+                     VALUES ({ID}, ?1, ?2, (SELECT coalesce(min(position), 0) - 1 FROM clips))"
+                ),
                 params![title, now()],
             )?,
             Place::Bar(bar_of) => self.conn.execute(
-                "INSERT INTO clips (title, created_at, bar_of, bar_position)
-                 VALUES (?1, ?2, ?3, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?3))",
+                &format!(
+                    "INSERT INTO clips (id, title, created_at, bar_of, bar_position)
+                     VALUES ({ID}, ?1, ?2, ?3, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?3))"
+                ),
                 params![title, now(), bar_of],
             )?,
         };
