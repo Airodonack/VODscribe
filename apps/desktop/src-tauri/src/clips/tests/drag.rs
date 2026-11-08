@@ -1,6 +1,28 @@
 use super::*;
 
-/// What a drag out of the window comes to, by what was seen of it: let go
+use crate::testkit::TestApp;
+use serde_json::json;
+
+/// On Linux, macOS and Windows alike a drag out of the window begins before
+/// the clips' files are made: the page asks the app, and the app says so
+/// (0.7.1: "On Linux, clips drag out at once. The drag doesn't wait at the
+/// window's edge for the file, which lands where you drop it once it's made",
+/// and the Windows and Mac bullets of that release; `drags_before_made`'s doc
+/// in app clips.rs: "Linux, macOS and Windows"). The switch that goes back to
+/// waiting (`VODSCRIBE_DRAG_WAITS=1`) is the developer's and is tested with
+/// the fake drag.
+#[test]
+fn clips_drag_out_before_their_files_are_made_on_every_system() {
+    let app = TestApp::new();
+    assert_eq!(app.invoke("drag_before_made", json!({})), Ok(json!(true)));
+}
+
+/// What a drag out of the window comes to, by what was seen of it (app
+/// clips.rs `drag_outcome`; 0.7.1: "Some apps take finished files only. If one
+/// takes nothing or refuses the drop before the clip is made, VODscribe says
+/// which app it was", and "A drag called off makes nothing. Escape, or a drop
+/// on nothing, stops the clip's making ... If the clip can't be made,
+/// VODscribe says why only when you let it go on another app."): let go
 /// on an app that took nothing while the files were still being made, it
 /// takes finished files only (named, where the system says); one that
 /// failed is said only once it's let go on another app; called off or
@@ -39,7 +61,9 @@ fn a_drag_ends_as_its_receiver_took_it() {
 
 /// The page told an early release from a refused drag by the word
 /// "released" in its error: a reworded sentence would have shown an
-/// ordinary release, too soon, as an error.
+/// ordinary release, too soon, as an error (app clips.rs `began`: "refused
+/// because the button came up first, it didn't, which is no error to show;
+/// refused otherwise, why").
 #[test]
 fn a_drag_refused_for_an_early_release_is_none_begun_not_an_error() {
     assert_eq!(began(Ok(())), Ok(true));
