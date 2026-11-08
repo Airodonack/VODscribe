@@ -51,7 +51,9 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `clips`, `clip` and `db` tell what the library has.
 - `invoke("cancel_job", json!({ "kind": "clip", "id": id }))` calls a command as the page does, with its arguments in camelCase. Call the command's Rust function through `app.run(...)` when the test needs its typed answer.
 - `heard("clip")` gives the events the page heard, in order.
-- `desktop()` tells what the file manager was asked to show or open, and `saves_to` answers the save dialog.
+- `desktop()` tells what the file manager was asked to show or open.
+- `quit()` quits as closing the window does, and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's tidying, then the queues taking up what was left.
+- `drag_out(&[ids])` drags clips out of the window as the page does, and `drags().last()` is the drag. No system drag begins. `drag_ended()` waits for what the page hears at its end.
 - The app's queues end with the test, but a command that starts a thread of its own (looking up a VODscription after an add or a refresh, a site's player's picture let go, setup's and the GPU pack's installs) runs on: wait for what it does before the test ends.
 
 Times are written as a clock shows them (`"1:02:03.5"`), and `at` reads them. Run the tests with `cargo test` in `crates/core` and in `apps/desktop/src-tauri`; `cargo test clips::` runs one module's.
@@ -76,6 +78,22 @@ app.invoke("cancel_job", json!({ "kind": "clip", "id": clip.id })).unwrap();
 halfway.open();
 ```
 
+A restart, and a drag let go on an app:
+
+```rust
+let app = TestApp::new();
+let vod = app.add_video_file("Day 3.mp4", 60.0);
+let clip = app.make_clip(vod.id, "0:10", "0:20");
+let app = TestApp::on(app.quit()); // or app.kill()
+app.drag_out(&[clip.id]).unwrap();
+let drag = app.drags().last();
+drag.let_go(LetGo::On(Receiver::taking_files("Kdenlive")));
+assert_eq!(app.drag_ended()["delivered"], true);
+assert_eq!(Media::read(&drag.given()[0]), Some(app.clip_media(&clip)));
+```
+
+The test says where a drag ends: `LetGo::CalledOff` (Escape), `Back` on the window, `Nowhere`, or `On` another app. That app takes the files themselves (`Receiver::taking_files`), copies written for it (`taking_copies`), or only files already made (`finished_only`). The first two wait for a file still being made, and the page hears that they wait. `drags().releases_early()` has the button come up before the next drag begins. On Linux an app named `resolve` is DaVinci Resolve. `names()`, `file_types()`, `image()` and `given()` tell what the drag offered and what the app got.
+
 Never sleep to wait for something. Wait for what shows it happened: `made`, an event `heard`, or `eventually(what, condition)`.
 
 Fake media files hold what a file would (length, picture, sound) and what they were cut from, as JSON. Make a source with `Media::video(60.0)` or `Media::sound(60.0)` and `write`, and read a result with `Media::read`.
@@ -86,4 +104,14 @@ Core tests use the same fakes without the app: `Library::new()` for the library,
 
 ## What's real and what isn't
 
-The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test. Programs, the network and the desktop are faked. These aren't, so a test can't reach them yet: the clock and the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), drags, and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), the GPU check (`gpu.rs`), and the player's decoders and storyboards (`crates/player`).
+The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. These aren't faked, so a test can't reach them yet: the clock and the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), the GPU check (`gpu.rs`), and the player's decoders and storyboards (`crates/player`).
+
+Where the restart and the fake drag differ from the real ones:
+
+- After `quit()` or `kill()`, until the app has ended, a job still does its file work. A failing cut deletes its part file, and one that finishes renames its file into place while the library still says it's being made. A killed process would leave the part file for the next start. Hold the cut at a `Gate` to keep that from happening.
+- A quit or kill with a transcription or download running waits up to 5 seconds for each of their writes, which the stopped library refuses.
+- An app a drag is let go on goes by the name the test gives it. On Linux the real drag names it from the desktop entries (`Files` for `nautilus`).
+- `taking_copies` is the macOS and Windows way. On Linux only Dolphin copies, and its end names no app.
+- A drag refused by `finished_only` ends `Elsewhere`. Dolphin's real refusal ends `Nowhere`.
+
+The files a library couldn't delete are listed per library in the tests, and that list is read again from its library at each start. A retry of them (a cut's end, a quit) tries every running test's list.

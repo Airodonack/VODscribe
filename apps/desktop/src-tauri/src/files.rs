@@ -116,35 +116,88 @@ impl Leftovers {
 }
 
 /// The app's leftovers, one list for the library it has open.
+#[cfg(not(test))]
 static LEFTOVERS: Mutex<Leftovers> = Mutex::new(Leftovers::new());
 
-fn leftovers() -> std::sync::MutexGuard<'static, Leftovers> {
-    LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner())
+/// Runs `f` on the leftovers list, the one of the library holding `path`
+/// where one is named (`with_leftovers` in the tests, where it matters).
+#[cfg(not(test))]
+fn with_leftovers<T>(_path: Option<&Path>, f: impl FnOnce(&mut Leftovers) -> T) -> T {
+    f(&mut LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// In the tests several apps run at once, each on a library of its own
+/// (`testkit::TestApp`): a list per library, by its store, so one's
+/// leftovers go to its own store, and a list for files in none.
+#[cfg(test)]
+static LEFTOVERS: Mutex<Vec<Leftovers>> = Mutex::new(Vec::new());
+
+/// Runs `f` on the list of the library holding `path` (its store's
+/// folder), or the list for files in none; with no `path`, on each.
+#[cfg(test)]
+fn with_leftovers<T>(path: Option<&Path>, mut f: impl FnMut(&mut Leftovers) -> T) -> T {
+    let mut lists = LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner());
+    if lists.is_empty() {
+        lists.push(Leftovers::new());
+    }
+    let Some(path) = path else {
+        let mut last = None;
+        for list in lists.iter_mut() {
+            last = Some(f(list));
+        }
+        return last.unwrap();
+    };
+    let held = |l: &Leftovers| l.store.as_ref().and_then(|s| s.parent()).is_some_and(|dir| path.starts_with(dir));
+    match lists.iter().position(held) {
+        Some(i) => f(&mut lists[i]),
+        None => f(&mut lists[0]),
+    }
 }
 
 /// Deletes `path` now, or once nothing has it open (`delete_leftovers`).
 pub(crate) fn delete_file(path: impl AsRef<Path>) {
     let path = path.as_ref();
     if std::fs::remove_file(path).is_err() && path.exists() {
-        leftovers().add(path);
+        with_leftovers(Some(path), |l| l.add(path));
     }
 }
 
 /// `path` is about to be written: if an earlier file there was left to delete
 /// later (and has gone since), the new one isn't.
 pub(crate) fn writing(path: &Path) {
-    leftovers().writing(path);
+    with_leftovers(Some(path), |l| l.writing(path));
 }
 
 /// Deletes what couldn't be deleted before, if it can be now.
 pub(crate) fn delete_leftovers() {
-    leftovers().retry();
+    with_leftovers(None, |l| l.retry());
 }
 
 /// At start: the leftovers are kept in `store` from now, and those the app
 /// last quit with are tried again (`Leftovers::keep_in`).
+#[cfg(not(test))]
 pub(crate) fn keep_leftovers_in(store: PathBuf) {
-    leftovers().keep_in(store);
+    with_leftovers(None, move |l| l.keep_in(store));
+}
+
+/// At a test app's start (`keep_leftovers_in`): its library's list begins
+/// anew from its store, as the app's does at a start after a quit.
+#[cfg(test)]
+pub(crate) fn keep_leftovers_in(store: PathBuf) {
+    let mut lists = LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner());
+    if lists.is_empty() {
+        lists.push(Leftovers::new());
+    }
+    lists.retain(|l| l.store.as_ref() != Some(&store));
+    let mut list = Leftovers::new();
+    list.keep_in(store);
+    lists.push(list);
+}
+
+/// A test app's library is gone: its list goes with it.
+#[cfg(test)]
+pub(crate) fn forget_leftovers(store: &Path) {
+    LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner()).retain(|l| l.store.as_deref() != Some(store));
 }
 
 #[cfg(all(test, windows))]

@@ -204,9 +204,7 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 /// Everything that runs on the library: the state the commands use, the
 /// queues and the background jobs.
 fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Result<()> {
-    tidy_at_start(&paths, &db);
-    let chat_rx = manage_library(app.handle(), paths, db)?;
-    start_queues(app.handle())?;
+    let chat_rx = open_library(app.handle(), paths, db)?;
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
     let handle = app.handle().clone();
@@ -215,6 +213,18 @@ fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Resu
     std::thread::spawn(move || chats::run(handle, chat_rx));
     annotations::check_library_at_start(app.handle());
     Ok(())
+}
+
+/// The library `db` opened for the app, as each start does before the
+/// background jobs: what's left from before tidied, the state the commands
+/// use, then the queues, which begin with what was left unfinished. Returns
+/// what the chat queue's runner reads (`chats::run`). The tests' app starts
+/// on it too (testkit.rs), so it starts as the app does.
+fn open_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::sync::mpsc::Receiver<i64>> {
+    tidy_at_start(&paths, &db);
+    let chat_rx = manage_library(app, paths, db)?;
+    start_queues(app)?;
+    Ok(chat_rx)
 }
 
 /// What's left from before this start that nothing uses: tidied before
