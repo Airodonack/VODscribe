@@ -41,6 +41,7 @@ fn library() -> (Db, i64) {
 mod drag;
 mod encoding;
 mod files;
+mod handed_out;
 mod making;
 mod marks;
 mod queue;

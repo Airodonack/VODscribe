@@ -786,7 +786,7 @@ impl Db {
             .query_row(
                 "SELECT c.title, r.status, r.file_ext, r.error, c.revision, r.revision,
                         c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of, r.file_path,
-                        r.encoding
+                        r.encoding, r.make
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -801,14 +801,16 @@ impl Db {
                         r.get::<_, Option<String>>(8)?,
                         r.get::<_, Option<String>>(9)?,
                         r.get::<_, Option<String>>(10)?.and_then(|e| serde_json::from_str(&e).ok()),
+                        r.get::<_, Option<i64>>(11)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old, encoding)) = row else {
+        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old, encoding, make)) = row
+        else {
             return Ok(None);
         };
-        let file_path = crate::db::clip_file_of(&self.files, id, file_ext, old);
+        let file_path = crate::db::clip_file_of(&self.files, id, file_ext, make, old);
         let pieces = self.edit_pieces(id)?;
         // Of the edit as it is if made of what it's made of now (a file made
         // before that was recorded: of the revision it was made at), and as
@@ -1816,7 +1818,8 @@ impl Db {
 
     /// Edit `id`'s video was dragged out of the app, so another app may use it.
     pub fn hand_out_edit(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
+        // (2, its own file itself: `Db::hand_out_clip_file`, says more, and stays.)
+        self.conn.execute("UPDATE renders SET handed_out = max(handed_out, 1) WHERE clip_id = ?1", [id])?;
         Ok(())
     }
 
@@ -1841,12 +1844,12 @@ impl Db {
         error: Option<&str>,
         version: Option<i64>,
     ) -> Result<()> {
-        let ext = file.map(|f| crate::db::built_ext(f, |ext| self.files.clip_file(id, ext))).transpose()?;
+        let (ext, make) = file.map(|f| crate::db::built_make(&self.files, id, f)).transpose()?.unzip();
         self.conn.execute(
             "UPDATE renders SET status = ?2, file_ext = coalesce(?3, file_ext), file_path = coalesce(?6, file_path),
-               error = ?4, revision = coalesce(?5, revision)
+               error = ?4, revision = coalesce(?5, revision), make = CASE WHEN ?3 IS NULL THEN make ELSE ?7 END
              WHERE clip_id = ?1",
-            params![id, status.as_str(), ext, error, version, file],
+            params![id, status.as_str(), ext, error, version, file, make],
         )?;
         Ok(())
     }

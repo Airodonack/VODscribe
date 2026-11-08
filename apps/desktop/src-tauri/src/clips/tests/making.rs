@@ -269,22 +269,25 @@ fn a_resized_clip_is_made_again_for_its_new_range() {
     assert!(cut_from(&media, file, 30.0) && near(media.duration, 5.0), "made as {media:?}");
 }
 
-/// A clip made again for a new range is at the same place in the library,
-/// its path built from its id (app clips.rs:703, `set_clip_range`: "at the
-/// same path (named by the clip's id)"; tests/e2e/scenarios/clip.mjs: "its
-/// path is built from its id, `Paths::clip_file`"; CHANGELOG.md, 0.7.2:
-/// "Clips now live in the library.").
+/// A clip made again for a new range is a new file in the library, named
+/// by its id and which make it is, and the one before goes (app clips.rs,
+/// `set_clip_range`: "made again, as a new file"; plans/clips-pilot.md
+/// "Decided" 4b: "Every make writes a new own file", which the owner agreed
+/// to on 2026-11-07: "Yes I agree"; CHANGELOG.md, 0.7.2: "Clips now live in
+/// the library.").
 #[test]
-fn a_resized_clip_s_file_stays_where_the_library_keeps_it() {
+fn a_resized_clip_is_made_again_as_a_new_file_in_the_library() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let own = app.paths().clip_file(clip.id, "mp4");
-    assert_eq!(clip.file_path.as_deref().map(Path::new), Some(own.as_path()));
+    let first = app.paths().clip_make(clip.id, 1, "mp4");
+    assert_eq!(clip.file_path.as_deref().map(Path::new), Some(first.as_path()));
     resize(&app, clip.id, "0:30", "0:35").unwrap();
     let clip = app.made(clip.id);
-    assert_eq!(clip.file_path.as_deref().map(Path::new), Some(own.as_path()));
-    assert!(near(Media::read(&own).unwrap().duration, 5.0), "the file there isn't the new range's");
+    let second = app.paths().clip_make(clip.id, 2, "mp4");
+    assert_eq!(clip.file_path.as_deref().map(Path::new), Some(second.as_path()));
+    assert!(near(Media::read(&second).unwrap().duration, 5.0), "the file there isn't the new range's");
+    assert!(!first.exists(), "the file before stayed");
 }
 
 /// A resize undone, then redone, makes the clip again each time, on a VOD's
@@ -516,7 +519,7 @@ fn a_clip_whose_download_is_refused_says_why_and_has_no_file() {
     let error = clip.error.unwrap_or_default();
     assert!(error.contains("The site refused the download."), "says {error:?}");
     assert_eq!(clip.file_path, None);
-    assert!(!app.paths().clip_file(clip.id, "mp4").exists(), "a file left");
+    assert!(!app.paths().clip_make(clip.id, 1, "mp4").exists(), "a file left");
 }
 
 /// A clip whose cut fails says what ffmpeg said, and has no file (app
@@ -532,7 +535,7 @@ fn a_clip_whose_cut_fails_says_ffmpeg_s_reason_and_has_no_file() {
     let error = clip.error.unwrap_or_default();
     assert!(error.contains("Error while decoding stream #0:0"), "says {error:?}");
     assert_eq!(clip.file_path, None);
-    assert!(!app.paths().clip_file(clip.id, "mp4").exists(), "what ffmpeg wrote is left");
+    assert!(!app.paths().clip_make(clip.id, 1, "mp4").exists(), "what ffmpeg wrote is left");
 }
 
 /// A made clip has a picture of its first frame, for its drag; a clip of

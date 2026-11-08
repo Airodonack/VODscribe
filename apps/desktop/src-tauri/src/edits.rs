@@ -139,9 +139,10 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         // Sound alone if every piece's VOD is, named for the format clips are made in.
         let encoding = Settings::load(&state.paths.settings()).clip_encoding();
         let audio_only = edit_pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
-        // Made again in place (its extension may be the one for sound alone,
-        // found only by rendering: render() gives it that).
-        let out = state.paths.clip_file(id, clips::extension(audio_only, encoding.format()));
+        // A file of its own for each render (`Db::next_clip_file`), as a
+        // clip's (its extension may be the one for sound alone, found only by
+        // rendering: render() gives it that).
+        let out = db.next_clip_file(id, clips::extension(audio_only, encoding.format()))?;
         crate::files::writing(&out);
         anyhow::Ok((pieces, ffmpeg, out, version, encoding, edit.file_path, made_of, chapters))
     })();
@@ -185,10 +186,18 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         crate::files::delete_file(&out);
     }
     // The video made before in the other format goes (the names it was
-    // handed out by stay).
+    // handed out by stay, and so does that video itself if it was what went:
+    // the new one is the app's own).
+    // Only if the new one was recorded: an edit deleted as its render ended
+    // has let go of its files already, the one another app took kept.
+    let recorded = result.is_ok() && db.revision(id)?.is_some();
     let before = before.filter(|p| crate::clips::own_file(&state.paths, p));
-    if let Some(old) = before.filter(|p| result.is_ok() && Path::new(p) != out) {
-        crate::files::delete_file(old);
+    if let Some(old) = before.filter(|p| recorded && Path::new(p) != out) {
+        if db.clip_file_handed_out(id)? {
+            db.edit_handed_out(id, true)?;
+        } else {
+            crate::files::delete_file(old);
+        }
     }
     emit(app, &db, id);
     // The render may have been what held files deleted meanwhile.
@@ -324,7 +333,8 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
 
 /// What `delete_edit` takes away with an edit: its video's file, whether
 /// that was dragged out (handed out to another app), and the clips that were
-/// on its clip bar, each with whether its file was.
+/// on its clip bar, each with whether its file was; no file where that itself
+/// went to another app (`clips::file_to_let_go`).
 pub(crate) struct EditGone {
     pub file: Option<String>,
     pub handed_out: bool,
@@ -339,10 +349,12 @@ pub(crate) fn delete_edit_in(db: &Db, id: i64, stop: impl Fn(i64)) -> Result<Edi
     let gone = db.atomically(|db| {
         // (Only its file: how clips are made now doesn't come into it.)
         let file = db.edit(id, ClipEncoding::default())?.and_then(|e| e.file_path);
+        let file = crate::clips::file_to_let_go(db, id, file)?;
         let handed_out = db.edit_handed_out(id, false)?;
         let mut clips = Vec::new();
-        for clip in db.bar_clips(id)? {
+        for mut clip in db.bar_clips(id)? {
             let out = db.clip_handed_out(clip.id)?;
+            clip.file_path = crate::clips::file_to_let_go(db, clip.id, clip.file_path)?;
             db.delete_clip(clip.id)?;
             clips.push((clip, out));
         }
@@ -544,7 +556,8 @@ pub(crate) async fn stop_render(app: AppHandle, state: State<'_, AppState>, id: 
 /// Edit `id`'s rendered video under the name it's handed out by: its title
 /// (`clips::handed_out`). Named under the library's lock, as a clip's is
 /// (`clips::hand_out_made`): a delete in between left a name made after it
-/// had looked for them, a full-size file nothing removed.
+/// had looked for them, a full-size file nothing removed. Noted as handed
+/// out once another app has it (`taken`).
 fn handed_out(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     let state = app.state::<AppState>();
     let format = Settings::load(&state.paths.settings()).clip_encoding().format();
@@ -555,12 +568,22 @@ fn handed_out(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     Ok(crate::clips::handed_out(&state.paths, id, &path, &name))
 }
 
+/// Edit `id`'s video went to another app as `given` (`handed_out`): under its
+/// title, or its own file itself where no name could be made, which the app
+/// then never deletes (`Db::hand_out_clip_file`).
+fn taken(app: &AppHandle, id: i64, given: &Path) {
+    let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
+    let _ =
+        if given.starts_with(state.paths.clip_names(id)) { db.hand_out_edit(id) } else { db.hand_out_clip_file(id) };
+}
+
 /// Shows edit `id`'s video in the system file manager, under its title:
 /// from there it's the user's to take.
 #[tauri::command]
 pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
     let path = handed_out(&app, id)?;
-    let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
+    taken(&app, id, &path);
     crate::system::reveal(&app, &path)
 }
 
@@ -576,12 +599,17 @@ pub(crate) async fn drag_edit(
     drag: Option<u64>,
 ) -> CmdResult<bool> {
     let path = handed_out(&app, id)?;
+    // Its own video, where no name could be made, is noted as handed out now,
+    // as a clip's is (`clips::hand_out_made`): a render ending before the
+    // drop would otherwise delete it from under the app that has it.
+    if !path.starts_with(app.state::<AppState>().paths.clip_names(id)) {
+        taken(&app, id, &path);
+    }
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let settings = Settings::load(&app.state::<AppState>().paths.settings());
     let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &[name.as_str()]));
-    let taken = move || {
-        let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
-    };
+    let given = path.clone();
+    let taken = move || taken(&app, id, &given);
     let names = vec![crate::clips::Outgoing { name, job: None }];
     let files = move || vec![crate::clips::Made::Ready(path.clone())];
     crate::clips::drag_file(window, drag, names, files, None, resolve, taken, |_| {}, || {}).await

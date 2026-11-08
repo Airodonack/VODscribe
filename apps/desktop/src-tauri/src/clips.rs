@@ -6,9 +6,10 @@
 //! clips use it, so a clip made a little longer, or put in an edit, needs no
 //! new download.
 //!
-//! Clip files live in the library, each named by its clip's id
-//! (`Paths::clip_file`), so a clip whose range changes is made again at the
-//! same path. The name a clip goes by elsewhere (`drag_name`) is given when it
+//! Clip files live in the library, each named by its clip's id and which
+//! make it is (`Paths::clip_make`): a clip whose range or encoding changes
+//! is made again as a new file, and the one before goes unless another app
+//! was given it. The name a clip goes by elsewhere (`drag_name`) is given when it
 //! is dragged out, copied or shown: a second name for the file, in a folder
 //! beside it (`handed_out`, `Paths::clip_names`), which goes with the clip.
 
@@ -331,7 +332,9 @@ pub(crate) fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
 /// handed out before under that name is given again while it's still this
 /// file; once the clip is made again (a new file) or retitled, the old name
 /// stays as it was, for the editor whose project uses it, and the next hand
-/// out gets a name of its own. The clip's own file if none can be made.
+/// out gets a name of its own. The clip's own file if none can be made: the
+/// caller notes which went (`hand_out`), as the clip's own file is then the
+/// other app's, never deleted.
 pub(crate) fn handed_out(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> PathBuf {
     named(paths, id, file, name, true).unwrap_or_else(|e| {
         eprintln!("clip {id}: handing out its file as {name}: {e}");
@@ -362,7 +365,7 @@ fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str, may_co
             continue;
         }
         std::fs::create_dir_all(&dir)?;
-        if let Err(e) = std::fs::hard_link(file, &at) {
+        if let Err(e) = hard_link(file, &at) {
             if !may_copy {
                 // (The folder only if it's empty: made for this name alone.)
                 let _ = std::fs::remove_dir(&dir);
@@ -380,6 +383,32 @@ fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str, may_co
         return Ok(at);
     }
     unreachable!("names never run out")
+}
+
+/// A hard link from `from` at `to`; in a test, none where its library's disk
+/// takes none (`TestApp::takes_no_hard_links`), as on exFAT.
+fn hard_link(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if crate::testkit::refuses_links(to) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "this disk takes no hard links"));
+    }
+    std::fs::hard_link(from, to)
+}
+
+/// Notes that clip (or edit) `id`'s file went to another app as `given`
+/// (`handed_out`): under a name of its own, which stays when the clip goes;
+/// or, where none could be made, the clip's own file itself, which the app
+/// then never deletes (`file_to_let_go`).
+pub(crate) fn hand_out(db: &Db, paths: &vodscribe_core::Paths, id: i64, given: &Path) -> Result<()> {
+    if given.starts_with(paths.clip_names(id)) { db.hand_out_clip(id) } else { db.hand_out_clip_file(id) }
+}
+
+/// Clip (or edit) `id`'s file `file` as its deletion lets go of it
+/// (`let_go_files`): none if that file itself went to another app
+/// (`hand_out`), so it's neither deleted nor left to delete later
+/// (`files::delete_file`), as the other app's project uses it.
+pub(crate) fn file_to_let_go(db: &Db, id: i64, file: Option<String>) -> Result<Option<String>> {
+    Ok(if db.clip_file_handed_out(id)? { None } else { file })
 }
 
 /// Whether `a` and `b` are the same file, or copies of it as it is: the
@@ -419,8 +448,9 @@ pub(crate) fn let_go_files(paths: &vodscribe_core::Paths, id: i64, file: Option<
     let dir = paths.clip_names(id);
     if let Some(file) = file.filter(|f| own_file(paths, f)) {
         if !handed_out {
-            // Only those that are this clip's file: a clip before it with its
-            // id (ids are given again) may have left names another app took.
+            // Only those that are this clip's file: a library from before
+            // 0.7.3 may give its last deleted clip's id once more, and that
+            // clip may have left names another app took.
             for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
                 if same_file(&entry.path(), Path::new(file)) {
                     delete_file(entry.path());
@@ -472,9 +502,10 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
     let encoding = Settings::load(&state.paths.settings()).clip_encoding();
-    // Made again in place (a new file under its name: those it was handed
-    // out by keep the one they had).
-    let out = state.paths.clip_file(id, clips::extension(vod.audio_only, encoding.format()));
+    // A file of its own for each make (`Db::next_clip_file`): the one before,
+    // which another app may have been given, is never written over.
+    let ext = clips::extension(vod.audio_only, encoding.format());
+    let out = state.db.lock().unwrap().next_clip_file(id, ext)?;
     writing(&out);
     {
         let db = state.db.lock().unwrap();
@@ -526,14 +557,21 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         Err(e) if vodscribe_core::is_canceled(e) => false,
         Err(e) => db.set_clip_file(id, range.0, range.1, ClipStatus::Error, None, Some(&format!("{e:#}")))?,
     };
-    if result.is_ok() && db.clip(id)?.is_none() {
-        // Deleted while it was being cut.
+    if result.is_ok() && !recorded {
+        // Deleted while it was being cut, or moved as ffmpeg ended (it's
+        // queued again): this make is nobody's, and none will record it.
         delete_file(&out);
     }
-    // Its file in the format before goes (those it was handed out by stay).
+    // Its file in the format before goes (those it was handed out by stay,
+    // and so does that file itself if it was what went: the new one is the
+    // app's own).
     let old = clip.file_path.as_deref().filter(|p| own_file(&state.paths, p));
     if let Some(old) = old.filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
-        delete_file(old);
+        if db.clip_file_handed_out(id)? {
+            db.take_back_clip(id)?;
+        } else {
+            delete_file(old);
+        }
     }
     if recorded && result.is_ok() && !vod.audio_only {
         drop(db);
@@ -701,8 +739,8 @@ fn make_clips_in(
     })
 }
 
-/// Moves clip `id` to `start`..`end`; its file is made again, at the same path (named by
-/// the clip's id). The name it's handed out by follows the new range.
+/// Moves clip `id` to `start`..`end`; its file is made again, as a new file
+/// (`Db::next_clip_file`). The name it's handed out by follows the new range.
 #[tauri::command]
 pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
@@ -799,7 +837,8 @@ pub(crate) fn held_by(clip: &Clip, files: &[PathBuf]) -> bool {
 /// gone, or one that can't be deleted, leaves all of them as they were and
 /// records nothing. `stop` is given each one's id before it goes (its file
 /// being made is stopped). Returns those deleted, each with whether its file
-/// was dragged out of the app (not the app's to delete then).
+/// was dragged out of the app (its names not the app's to delete then), and
+/// with no file where that itself went to another app (`file_to_let_go`).
 fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl Fn(i64)) -> Result<Vec<(Clip, bool)>> {
     Ok(take_off_in(db, history, ids, |_| false, ("Clip deleted", "Clips deleted"), stop)?.0)
 }
@@ -821,8 +860,11 @@ fn take_off_in(
 ) -> Result<(Vec<Gone>, Vec<i64>)> {
     let mut gone = Vec::new();
     for &id in ids {
-        let clip = db.clip(id)?.context("That clip is gone.")?;
+        let mut clip = db.clip(id)?.context("That clip is gone.")?;
         let handed_out = db.clip_handed_out(id)?;
+        if !hold(&clip) {
+            clip.file_path = file_to_let_go(db, id, clip.file_path)?;
+        }
         gone.push((clip, handed_out));
     }
     // Each clip bar as it was before any of them went.
@@ -911,8 +953,9 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
     state.clips.cancel(id);
     let clip = db.clip(id)?;
     let handed_out = db.clip_handed_out(id)?;
+    let file = file_to_let_go(db, id, clip.and_then(|c| c.file_path))?;
     db.delete_clip(id)?;
-    after_delete(app, id, clip.and_then(|c| c.file_path), handed_out);
+    after_delete(app, id, file, handed_out);
     Ok(())
 }
 
@@ -936,7 +979,7 @@ pub(crate) async fn show_clip(app: AppHandle, state: State<'_, AppState>, id: i6
         let path = PathBuf::from(path.ok_or("That clip's file isn't made yet.")?);
         let format = Settings::load(&state.paths.settings()).clip_encoding().format();
         let shown = handed_out(&state.paths, id, &path, &drag_name(&db, format, id));
-        db.hand_out_clip(id).map_err(err)?;
+        hand_out(&db, &state.paths, id, &shown).map_err(err)?;
         shown
     };
     crate::system::reveal(&app, &path)
@@ -1150,11 +1193,23 @@ fn briefly(db: &Mutex<Db>) -> Option<std::sync::MutexGuard<'_, Db>> {
 /// under the library's lock: a delete lets go of the clip's names under it
 /// too (`remove`), so it comes wholly before or after. Between them, a name
 /// linked after the delete had looked for them stayed, a full-size file that
-/// no clip named and nothing removed.
+/// no clip named and nothing removed. Where no name can be made, the clip's
+/// own file is handed out and noted so at once (`Db::hand_out_clip_file`),
+/// not when the drop is over: a remake ending in between would delete it
+/// from under the app that has it. If the drop never comes, it's kept all
+/// the same.
 fn hand_out_made(db: &Mutex<Db>, paths: &vodscribe_core::Paths, id: i64, name: &str) -> Made {
     let Some(db) = briefly(db) else { return Made::Making };
     match made_in(&db, id) {
-        Made::Ready(file) => Made::Ready(linked_out(paths, id, &file, name)),
+        Made::Ready(file) => {
+            let given = linked_out(paths, id, &file, name);
+            if !given.starts_with(paths.clip_names(id))
+                && let Err(e) = db.hand_out_clip_file(id)
+            {
+                eprintln!("clip {id}: noting its file handed out: {e:#}");
+            }
+            Made::Ready(given)
+        }
         other => other,
     }
 }
@@ -1236,26 +1291,15 @@ pub(crate) async fn drag_clip(
         let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &named));
         (names, resolve)
     };
-    let asking = app.clone();
     let listed: Vec<(i64, String)> = names.iter().zip(&ids).map(|(o, &id)| (id, o.name.clone())).collect();
-    // Each under the name it goes by (`handed_out`), for an app that takes
-    // the file itself (Linux's addresses, Windows' CF_HDROP, macOS's file
-    // address); one that copies it names its copy so anyway.
-    let files = move || {
-        let paths = &asking.state::<AppState>().paths;
-        listed.iter().map(|(id, name)| hand_out_made(&asking.state::<AppState>().db, paths, *id, name)).collect()
+    let handing = Arc::new(DragOut::new(app.clone(), listed));
+    let files = {
+        let handing = handing.clone();
+        move || handing.files()
     };
-    // Another app's once one takes them (not when the drag begins: called
-    // off, or dropped on nothing, the files are still the app's to delete).
+    let taken = move || handing.taken();
     let out = ids.clone();
     let cutter = app.clone();
-    let taken = move || {
-        let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
-        for &id in &ids {
-            let _ = db.hand_out_clip(id);
-        }
-    };
     // Let go on another app: their making is listed with the jobs (Cancel
     // there refuses them), until the drag is over.
     // Counted once each way, and over only if it was let go there.
@@ -1280,6 +1324,40 @@ pub(crate) async fn drag_clip(
         }
     };
     drag_file(window, number, names, files, image, resolve, taken, dropped, waited).await
+}
+
+/// Clips' files as a drag out of the window hands them out (`drag_clip`).
+pub(crate) struct DragOut {
+    app: AppHandle,
+    /// Each clip's id, and the name it goes by.
+    clips: Vec<(i64, String)>,
+}
+
+impl DragOut {
+    pub(crate) fn new(app: AppHandle, clips: Vec<(i64, String)>) -> Self {
+        DragOut { app, clips }
+    }
+
+    /// Where each clip's file is, as the receiver asks: under the name it
+    /// goes by (`linked_out`), for an app that takes the file itself (Linux's
+    /// addresses, Windows' CF_HDROP, macOS's file address); one that copies
+    /// it names its copy so anyway. A clip's own file, where no name could
+    /// be made, is noted as handed out as it's given (`hand_out_made`).
+    pub(crate) fn files(&self) -> Vec<Made> {
+        let state = self.app.state::<AppState>();
+        self.clips.iter().map(|(id, name)| hand_out_made(&state.db, &state.paths, *id, name)).collect()
+    }
+
+    /// Another app has them (not when the drag begins: called off, or dropped
+    /// on nothing, the names are still the app's to delete): noted
+    /// (`Db::hand_out_clip`).
+    pub(crate) fn taken(&self) {
+        let state = self.app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        for &(id, _) in &self.clips {
+            let _ = db.hand_out_clip(id);
+        }
+    }
 }
 
 /// How the system's drag of files out of the window ended, as the page hears

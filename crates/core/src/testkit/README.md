@@ -54,6 +54,7 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `desktop()` tells what the file manager was asked to show or open.
 - `quit()` quits as closing the window does, and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's tidying, then the queues taking up what was left.
 - `drag_out(&[ids])` drags clips out of the window as the page does, and `drags().last()` is the drag. No system drag begins. `drag_ended()` waits for what the page hears at its end.
+- `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - The app's queues end with the test, but a command that starts a thread of its own (looking up a VODscription after an add or a refresh, a site's player's picture let go, setup's and the GPU pack's installs) runs on: wait for what it does before the test ends.
 
 Times are written as a clock shows them (`"1:02:03.5"`), and `at` reads them. Run the tests with `cargo test` in `crates/core` and in `apps/desktop/src-tauri`; `cargo test clips::` runs one module's.

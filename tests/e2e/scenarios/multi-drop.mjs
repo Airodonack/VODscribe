@@ -383,10 +383,12 @@ export default {
       await until("the system's drag, over", () => app.js("return window.__dragsEnded"), 10_000);
       if (!paths) throw new Error("the drag never came back over the window with its files");
       // Each under the name it's handed out by, in a folder beside its file
-      // (`Paths::clip_names`): a hard link, the same file.
+      // named by its clip's id (`Paths::clip_names`; the file is `<id>-<n>`,
+      // its make, `Paths::clip_make`): a hard link, the same file.
       const want = ready.map((c) => c.file_path);
+      const folderOf = (file) => file.replace(/(\/\d+)-\d+(\.[^./]*)$/, "$1$2").replace(/\.[^./]*$/, "");
       const handedOut = (file) =>
-        paths.find((p) => path.dirname(p) === file.replace(/\.[^./]*$/, "") && statSync(p).ino === statSync(file).ino);
+        paths.find((p) => path.dirname(p) === folderOf(file) && statSync(p).ino === statSync(file).ino);
       if (paths.length !== 2 || !want.every(handedOut))
         throw new Error(`the drag held ${JSON.stringify(paths)}, not names of ${JSON.stringify(want)}`);
       ctx.log(

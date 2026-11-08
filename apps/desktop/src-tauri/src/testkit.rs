@@ -117,6 +117,7 @@ impl Drop for TestApp {
         self.drags().end();
         self.ffmpeg.end();
         self.yt_dlp.end();
+        no_links().retain(|dir| *dir != self.paths().clips());
         let state = self.state();
         state.clips.close();
         state.sweeper.close();
@@ -232,6 +233,13 @@ impl TestApp {
 
     pub(crate) fn state(&self) -> tauri::State<'_, AppState> {
         self.app.state::<AppState>()
+    }
+
+    /// The library's disk takes no hard links, as exFAT and FAT don't: a link
+    /// made in its clips folder fails (`clips::hard_link`), as the system's
+    /// does there.
+    pub(crate) fn takes_no_hard_links(&self) {
+        no_links().push(self.paths().clips());
     }
 
     /// The library, held until the guard is dropped (as a command holds it).
@@ -383,6 +391,19 @@ impl TestApp {
         let path = clip.file_path.as_deref().expect("a made clip's file");
         Media::read(Path::new(path)).unwrap_or_else(|| panic!("no media at {path}"))
     }
+}
+
+/// The folders whose disk takes no hard links (`TestApp::takes_no_hard_links`),
+/// one per test that says so: the tests run at once, in one process.
+static NO_LINKS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn no_links() -> MutexGuard<'static, Vec<PathBuf>> {
+    NO_LINKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether a hard link at `at` fails, its disk taking none.
+pub(crate) fn refuses_links(at: &Path) -> bool {
+    no_links().iter().any(|dir| at.starts_with(dir))
 }
 
 /// `stamp` (`0:10`, `1:02:03.5`, `75`) in seconds.

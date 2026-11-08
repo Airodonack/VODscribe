@@ -13,6 +13,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Settings shows over an edit's picture. After a clip of the edit's clip bar was opened, the edit's picture drew over Settings and menus until you left the edit.
   - Undo in a new clip stays in it. A clip made right after the newest one was deleted could, on Undo, take back a change made to the deleted clip.
   - Undo past a delete keeps one clip. Undoing a change made before a clip was deleted no longer adds a second clip beside the one brought back.
+  - A file another app took stays. On a disk without hard links, such as exFAT, deleting or remaking a clip you had dragged into an editor deleted or replaced the file that editor was using.
   - Twitch starts on the first Play. At some window heights on Windows, its player took the controls under it for something covering it and waited for a second click.
   - A Mac drop keeps every file. A video dragged in together with one its app hands over only once dropped is no longer left out.
   - Starting over keeps your videos. Start a new library, offered when the library can't be opened, no longer deletes the old one's videos and clips, which move with it to its library-broken folder.

@@ -75,11 +75,12 @@ const handing = new Map<number, number>();
 export const draggingOut = () => out;
 
 /** Whether `paths` are just the clips being dragged out: their files, or
- *  the names they're handed out by, in a folder beside each file named as
- *  it is without its extension (`Paths::clip_names`). */
+ *  the names they're handed out by, in a folder beside each file named by
+ *  its clip's id (`Paths::clip_names`): `clips/7/` for `clips/7.mp4` and for
+ *  its later makes, `clips/7-1.mp4` (`Paths::clip_make`). */
 export function isOutgoing(paths: string[]): boolean {
   const named = (p: string, file: string) => {
-    const folder = file.replace(/\.[^./\\]*$/, "");
+    const folder = file.replace(/([/\\]\d+)-\d+(\.[^./\\]*)$/, "$1$2").replace(/\.[^./\\]*$/, "");
     return p.startsWith(folder + "/") || p.startsWith(folder + "\\");
   };
   return outgoing.length > 0 && paths.length > 0 && paths.every((p) => outgoing.some((f) => p === f || named(p, f)));

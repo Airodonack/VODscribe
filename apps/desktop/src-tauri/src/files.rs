@@ -108,11 +108,20 @@ impl Leftovers {
         }
     }
 
-    /// Its one caller, a spec with a read-only folder, is unix only.
+    /// Its callers, specs with a read-only folder, are unix only.
     #[cfg(all(test, unix))]
     pub(crate) fn listed(&self) -> Vec<PathBuf> {
         self.list.iter().map(|l| l.path.clone()).collect()
     }
+}
+
+/// The files the app has left to delete later (`delete_file`), in every
+/// library's list, for specs with a read-only folder.
+#[cfg(all(test, unix))]
+pub(crate) fn left_to_delete() -> Vec<PathBuf> {
+    let mut all = Vec::new();
+    with_leftovers(None, |l| all.extend(l.listed()));
+    all
 }
 
 /// The app's leftovers, one list for the library it has open.

@@ -5,4 +5,5 @@
 - `queue.rs`: the order clips are made in, canceling them, their VOD removed, and their place in the jobs list.
 - `files.rs`: deleting clips and cutting them from a bar, and the files they leave.
 - `drag.rs`: dragging clips out of the window.
+- `handed_out.rs`: a file another app was given, which stays when its clip goes.
 - `marks.rs`: cuts, chapters and highlights.

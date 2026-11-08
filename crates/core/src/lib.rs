@@ -305,10 +305,24 @@ impl Paths {
         self.local.join("clips")
     }
 
-    /// Clip `clip_id`'s file, cut or rendered (`Db::set_clip_file`). Edits are
-    /// clips (the listed ones), so an edit's render is here too.
+    /// Clip `clip_id`'s file as made before 0.7.3, when each make got a file
+    /// of its own (`clip_make`): a clip made before then keeps it until it's
+    /// made again.
+    /// Edits are clips (the listed ones), so an edit's render is here too.
     pub fn clip_file(&self, clip_id: i64, ext: &str) -> PathBuf {
         with_ext(self.clips().join(clip_id.to_string()), ext)
+    }
+
+    /// Clip `clip_id`'s file of its `make`th make (`Db::next_clip_file`), cut
+    /// or rendered: every make writes a file of its own, so none rewrites the
+    /// one before, which another app may have been given (`Db::hand_out_clip_file`)
+    /// or something may be reading. Make 0 is the one file a clip had before
+    /// (`clip_file`).
+    pub fn clip_make(&self, clip_id: i64, make: i64, ext: &str) -> PathBuf {
+        if make == 0 {
+            return self.clip_file(clip_id, ext);
+        }
+        with_ext(self.clips().join(format!("{clip_id}-{make}")), ext)
     }
 
     /// Where clip `clip_id`'s file is handed out under the names it's known

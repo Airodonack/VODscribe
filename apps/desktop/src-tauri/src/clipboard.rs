@@ -345,7 +345,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         }
         let ext = file.path.extension().and_then(|e| e.to_str()).context("a clip's file has an extension")?;
         let whole = edits::cut_whole(&db.edit_pieces(id)?);
-        (state.paths.clip_file(id, ext), whole, clip)
+        (db.next_clip_file(id, ext)?, whole, clip)
     };
     crate::files::writing(&out);
     if let Err(e) = std::fs::copy(&file.path, &out) {

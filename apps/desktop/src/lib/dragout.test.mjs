@@ -1068,10 +1068,16 @@ test("a drag's own files coming back are not added to the library", async () => 
   const done = carriedSet(true, async () => [
     { id: 7, start: 0, end: 5, shown: false, status: "ready", file_path: "/lib/clips/7.mp4" },
     { id: 8, start: 5, end: 10, shown: false, status: "ready", file_path: "C:\\lib\\clips\\8.mp4" },
+    { id: 11, start: 10, end: 15, shown: false, status: "ready", file_path: "/lib/clips/11-1.mp4" },
   ]);
   move(120, 120);
   move(0, 300);
   await done;
+  // A clip made since each make got a file of its own (`Paths::clip_make`):
+  // its names are still in the folder named by its id.
+  assert.equal(isOutgoing(["/lib/clips/11-1.mp4"]), true, "a later make's file");
+  assert.equal(isOutgoing(["/lib/clips/11/Day 3 10-15.mp4"]), true, "a name of a later make");
+  assert.equal(isOutgoing(["/lib/clips/11-1/x.mp4"]), false, "no folder is named by the make");
   assert.equal(isOutgoing(["/lib/clips/7.mp4"]), true, "the file");
   assert.equal(isOutgoing(["/lib/clips/7/Day 3 0-5.mp4"]), true, "a name it is handed out by");
   assert.equal(isOutgoing(["C:\\lib\\clips\\8\\Day 3 5-10.mp4"]), true, "a name, on Windows");

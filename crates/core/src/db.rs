@@ -819,6 +819,12 @@ CREATE TRIGGER clips_ids AFTER INSERT ON clips BEGIN
     UPDATE clip_ids SET next = max(next, NEW.id + 1);
 END;";
 
+/// Version 43: which make of a clip (or edit) its file is (`Paths::clip_make`):
+/// each make writes a file of its own. Null for one made before, at the path
+/// its id alone builds, which it keeps; so nothing is moved.
+const MIGRATE_V43: &str = "
+ALTER TABLE renders ADD COLUMN make INTEGER;";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -1105,7 +1111,7 @@ pub struct MarkState {
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
-     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding";
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding, r.make";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
 /// one (a clip pasted or dropped at its start): a group has no stretch to read.
@@ -1128,7 +1134,7 @@ pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<C
         end: Flicks(r.get::<_, Option<i64>>(3)?.unwrap_or(0)).seconds(),
         title: r.get(4)?,
         status: ClipStatus::parse(&r.get::<_, String>(5)?),
-        file_path: clip_file_of(files, id, r.get(6)?, r.get(12)?),
+        file_path: clip_file_of(files, id, r.get(6)?, r.get(14)?, r.get(12)?),
         error: r.get(7)?,
         shown: r.get(8)?,
         revision: r.get(9)?,
@@ -1385,14 +1391,20 @@ pub(crate) fn ext_of(ext: Option<String>) -> Option<String> {
 }
 
 /// Clip `id`'s file as its render row has it: built from its extension
-/// (`file_ext`). A row `library::settle` left as 0.7.1 wrote it, with only
+/// (`file_ext`) and which make it is (`make`, `Paths::clip_make`). A row `library::settle` left as 0.7.1 wrote it, with only
 /// the full path (`file_path`): the file in 0.7.1's clip folder
 /// (`Paths::old_clips`) where it couldn't be linked in, else where its
 /// extension would build it, so a file gone reads as gone (and the clip
 /// comes off its bar, `forget_gone_clips`) rather than as none at all.
-pub(crate) fn clip_file_of(files: &crate::Paths, id: i64, ext: Option<String>, old: Option<String>) -> Option<String> {
+pub(crate) fn clip_file_of(
+    files: &crate::Paths,
+    id: i64,
+    ext: Option<String>,
+    make: Option<i64>,
+    old: Option<String>,
+) -> Option<String> {
     if let Some(ext) = ext_of(ext) {
-        return Some(shown(&files.clip_file(id, &ext)));
+        return Some(shown(&files.clip_make(id, make.unwrap_or(0), &ext)));
     }
     let old = old?;
     if files.old_clips.as_deref().is_some_and(|dir| crate::library::named_inside(Path::new(&old), dir)) {
@@ -1400,6 +1412,17 @@ pub(crate) fn clip_file_of(files: &crate::Paths, id: i64, ext: Option<String>, o
     }
     let ext = ext_of(Path::new(&old).extension().and_then(|e| e.to_str()).map(str::to_owned))?;
     Some(shown(&files.clip_file(id, &ext)))
+}
+
+/// The extension of clip (or edit) `id`'s file `file`, and which make it is:
+/// it must be where `Paths::clip_make` builds one, as `built_ext` asks.
+pub(crate) fn built_make(files: &crate::Paths, id: i64, file: &str) -> Result<(String, i64)> {
+    let stem = Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let make = match stem.strip_prefix(&format!("{id}-")) {
+        Some(n) => n.parse().with_context(|| format!("{file} isn't a make of clip {id}"))?,
+        None => 0,
+    };
+    Ok((built_ext(file, |ext| files.clip_make(id, make, ext))?, make))
 }
 
 /// The extension of `file`, which must be `built(ext)`: where the library
@@ -1519,6 +1542,7 @@ impl Db {
             MIGRATE_V40,
             MIGRATE_V41,
             MIGRATE_V42,
+            MIGRATE_V43,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1721,8 +1745,26 @@ impl Db {
     /// Notes that clip `id`'s file was dragged out of the app: it's someone
     /// else's now, so it stays when the clip goes.
     pub fn hand_out_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
+        // (2, `hand_out_clip_file`, says more, and stays.)
+        self.conn.execute("UPDATE renders SET handed_out = max(handed_out, 1) WHERE clip_id = ?1", [id])?;
         Ok(())
+    }
+
+    /// Notes that clip `id`'s own file itself (or edit `id`'s video) went to
+    /// another app, as none could be made under a second name (a disk that
+    /// takes no hard links, such as exFAT): from now the app never deletes
+    /// it (`clip_file_handed_out`). It's handed out too (`clip_handed_out`).
+    pub fn hand_out_clip_file(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE renders SET handed_out = 2 WHERE clip_id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Whether clip `id`'s own file itself went to another app
+    /// (`hand_out_clip_file`).
+    pub fn clip_file_handed_out(&self, id: i64) -> Result<bool> {
+        let out: Option<i64> =
+            self.conn.query_row("SELECT handed_out FROM renders WHERE clip_id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(out == Some(2))
     }
 
     /// Clip `id`'s file is a new one, the app's own (the one handed out stays where it went).
@@ -1740,13 +1782,15 @@ impl Db {
 
     /// Forgets the clips not in the clip bar (made only to be dragged out);
     /// gives each one's id, its file and whether that was handed out to
-    /// another app, for the caller to delete what's the app's.
+    /// another app, for the caller to delete what's the app's: no file for
+    /// one whose own file itself went (`hand_out_clip_file`), as it stays.
     pub fn forget_hidden_clips(&self) -> Result<Vec<(i64, Option<String>, bool)>> {
         let mut stmt = self.conn.prepare("SELECT id FROM clips WHERE bar_of IS NOT NULL AND shown = 0")?;
         let ids: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         let mut gone = Vec::new();
         for id in ids {
-            let file = self.clip(id)?.and_then(|c| c.file_path);
+            let given = self.clip_file_handed_out(id)?;
+            let file = self.clip(id)?.and_then(|c| c.file_path).filter(|_| !given);
             gone.push((id, file, self.clip_handed_out(id)?));
         }
         self.conn.execute("DELETE FROM clips WHERE bar_of IS NOT NULL AND shown = 0", [])?;
@@ -1771,15 +1815,29 @@ impl Db {
         file: Option<&str>,
         error: Option<&str>,
     ) -> Result<bool> {
-        let ext = file.map(|f| built_ext(f, |ext| self.files.clip_file(id, ext))).transpose()?;
+        let (ext, make) = file.map(|f| built_make(&self.files, id, f)).transpose()?.unzip();
         let n = self.conn.execute(
-            "UPDATE renders SET status = ?4, file_ext = coalesce(?5, file_ext), file_path = coalesce(?7, file_path), error = ?6
+            "UPDATE renders SET status = ?4, file_ext = coalesce(?5, file_ext), file_path = coalesce(?7, file_path), error = ?6,
+                 make = CASE WHEN ?5 IS NULL THEN make ELSE ?8 END
              WHERE clip_id = ?1 AND EXISTS (
                  SELECT 1 FROM items WHERE clip_id = ?1 AND parent IS NULL AND start = ?2 AND end = ?3
                  ORDER BY position, id LIMIT 1)",
-            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), ext, error, file],
+            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), ext, error, file, make],
         )?;
         Ok(n > 0)
+    }
+
+    /// Where clip (or edit) `id`'s next make goes, as `ext`: a file of its
+    /// own, after the one it has (`Paths::clip_make`). Recorded once it's
+    /// made (`set_clip_file`, `set_edit_render`); one not recorded (it failed,
+    /// or its range moved) leaves the next make the same path.
+    pub fn next_clip_file(&self, id: i64, ext: &str) -> Result<PathBuf> {
+        let make: Option<i64> = self
+            .conn
+            .query_row("SELECT make FROM renders WHERE clip_id = ?1", [id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        Ok(self.files.clip_make(id, make.unwrap_or(0) + 1, ext))
     }
 
     /// What clip `id`'s file (or edit `id`'s video) was made with, if that's
@@ -3372,7 +3430,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -3412,12 +3470,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -3444,12 +3502,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -3473,12 +3531,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -3496,12 +3554,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -3525,11 +3583,11 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }
@@ -3550,11 +3608,11 @@ mod tests {
         // Back to version 36: the column 37 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
         let info = VodInfo {
             platform: "twitch".into(),
@@ -3587,11 +3645,11 @@ mod tests {
         // Back to version 39: the column 40 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 39;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 39;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
         let page = "https://www.dailymotion.com/quill";
         let info = VodInfo {
@@ -3764,7 +3822,7 @@ mod tests {
         // Back to version 41, before clips kept their ids.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 41;")
+            .execute_batch("ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 41;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         assert_eq!(rows(&db.conn), before, "upgraded, the same clips, pieces, files and marks");
