@@ -379,6 +379,18 @@ export function exportStretches(ranges: { start: number; end: number }[]): Promi
   return clips.makeAll(ranges);
 }
 
+/** `exportStretch` of a stretch dragged from the VOD shown: its footage, so a
+ *  clip listed there that was changed in the editor isn't the one given
+ *  (`clips.find`'s `footage`). */
+export function pullStretch(start: number, end: number, shown = true): Promise<Clip | null> {
+  return clips.make(start, end, shown, true);
+}
+
+/** `exportStretches` of stretches dragged from the VOD shown, each as `pullStretch` makes one. */
+export function pullStretches(ranges: { start: number; end: number }[]): Promise<void> {
+  return clips.makeAll(ranges, true);
+}
+
 /** Where `start`..`end` is on screen: on the timeline if it's in view, else null. */
 export function rectOf(start: number, end: number): DOMRect | null {
   const bar = document.querySelector<HTMLElement>(".scrubber");
@@ -652,6 +664,8 @@ interface Payload {
   items: Put[];
   /** Its stretches of the open VOD: a VOD's clip bar keeps them as clips. */
   stretches: { start: number; end: number }[];
+  /** Whether those are the VOD's footage (`pullStretch`), not a clip's pill. */
+  footage: boolean;
   ghost: Ghost;
   /** The ghost as one PNG, for the system's drag. */
   image: () => Promise<Uint8Array | undefined>;
@@ -797,7 +811,7 @@ function carryWith(p: Payload): Promise<void> {
       // it), so none begins. The carry ends here and the note asks now; said
       // yes to, the clips are made in the clip bar, as a drop there makes
       // them, to drag out once they're made.
-      if (p.files && p.vodId !== undefined && p.vodId === clips.vodId && clips.asksFor(p.stretches)) {
+      if (p.files && p.vodId !== undefined && p.vodId === clips.vodId && clips.asksFor(p.stretches, p.footage)) {
         finish();
         // Said yes to: where the clips are to be dragged from, once.
         const count = p.stretches.length;
@@ -870,10 +884,12 @@ export function carry({
   highlight,
   home,
 }: Carry): Promise<void> {
-  // A stretch of the VOD shown is made a clip through its clip bar; another's
-  // (an edit's piece) directly, as a clip that plays just the piece.
+  // A stretch of the VOD shown is made a clip through its clip bar, as its
+  // footage (a clip's pill, as that clip); another's (an edit's piece)
+  // directly, as a clip that plays just the piece.
   const make = async (shown: boolean): Promise<Clip | null> => {
-    if (vod.id === clips.vodId) return exportStretch(start, end, shown);
+    if (vod.id === clips.vodId)
+      return clip !== undefined ? exportStretch(start, end, shown) : pullStretch(start, end, shown);
     return api.addPieceClip(vod.id, start, end, shown).catch((e) => {
       clips.error = String(e);
       return null;
@@ -895,6 +911,7 @@ export function carry({
   return carryWith({
     items: [clip !== undefined ? { kind: "clip", id: clip } : putOf(stretch)],
     stretches: [{ start, end }],
+    footage: clip === undefined,
     ghost: { el: front.el, front, behind: [] },
     image: () => image,
     lift: () => (clips.carrying = { start, end }),
@@ -1032,6 +1049,7 @@ export function carrySet(set: CarrySet): Promise<void> {
   return carryWith({
     items: set.items,
     stretches: set.stretches,
+    footage: true,
     ghost,
     image: () => ghost.front.image.then((img) => snapshot(img, ghost.front.wave, set.label)),
     lift: () => (clips.carried = set.items.length),
@@ -1055,7 +1073,7 @@ export function carrySet(set: CarrySet): Promise<void> {
       } else if (target.bar) {
         // On a VOD's clip bar, the clips made for a drag out are the ones
         // kept: those made ahead waited for first, so they're not made twice.
-        void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches));
+        void (made ?? Promise.resolve([])).then(() => pullStretches(set.stretches));
         return true;
       }
       return false;

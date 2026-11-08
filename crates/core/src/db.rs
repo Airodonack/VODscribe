@@ -982,6 +982,11 @@ pub struct Clip {
     /// What its file was made with (`set_made_as`); None if it isn't made, or
     /// was made before this was recorded.
     pub encoding: Option<ClipEncoding>,
+    /// On a VOD's clip bar, whether it still plays just its stretch of that
+    /// VOD: one piece of it, nothing struck, not in a group (as
+    /// `edits::cut_whole`), not changed in the editor. A drag of the stretch
+    /// from the VOD gives only such a clip (`Db::vod_clip_playing`).
+    pub plain: bool,
 }
 
 /// Whose clip bar a clip is on.
@@ -1111,7 +1116,10 @@ pub struct MarkState {
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
-     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding, r.make";
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding, r.make,
+     coalesce((SELECT count(*) = 1 AND max(json_array_length(p.struck)) = 0
+                      AND max(p.vod_id) IS (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)
+               FROM items p WHERE p.clip_id = c.id), 0)";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
 /// one (a clip pasted or dropped at its start): a group has no stretch to read.
@@ -1141,6 +1149,7 @@ pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<C
         bar: ClipBar::of(r.get(10)?, r.get(11)?),
         length: 0.0,
         encoding: r.get::<_, Option<String>>(13)?.and_then(|e| serde_json::from_str(&e).ok()),
+        plain: r.get(15)?,
     };
     clip.length = clip.end - clip.start;
     Ok(clip)

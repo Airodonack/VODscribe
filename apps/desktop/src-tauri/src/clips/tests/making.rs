@@ -1,6 +1,7 @@
 //! Making clips: one or several, of a VOD or an edit, kept from a drag,
 //! renamed and resized, and what undo makes of each. Every test goes
 //! through the commands the page calls (`add_clip`, `add_clips`,
+//! `add_piece_clip`, `add_piece_clips`,
 //! `add_edit_clip`, `add_edit_clips`, `list_clips`, `edit_clips`,
 //! `keep_clip`, `rename_clip`, `set_clip_range`, `undo`, `redo`) and reads
 //! what they leave: the library, the clips' files, the news the page hears.
@@ -545,6 +546,28 @@ fn a_piece_carried_out_is_a_clip_that_plays_just_it() {
     let whole = app.make_clip(vod.id, "0:40", "0:50");
     let again = app.run(add_piece_clip(app.handle().clone(), vod.id, 40.0, 50.0, Some(false))).unwrap();
     assert_eq!((again.id, again.status), (whole.id, ClipStatus::Ready), "made again for a piece it plays");
+}
+
+/// Stretches of a VOD dragged and dropped on its clip bar (several picked)
+/// are its footage too: a clip listed at one but changed in the editor
+/// isn't given for it, and the page can tell it from one that plays just
+/// its stretch, which is given (`Clip::plain`; dragout.ts `carrySet`).
+#[test]
+fn stretches_dragged_to_the_clip_bar_are_clips_that_play_just_them() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let changed = app.make_clip(vod.id, "0:10", "0:20");
+    let range = json!({ "editId": changed.id, "vodId": vod.id, "start": 30.0, "end": 32.0 });
+    app.invoke("add_range_to_edit", range).unwrap();
+    let whole = app.make_clip(vod.id, "0:40", "0:50");
+    let plain: Vec<_> = list_clips(&app, vod.id).iter().map(|c| (c.id, c.plain)).collect();
+    assert_eq!(plain, [(changed.id, false), (whole.id, true)], "told apart as listed");
+    let ranges = spans(&[("0:10", "0:20"), ("0:40", "0:50")]);
+    let made = app.run(crate::clips::add_piece_clips(app.handle().clone(), vod.id, ranges)).unwrap();
+    assert_ne!(made[0].id, changed.id, "the changed clip given for the stretch");
+    assert!(made[0].plain && made[0].shown);
+    assert_eq!(made[1].id, whole.id);
+    assert!(near(app.clip_media(&app.made(made[0].id)).duration, 10.0));
 }
 
 /// Several stretches clipped at once, one with a clip already, give that

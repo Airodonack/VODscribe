@@ -38,6 +38,7 @@ permissions = [
   "allow-list-clips",
   "allow-add-clip",
   "allow-add-piece-clip",
+  "allow-add-piece-clips",
   "allow-add-clips",
   "allow-set-clip-range",
   "allow-rename-clip",

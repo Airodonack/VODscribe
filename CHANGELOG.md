@@ -21,6 +21,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Clipping again uses the new encoding. C on a stretch whose clip was made before a change in Settings › Encoding makes it again, instead of giving back the old file.
   - Removing a VOD works without H.264. The stretch an edit uses is now kept in your chosen format.
   - A dragged piece reuses its clip. A piece of an edit dragged out of the window was made again, even when its VOD's clip bar had a clip of just that stretch.
+  - A dragged stretch is the VOD's footage. Dragging a stretch gave the clip there you had changed in the editor, not just that stretch.
   - A resized clip leaves the jobs list. A clip resized while it waited its turn was still listed as waiting once it was made.
   - New clips wait their turn. After several waiting clips were deleted at once, the next new clip could jump ahead of others.
   - A Mac drop keeps every file. A video dragged in together with one its app hands over only once dropped is no longer left out.

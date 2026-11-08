@@ -16,7 +16,7 @@ import { removeEntries } from "./actions";
 import { api, type Clip, type Doc, type Edit, type Put, type Vod } from "./api";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { carrySet, exportStretch, exportStretches, stretchSaid, type CarryHome, type Face } from "./dragout";
+import { carrySet, exportStretches, pullStretch, stretchSaid, type CarryHome, type Face } from "./dragout";
 import { edits } from "./edits.svelte";
 import { is } from "./keys.svelte";
 import { inEdit } from "./media";
@@ -99,7 +99,7 @@ async function chosenFiles(items: Snippet[]): Promise<Clip[]> {
         ? (clips.shown.find((c) => c.id === i.id) ?? null)
         : doc?.kind === "edit"
           ? await clips.make(i.start, i.end, false)
-          : await exportStretch(i.start, i.end, false);
+          : await pullStretch(i.start, i.end, false);
     if (!clip) {
       for (const m of made) if (!m.shown) api.deleteClip(m.id).catch((e) => console.error("forget dragged clip", e));
       return [];
