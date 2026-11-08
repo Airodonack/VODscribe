@@ -561,8 +561,12 @@ fn a_clip_deleted_as_a_drag_hands_it_out_leaves_no_name_behind() {
         let app = TestApp::new();
         let vod = app.add_video_file("Day 3.mp4", 60.0);
         let clip = app.make_clip(vod.id, "0:10", "0:20");
-        // As the receiver asks, on the main thread (`drag_clip`'s `files`).
-        let ask = || hand_out_made(&app.state().db, &app.paths(), clip.id, "Day 3 0:10.mp4");
+        // As the receiver asks, on the main thread (`drag_clip`'s `files`),
+        // under a name as `drag_name` makes it. Not one with a ':' in it:
+        // Windows can't make that name, so the clip's own file is handed
+        // out instead, noted as given, and the delete rightly keeps it.
+        let name = "Day 3 00h00m10.000s-00h00m20.000s.mp4";
+        let ask = || hand_out_made(&app.state().db, &app.paths(), clip.id, name);
         let given = if asked_first {
             let given = ask();
             delete(&app, clip.id);
