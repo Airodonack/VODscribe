@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-missing-clip-codecs"
+description = "Enables the missing_clip_codecs command without any pre-configured scope."
+commands.allow = ["missing_clip_codecs"]
+
+[[permission]]
+identifier = "deny-missing-clip-codecs"
+description = "Denies the missing_clip_codecs command without any pre-configured scope."
+commands.deny = ["missing_clip_codecs"]

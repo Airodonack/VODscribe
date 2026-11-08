@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::{Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
-use vodscribe_core::settings::Settings;
+use vodscribe_core::settings::{ClipCodec, Settings};
 use vodscribe_core::{Progress, deps, model, tools};
 
 use crate::AppHandle;
@@ -280,6 +280,18 @@ pub(crate) async fn reset_settings(state: State<'_, AppState>) -> CmdResult<Sett
 #[tauri::command]
 pub(crate) async fn set_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
     settings.save(&state.paths.settings()).map_err(err)
+}
+
+/// The codecs Settings › Encoding offers that the ffmpeg in use can't make,
+/// for the page to grey out; asked of that ffmpeg once (`tools::encoders`).
+#[tauri::command]
+pub(crate) async fn missing_clip_codecs(state: State<'_, AppState>) -> CmdResult<Vec<ClipCodec>> {
+    let bin = state.paths.bin();
+    tauri::async_runtime::spawn_blocking(move || {
+        tools::find_ffmpeg(&bin).map(|ffmpeg| vodscribe_core::clips::missing_codecs(&ffmpeg)).unwrap_or_default()
+    })
+    .await
+    .map_err(err)
 }
 
 #[derive(Serialize)]

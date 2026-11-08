@@ -38,6 +38,7 @@ fn library() -> (Db, i64) {
     (db, vod)
 }
 
+mod codecs;
 mod drag;
 mod encoding;
 mod files;

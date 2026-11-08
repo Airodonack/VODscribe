@@ -146,6 +146,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 
 - `Settings.svelte`: Settings, a section at a time.
 - `settingsWindow.svelte.ts`: whether Settings is open, and at which section.
+- `codecs.ts`: the clip formats Settings offers, greyed out where ffmpeg can't make them.
 - `appSettings.svelte.ts`: the settings, loaded once and saved whole.
 - `asks.ts`: the notes that can be turned off, and what's done with a VODscription found.
 - `keymap.ts`: every keyboard control and its default keys.

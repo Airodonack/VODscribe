@@ -64,9 +64,12 @@ Times are written as a clock shows them (`"1:02:03.5"`), and `at` reads them. Ru
 Each fake answers as its program does, failures included. A test changes how it behaves:
 
 - `app.ffmpeg.fails_at(0.5, "message")`: each file it makes fails halfway, as ffmpeg does when a source breaks off.
-- `app.ffmpeg.lacks("libx265")`: a build without that encoder.
+- `app.ffmpeg.lacks("libx265")`: a build without that encoder, left out of its `-encoders` list too.
+- `app.ffmpeg.holds_list(&gate)`: its list of encoders waits at the gate, as a slow first run does.
+- `app.ffmpeg.updated()`: its file replaced, as an update does, so the app sees a new ffmpeg at the same path.
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
 - `works()` puts ffmpeg back as it was.
+- `app.ffmpeg.runs()` gives the arguments of each run so far, in order.
 
 To play a race in a set order, hold a fake at a `Gate`, act, then let it go:
 

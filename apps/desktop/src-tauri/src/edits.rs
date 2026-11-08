@@ -118,12 +118,23 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
     }
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG);
     let prepared = (|| {
-        let missing = {
+        // Sound alone if every piece's VOD is, named for the format clips are
+        // made in; a hole (its video gone) adds no picture.
+        let audio_only = |db: &Db, pieces: &[EditPiece]| {
+            pieces.iter().all(|p| p.hole || db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only))
+        };
+        let (missing, sound_alone) = {
             let db = state.db.lock().unwrap();
             db.set_edit_render(id, ClipStatus::Cutting, None, None, None)?;
             emit(app, &db, id);
-            missing(app, &db, &pieces(app, &db, id)?)
+            let pieces = pieces(app, &db, id)?;
+            (missing(app, &db, &pieces), audio_only(&db, &pieces))
         };
+        // Before its footage is fetched, and with the library let go: the
+        // first ask of an ffmpeg runs it.
+        let ffmpeg = ffmpeg?;
+        let encoding = Settings::load(&state.paths.settings()).clip_encoding();
+        clips::can_make(&ffmpeg, encoding, !sound_alone)?;
         for (vod_id, start, end) in missing {
             crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
         }
@@ -135,10 +146,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         let made_of = db.made_of(id, &edit.title, &edit_pieces)?;
         let chapters = db.file_chapters(id, &edit_pieces)?;
         let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::cover(app, &db, vod, a, b))?;
-        let ffmpeg = ffmpeg?;
-        // Sound alone if every piece's VOD is, named for the format clips are made in.
-        let encoding = Settings::load(&state.paths.settings()).clip_encoding();
-        let audio_only = edit_pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
+        let audio_only = audio_only(&db, &edit_pieces);
         // A file of its own for each render (`Db::next_clip_file`), as a
         // clip's (its extension may be the one for sound alone, found only by
         // rendering: render() gives it that).

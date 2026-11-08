@@ -5,8 +5,9 @@
 //! a cut of `-ss` 10 and `-t` 10 from a 60-second file is a 10-second file
 //! that says it's 10 s on of that one. It fails as ffmpeg does where the
 //! app could meet it: a file that isn't there or isn't media, a stream map
-//! that matches nothing, an encoder this build lacks; and on request
-//! partway, or holds partway at a `Gate`.
+//! that matches nothing, an encoder this build lacks (and its list of
+//! encoders, `-encoders`, says so); and on request partway, or holds
+//! partway at a `Gate`. It keeps what each run was asked (`runs`).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,8 @@ use super::tools::{self, Fake, Gate, Run};
 pub struct Ffmpeg {
     fake: Fake,
     plan: Arc<Mutex<Plan>>,
+    /// Each run's arguments, in order.
+    runs: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 /// What a run that writes a file does, besides its work.
@@ -29,18 +32,22 @@ struct Plan {
     hold: Option<(f64, Gate)>,
     /// Encoders it doesn't have (libx265, dnxhd…).
     lacks: Vec<String>,
+    /// Its list of encoders waits at this gate.
+    list_hold: Option<Gate>,
 }
 
 impl Ffmpeg {
     /// Fakes ffmpeg at `path`.
     pub fn at(path: impl Into<PathBuf>) -> Self {
         let plan = Arc::new(Mutex::new(Plan::default()));
-        let planned = plan.clone();
+        let runs = Arc::new(Mutex::new(Vec::new()));
+        let (planned, ran) = (plan.clone(), runs.clone());
         let fake = tools::fake(path, move |run| {
+            ran.lock().unwrap().push(run.args());
             let plan = planned.lock().unwrap().clone();
             answer(run, &plan)
         });
-        Ffmpeg { fake, plan }
+        Ffmpeg { fake, plan, runs }
     }
 
     /// Fakes the ffmpeg the app finds in `bin_dir` (`Paths::bin`), as it
@@ -78,9 +85,27 @@ impl Ffmpeg {
         self.plan.lock().unwrap().lacks.push(encoder.into());
     }
 
+    /// From now its list of encoders (`-encoders`) waits until `gate`
+    /// opens, or the app stops it, as a first run under a virus scan waits.
+    pub fn holds_list(&self, gate: &Gate) {
+        self.plan.lock().unwrap().list_hold = Some(gate.clone());
+    }
+
     /// From now it works as it should: no failure, hold or missing encoder.
     pub fn works(&self) {
         *self.plan.lock().unwrap() = Plan::default();
+    }
+
+    /// Its file replaced by another ffmpeg's, as an update or another
+    /// download does: the app sees a new ffmpeg at the same path.
+    pub fn updated(&self) {
+        let was = std::fs::read(self.path()).unwrap();
+        std::fs::write(self.path(), [was.as_slice(), b"updated\n"].concat()).unwrap();
+    }
+
+    /// The arguments of each run so far, in order.
+    pub fn runs(&self) -> Vec<Vec<String>> {
+        self.runs.lock().unwrap().clone()
     }
 }
 
@@ -92,6 +117,17 @@ struct Input {
 
 /// ffmpeg's answer to `run`.
 fn answer(run: &mut Run, plan: &Plan) -> i32 {
+    if run.has("-encoders") {
+        if let Some(gate) = &plan.list_hold
+            && !run.hold(gate)
+        {
+            return 255;
+        }
+        let listed =
+            ENCODERS.lines().filter(|l| !plan.lacks.iter().any(|e| l.split_whitespace().nth(1) == Some(e.as_str())));
+        run.out(&listed.map(|l| format!("{l}\n")).collect::<String>());
+        return 0;
+    }
     let args = run.args();
     let mut inputs: Vec<Input> = Vec::new();
     // An -ss before an input is where that input is read from; one after
@@ -232,6 +268,28 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     }
     0
 }
+
+/// What `ffmpeg -encoders` lists, as a full build does, but shorter: the
+/// encoders the app asks for, and a few beside.
+const ENCODERS: &str = "Encoders:
+ V..... = Video
+ A..... = Audio
+ S..... = Subtitle
+ .F.... = Frame-level multithreading
+ ..S... = Slice-level multithreading
+ ...X.. = Codec is experimental
+ ....B. = Supports draw_horiz_band
+ .....D = Supports direct rendering method 1
+ ------
+ VFS..D dnxhd                VC3/DNxHD
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D libx265              libx265 H.265 / HEVC (codec hevc)
+ VFS..D mjpeg                MJPEG (Motion JPEG)
+ V....D png                  PNG (Portable Network Graphics) image
+ VF.... prores               Apple ProRes
+ VFS... prores_ks            Apple ProRes (iCodec Pro) (codec prores)
+ A....D aac                  AAC (Advanced Audio Coding)
+ A....D pcm_s16le            PCM signed 16-bit little-endian";
 
 fn number(arg: Option<&String>) -> f64 {
     arg.and_then(|a| a.parse().ok()).unwrap_or(0.0)

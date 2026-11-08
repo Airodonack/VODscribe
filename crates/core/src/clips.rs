@@ -179,6 +179,47 @@ pub fn output_args(encoding: ClipEncoding, video: bool) -> Vec<&'static str> {
     args
 }
 
+/// The ffmpeg encoder a picture in `codec` is made with (`output_args`).
+pub fn encoder(codec: ClipCodec) -> &'static str {
+    encoder_after(codec, true, "-c:v")
+}
+
+/// The ffmpeg encoder sound in `codec`'s format is made with, with a
+/// picture (`video`) or alone: AAC for MP4, PCM for MOV (`output_args`).
+pub fn sound_encoder(codec: ClipCodec, video: bool) -> &'static str {
+    encoder_after(codec, video, "-c:a")
+}
+
+fn encoder_after(codec: ClipCodec, video: bool, flag: &str) -> &'static str {
+    let args = output_args(ClipEncoding { codec, quality: ClipQuality::Standard }, video);
+    args.windows(2).find(|w| w[0] == flag).map(|w| w[1]).expect("an encoder")
+}
+
+/// Whether an ffmpeg with encoders `has` can't make a clip in `codec`, with
+/// a picture (`video`) or sound alone.
+fn lacks(has: &tools::Encoders, codec: ClipCodec, video: bool) -> bool {
+    (video && !has.contains(encoder(codec))) || !has.contains(sound_encoder(codec, video))
+}
+
+/// The formats (codecs) `ffmpeg` can't make clips with a picture in, as it
+/// says itself (`tools::encoders`): its picture's encoder or its sound's is
+/// missing (a build without AAC can make no MP4). None when it can't say.
+pub fn missing_codecs(ffmpeg: &Path) -> Vec<ClipCodec> {
+    let Some(has) = tools::encoders(ffmpeg) else { return Vec::new() };
+    ClipCodec::ALL.into_iter().filter(|c| lacks(&has, *c, true)).collect()
+}
+
+/// Refuses a clip or an edit in `encoding`, with a picture (`video`) or
+/// sound alone, when `ffmpeg` can't make it, saying which format and where
+/// to pick another, before anything is fetched for it. The choice stays as
+/// it is: made in another format, the file might not open in its editor.
+pub fn can_make(ffmpeg: &Path, encoding: ClipEncoding, video: bool) -> Result<()> {
+    if tools::encoders(ffmpeg).is_some_and(|has| lacks(&has, encoding.codec, video)) {
+        bail!("VODscribe's ffmpeg can't make {}. Pick another format in Settings › Encoding.", encoding.codec.name());
+    }
+    Ok(())
+}
+
 /// The longest a name made by `safe_name` is, in bytes.
 const MAX_NAME: usize = 100;
 

@@ -118,6 +118,29 @@ fn a_fake_ffmpeg_refuses_what_ffmpeg_refuses() {
     assert!(cut(&a_minute(&dir), h265).unwrap_err().contains("Unknown encoder 'libx265'"));
 }
 
+/// The fake's list of encoders leaves out those it lacks, and reads as the
+/// real one's does (checked where ffmpeg is installed): AAC and PCM, which
+/// every build has, among them.
+#[test]
+fn a_fake_ffmpeg_lists_the_encoders_it_has() {
+    use crate::settings::ClipCodec;
+    let dir = TempDir::new("kit-encoders");
+    let ffmpeg = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let codecs = |path: &Path| ClipCodec::ALL.map(|c| tools::encoders(path).unwrap().contains(clips::encoder(c)));
+    assert_eq!(codecs(ffmpeg.path()), [true; 4]);
+    ffmpeg.lacks("libx265");
+    ffmpeg.updated();
+    assert_eq!(codecs(ffmpeg.path()), [true, false, true, true]);
+    let Ok(real) = which::which("ffmpeg") else {
+        eprintln!("skipped the real one: no ffmpeg on PATH");
+        return;
+    };
+    for path in [real.as_path(), ffmpeg.path()] {
+        let listed = tools::encoders(path).unwrap();
+        assert!(listed.contains("aac") && listed.contains("pcm_s16le"), "{}: {listed:?}", path.display());
+    }
+}
+
 #[test]
 fn a_fake_ffmpeg_tells_a_files_details_and_makes_its_pictures() {
     let dir = TempDir::new("kit-details");

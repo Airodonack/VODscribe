@@ -20,6 +20,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `clip-format.mjs`: clips made in each format and quality, their pictures read back, and a sound-only file's clip as WAV.
 - `clip-sources-long.mjs`: a clip in the editor whose links to its VODs scroll sideways keeps every link clickable.
 - `clip.mjs`: a clip cut between two cuts, resized and made again.
+- `codec-missing.mjs`: a clip format the app's ffmpeg can't make is greyed out in Settings, and a clip in it says why.
 - `controls.mjs`: keyboard controls changed in Settings › Controls take effect.
 - `copy-chapters.mjs`: Copy chapters puts each chapter's time and title on the clipboard.
 - `copy-moment.mjs`: the header's timestamp copies a link to the playhead's moment; needs the network.

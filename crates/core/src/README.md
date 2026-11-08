@@ -18,7 +18,7 @@ One module per subject.
 - `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
 - `gpu.rs`: the optional NVIDIA GPU add-on.
 - `deps.rs`: the pinned ffmpeg and Deno downloads.
-- `tools.rs`: finds and updates yt-dlp and ffmpeg, and starts programs.
+- `tools.rs`: finds and updates yt-dlp and ffmpeg, asks ffmpeg which encoders it has, and starts programs.
 - `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
 - `net.rs`: downloads, with stall and cancel handling.
 - `query.rs`: the search box's language, parsed.

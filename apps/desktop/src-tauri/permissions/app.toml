@@ -157,6 +157,7 @@ permissions = [
   "allow-kept-choices",
   "allow-keep-choice",
   "allow-set-settings",
+  "allow-missing-clip-codecs",
   "allow-reset-settings",
   "allow-gpu-status",
   "allow-install-gpu-pack",

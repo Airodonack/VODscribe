@@ -624,6 +624,7 @@ fn commands() -> impl Fn(tauri::ipc::Invoke<Rt>) -> bool + Send + Sync + 'static
         choices::kept_choices,
         choices::keep_choice,
         setup::set_settings,
+        setup::missing_clip_codecs,
         setup::reset_settings,
         setup::gpu_status,
         setup::install_gpu_pack,

@@ -520,6 +520,8 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
     let encoding = Settings::load(&state.paths.settings()).clip_encoding();
+    // Before its footage is fetched; failed here, it's shown by `fail`.
+    clips::can_make(&ffmpeg, encoding, !vod.audio_only)?;
     // A file of its own for each make (`Db::next_clip_file`): the one before,
     // which another app may have been given, is never written over.
     let ext = clips::extension(vod.audio_only, encoding.format());

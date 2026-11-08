@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.3 (unreleased)
 
 - Cut clips wait for a paste. Ctrl+X (⌘X) keeps the clip and its file until you paste it, copy or cut again, or quit, so Ctrl+V brings it back at once.
+- Formats ffmpeg lacks are grayed out. Settings › Encoding says why when you point at one, and a clip or edit in one says to pick another.
 - The search filter shows how to search. Its panel names what the search box takes and links to the full list.
 - Refresh details is quicker. On Twitch and YouTube it takes under a second instead of several, and Check for a VODscription shows in the row that it is asking.
 - A message when Twitch won't start. If Twitch's player doesn't start when you press Play, a message asks you to press Play in Twitch's own player.
