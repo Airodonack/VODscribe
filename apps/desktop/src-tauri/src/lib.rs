@@ -501,7 +501,6 @@ fn commands() -> impl Fn(tauri::ipc::Invoke<Rt>) -> bool + Send + Sync + 'static
         clips::show_clip,
         clips::drag_clip,
         clips::drag_before_made,
-        clips::save_clip,
         clips::list_marks,
         clips::add_mark,
         clips::move_mark,

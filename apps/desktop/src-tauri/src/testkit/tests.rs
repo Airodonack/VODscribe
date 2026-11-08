@@ -34,7 +34,7 @@ fn a_clip_made_through_the_kit_is_cut_by_the_fake_ffmpeg() {
 }
 
 #[test]
-fn the_desktop_hears_what_its_shown_and_answers_the_save_dialog() {
+fn the_desktop_hears_what_its_shown() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
@@ -42,11 +42,6 @@ fn the_desktop_hears_what_its_shown_and_answers_the_save_dialog() {
     let shown = app.desktop().shown();
     assert_eq!(shown.len(), 1);
     assert_eq!(Media::read(&shown[0]), Some(app.clip_media(&clip)), "the clip's file, under its name");
-    assert_eq!(app.invoke("save_clip", json!({ "id": clip.id })), Ok(json!(false)), "the dialog canceled");
-    let to = app.paths().root.join("saved.mp4");
-    app.desktop().saves_to(Some(to.clone()));
-    assert_eq!(app.invoke("save_clip", json!({ "id": clip.id })), Ok(json!(true)));
-    assert_eq!(Media::read(&to), Some(app.clip_media(&clip)));
 }
 
 #[test]

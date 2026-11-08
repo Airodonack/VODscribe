@@ -6,10 +6,11 @@
 //! clips use it, so a clip made a little longer, or put in an edit, needs no
 //! new download.
 //!
-//! Clip files go in the computer's Videos folder, under VODscribe: they're for
-//! taking elsewhere. Each is named for its range, so a clip whose range
-//! changes is a new file; the one before goes, unless it was dragged out to
-//! another app (`handed_out`), which may link to it where it is.
+//! Clip files live in the library, each named by its clip's id
+//! (`Paths::clip_file`), so a clip whose range changes is made again at the
+//! same path. The name a clip goes by elsewhere (`drag_name`) is given when it
+//! is dragged out, copied or shown: a second name for the file, in a folder
+//! beside it (`handed_out`, `Paths::clip_names`), which goes with the clip.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -699,7 +700,8 @@ fn make_clips_in(
     })
 }
 
-/// Moves clip `id` to `start`..`end`; its file is made again, named for the new range.
+/// Moves clip `id` to `start`..`end`; its file is made again, at the same path (named by
+/// the clip's id). The name it's handed out by follows the new range.
 #[tauri::command]
 pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
@@ -1087,16 +1089,6 @@ pub(crate) async fn cancel_mark(app: AppHandle, state: State<'_, AppState>, id: 
         history::record(&app, &db, doc, "Mark removed", before);
     }
     Ok(())
-}
-
-/// Clip `id`'s file, if it's made.
-fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
-    let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;
-    clip.file_path
-        .filter(|_| clip.status == ClipStatus::Ready)
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .ok_or_else(|| "That clip's file isn't made yet.".into())
 }
 
 /// Shown while a clip with no picture (sound alone) is dragged.
@@ -1561,26 +1553,6 @@ impl crate::drag_source::Item for DragFile {
     fn waited_for(&self) {
         (self.waited)();
     }
-}
-
-/// Saves a copy of clip `id`'s file where the person picks, in the system's
-/// save dialog (opened here, so the interface can't name a place to write).
-/// False if they canceled.
-#[tauri::command]
-pub(crate) async fn save_clip(app: AppHandle, window: crate::WebviewWindow, id: i64) -> CmdResult<bool> {
-    let from = ready_file(&app, id)?;
-    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = from.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
-        let kind = if matches!(ext.as_str(), "m4a" | "wav") { "Audio" } else { "Video" };
-        let Some(to) = crate::system::pick_save(&app, &window, &name, kind, &ext)? else { return Ok(false) };
-        if to != from {
-            std::fs::copy(&from, &to).map_err(|e| format!("Couldn't save the clip there: {e}"))?;
-        }
-        Ok(true)
-    })
-    .await
-    .map_err(err)?
 }
 
 #[cfg(test)]

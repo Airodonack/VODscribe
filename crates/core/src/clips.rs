@@ -73,12 +73,14 @@ fn file_stamp(seconds: f64) -> String {
     format!("{h:02}h{m:02}m{s:02}.{ms:03}s")
 }
 
-/// Where a clip's file goes in the clips folder, and its name: a folder per
-/// channel (none for files on this computer), then the stream's date (ISO
-/// 8601, when the site says), the VOD's title made safe, and the clip's start
-/// and end to the millisecond:
-/// `Channel/2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`. A range moved
-/// later is a new file, so editors linking to the old one keep it.
+/// The name a clip goes by where it's handed out (dragged to another app,
+/// copied, shown in its folder), and a folder for it: the channel's (none for
+/// files on this computer). The name is the stream's date (ISO 8601, when the
+/// site says), the VOD's title made safe, and the clip's start and end to the
+/// millisecond: `2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`. The clip's
+/// own file is named by its id (`Paths::clip_file`); its only caller
+/// (`drag_name`) uses the name and leaves the folder, so no folder per channel
+/// is made.
 pub fn file_path(
     channel: Option<&str>,
     published: Option<&str>,

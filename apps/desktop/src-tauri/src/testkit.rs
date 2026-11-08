@@ -261,13 +261,11 @@ pub(crate) fn at(stamp: &str) -> f64 {
 }
 
 /// The system's desktop as the tests have it (system.rs): what it was asked
-/// to show and open, and what its save dialog answers.
+/// to show and open.
 #[derive(Default)]
 pub(crate) struct Desktop {
     shown: Mutex<Vec<PathBuf>>,
     opened: Mutex<Vec<PathBuf>>,
-    /// Where the save dialog saves; None: the person cancels it.
-    saves_to: Mutex<Option<PathBuf>>,
 }
 
 impl Desktop {
@@ -281,11 +279,6 @@ impl Desktop {
         self.opened.lock().unwrap().clone()
     }
 
-    /// From now the save dialog picks `path` (None: it's canceled).
-    pub(crate) fn saves_to(&self, path: Option<PathBuf>) {
-        *self.saves_to.lock().unwrap() = path;
-    }
-
     pub(crate) fn reveal(&self, path: &Path) -> CmdResult<()> {
         self.shown.lock().unwrap().push(path.into());
         Ok(())
@@ -294,10 +287,6 @@ impl Desktop {
     pub(crate) fn open(&self, path: &Path) -> CmdResult<()> {
         self.opened.lock().unwrap().push(path.into());
         Ok(())
-    }
-
-    pub(crate) fn pick_save(&self, _name: &str) -> Option<PathBuf> {
-        self.saves_to.lock().unwrap().clone()
     }
 }
 

@@ -883,8 +883,6 @@ export const api = {
         pixels: new ImageData(new Uint8ClampedArray(b, 20, w * h * 4), w, h),
       };
     }),
-  /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
-  saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
   keepVideo: (id: number, height?: number) => invoke<void>("keep_video", { id, height }),
   /** Stops (and discards) VOD `id`'s video download. */
