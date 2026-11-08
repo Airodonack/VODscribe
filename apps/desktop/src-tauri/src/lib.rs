@@ -356,7 +356,7 @@ pub fn run() {
                 }
                 Err(e) => {
                     eprintln!("The library couldn't be opened: {e:#}");
-                    app.manage(recovery::Problem::new(format!("{e:#}"), db_path));
+                    app.manage(recovery::Problem::new(format!("{e:#}"), paths));
                 }
             }
             // The window is created here rather than from the config, so release builds

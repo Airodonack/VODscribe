@@ -38,5 +38,6 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes, with a fake drag out of the window, started again after a quit.
 - [`testkit`](testkit): the app kit's own tests.
 - [`clips`](clips): clips' tests.
+- [`recovery`](recovery): setting a library aside, and the next start.
 - [`drag_source`](drag_source): dragging clips out before they're made.
 - [`drop_target`](drop_target): taking drops on Windows, macOS and Linux, virtual files and file promises included.

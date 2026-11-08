@@ -1,8 +1,10 @@
 <!--
   Shown instead of the app when its library won't open (recovery.rs): what
   went wrong, and what can be done. Nothing here deletes anything: starting
-  a new library sets the old file aside, kept for recovering or for a bug
-  report.
+  a new library sets the old one aside (its file and the folders named for
+  its rows, `db::set_aside`), kept for recovering or for a bug report. If
+  another app has one of its files open, nothing moves and the error says
+  which, under the buttons.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -60,8 +62,8 @@
     <div class="choice">
       <button class="primary" onclick={startNew} disabled={busy}>Start a new library</button>
       <p class="muted">
-        Starts empty. The old file is kept beside it, renamed <code>library-broken-</code> with today's date, so it can be
-        recovered or sent with a bug report.
+        Starts empty. The old library moves to a folder beside it, named <code>library-broken-</code> with today's date, its
+        videos and clips with it, so it can be recovered or sent with a bug report.
       </p>
     </div>
   </div>

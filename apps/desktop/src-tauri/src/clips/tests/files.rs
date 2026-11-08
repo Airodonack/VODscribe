@@ -398,9 +398,10 @@ fn quitting_lets_a_cut_go_before_the_library_stops_writing() {
 }
 
 /// A library set aside (recovery.rs: starting a new library "sets the old
-/// one aside, never deleting it") keeps its clips' files: the next start, on
-/// a new library over the same folders, deletes none of them (review of the
-/// cut, round 2, 2026-11-07).
+/// one aside, its videos and clips with it, never deleting it") keeps its
+/// clips' files: they go to the set-aside folder, where the next start, on a
+/// new library, deletes none of them (review of the cut, round 2,
+/// 2026-11-07).
 #[test]
 fn a_library_set_aside_keeps_its_clip_files_at_the_next_start() {
     let app = TestApp::new();
@@ -411,10 +412,12 @@ fn a_library_set_aside_keeps_its_clip_files_at_the_next_start() {
     // no file a program has open.
     let folder = app.quit();
     let paths = folder.paths();
-    vodscribe_core::db::set_aside(&paths.db()).unwrap();
+    let aside = vodscribe_core::Paths::new(vodscribe_core::db::set_aside(&paths).unwrap());
     let fresh = Db::open_in(&paths).unwrap();
     tidy_at_start(&paths, &fresh).unwrap();
-    assert!(file.exists(), "the set-aside library's clip file was deleted");
+    let kept = aside.local.join(file.strip_prefix(&paths.local).unwrap());
+    assert!(kept.is_file(), "the set-aside library's clip file wasn't kept");
+    assert!(!file.exists(), "left where the new library's clip {} goes", clip.id);
 }
 
 /// A file the app couldn't delete (on Windows, a cut clip's file a paste's

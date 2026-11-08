@@ -1134,6 +1134,12 @@ const KEPT_COPIES: usize = 2;
 /// (the privacy page says so).
 const COPIES_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
 
+/// Whether `name` is a copy of the library from before an upgrade
+/// (`keep_before_upgrade`).
+fn is_copy(name: &str) -> bool {
+    name.strip_prefix("library-v").and_then(|n| n.strip_suffix(".sqlite")).is_some_and(|v| v.parse::<i32>().is_ok())
+}
+
 /// Copies the library at `path` (format `version`, open on `conn`) to
 /// `library-v<version>.sqlite` beside it before it's upgraded, whole and as
 /// it stands (VACUUM INTO), and removes all but the newest copies.
@@ -1150,8 +1156,7 @@ fn keep_before_upgrade(conn: &Connection, path: &Path, version: i32) -> Result<(
     let mut copies: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(dir)?
         .flatten()
         .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.strip_prefix("library-v")?.strip_suffix(".sqlite")?.parse::<i32>().ok()?;
+            is_copy(&e.file_name().to_string_lossy()).then_some(())?;
             Some((e.metadata().ok()?.modified().ok()?, e.path()))
         })
         .collect();
@@ -1167,42 +1172,132 @@ fn keep_before_upgrade(conn: &Connection, path: &Path, version: i32) -> Result<(
 fn tidy_copies(path: &Path, max_age: std::time::Duration) {
     let Some(entries) = path.parent().and_then(|dir| std::fs::read_dir(dir).ok()) else { return };
     for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let copy =
-            name.strip_prefix("library-v").and_then(|n| n.strip_suffix(".sqlite")).and_then(|v| v.parse::<i32>().ok());
         let old =
             entry.metadata().and_then(|m| m.modified()).is_ok_and(|made| made.elapsed().is_ok_and(|age| age > max_age));
-        if copy.is_some() && old {
+        if is_copy(&entry.file_name().to_string_lossy()) && old {
             let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
-/// Moves the library at `path` out of the way (with its WAL and shared
-/// memory files), to `library-broken-<date>.sqlite` beside it (`-2`… if
-/// taken), so a new one is made in its place: never deleted, for recovering
-/// or sending with a bug report. Returns where it went.
-pub fn set_aside(path: &Path) -> Result<PathBuf> {
-    let dir = path.parent().context("the library has no folder")?;
+/// Moves the library that `paths` lays out out of the way, so a new one is
+/// made in its place: into a folder `library-broken-<date>` (`-2`… if
+/// taken) beside it, in the same layout, never deleted, for recovering or
+/// sending with a bug report. Its file goes, with its WAL and shared memory
+/// files and its copies from before upgrades (`keep_before_upgrade`), and
+/// so do its own folders and files (`Paths::library_files`): its videos,
+/// clips and the rest, as a new library's ids start again at 1. Left in
+/// place, the next start's tidies would delete them as no VOD's (and the
+/// copies as old), and its first VODs and clips would write over them.
+/// All or nothing: if one can't be moved, what was goes back, and the
+/// error names a file another app has open (`in_use`), the one reason
+/// Windows refuses, or, if something couldn't go back, what's left in the
+/// set-aside folder. Returns the folder its file went to.
+pub fn set_aside(paths: &crate::Paths) -> Result<PathBuf> {
+    set_aside_with(paths, &|from, to| std::fs::rename(from, to))
+}
+
+/// `set_aside`, moving each file or folder with `rename`.
+fn set_aside_with(paths: &crate::Paths, rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>) -> Result<PathBuf> {
     let date = date_of(now());
-    let mut n = 1;
-    let aside = loop {
-        let name =
-            if n == 1 { format!("library-broken-{date}.sqlite") } else { format!("library-broken-{date}-{n}.sqlite") };
-        let aside = dir.join(name);
-        if !aside.exists() {
-            break aside;
-        }
-        n += 1;
+    let name = (1..)
+        .map(|n| if n == 1 { format!("library-broken-{date}") } else { format!("library-broken-{date}-{n}") })
+        .find(|name| {
+            let aside = paths.aside(name);
+            !aside.root.exists() && !aside.local.exists()
+        })
+        .context("no free name")?;
+    let aside = paths.aside(&name);
+    // Built from the path as the system has it: a name made from a lossy
+    // copy (`display`) of a path that isn't UTF-8 isn't the file's.
+    let side = |db: &Path, suffix: &str| {
+        let mut name = db.as_os_str().to_owned();
+        name.push(suffix);
+        PathBuf::from(name)
     };
-    std::fs::rename(path, &aside).with_context(|| format!("move the library to {}", crate::tools::shown(&aside)))?;
-    for suffix in ["-wal", "-shm"] {
-        let side = PathBuf::from(format!("{}{suffix}", path.display()));
-        if side.exists() {
-            let _ = std::fs::rename(&side, format!("{}{suffix}", aside.display()));
+    let mut moves = vec![(paths.db(), aside.db())];
+    moves.extend(["-wal", "-shm"].map(|suffix| (side(&paths.db(), suffix), side(&aside.db(), suffix))));
+    let copies = paths.db().parent().and_then(|dir| std::fs::read_dir(dir).ok());
+    for entry in copies.into_iter().flatten().flatten() {
+        if is_copy(&entry.file_name().to_string_lossy()) {
+            moves.push((entry.path(), aside.db().with_file_name(entry.file_name())));
         }
     }
-    Ok(aside)
+    moves.extend(paths.library_files().into_iter().zip(aside.library_files()));
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let moving = (|| {
+        std::fs::create_dir_all(&aside.root)?;
+        std::fs::create_dir_all(&aside.local)?;
+        for (from, to) in moves {
+            // Only the library's file must be there.
+            if from != paths.db() && std::fs::symlink_metadata(&from).is_err() {
+                continue;
+            }
+            if let Err(e) = rename(&from, &to) {
+                if let Some(open) = in_use(&from) {
+                    anyhow::bail!(
+                        "{} is open in another app. Close that app, then start a new library again.",
+                        crate::tools::shown(&open)
+                    );
+                }
+                return Err(e)
+                    .with_context(|| format!("move {} to {}", crate::tools::shown(&from), crate::tools::shown(&to)));
+            }
+            moved.push((from, to));
+        }
+        anyhow::Ok(())
+    })();
+    let Err(e) = moving else { return Ok(aside.root) };
+    let stuck: Vec<String> = moved
+        .iter()
+        .rev()
+        .filter(|(from, to)| rename(to, from).is_err())
+        .map(|(_, to)| crate::tools::shown(to))
+        .collect();
+    if stuck.is_empty() {
+        let _ = std::fs::remove_dir(&aside.local);
+        let _ = std::fs::remove_dir(&aside.root);
+        return Err(e);
+    }
+    // Part of the library is in the set-aside folder: a new start would
+    // begin without it, so it's named, to be moved back by hand first.
+    Err(anyhow::anyhow!(
+        "The library is partly set aside: {} couldn't be moved back from {} after this failed: {e:#}. \
+         Move them back beside the library before trying again.",
+        stuck.join(", "),
+        crate::tools::shown(&aside.root)
+    ))
+}
+
+/// The first file at or under `path` that another app has open, on
+/// Windows, where a folder holding one can't be moved: opened sharing
+/// nothing, it's refused. Elsewhere an open file doesn't stop a move.
+fn in_use(path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let mut left = vec![path.to_path_buf()];
+        while let Some(path) = left.pop() {
+            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+            if meta.is_dir() {
+                left.extend(std::fs::read_dir(&path).into_iter().flatten().flatten().map(|e| e.path()));
+            } else if std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&path)
+                .is_err_and(|e| e.raw_os_error() == Some(ERROR_SHARING_VIOLATION))
+            {
+                return Some(path);
+            }
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 /// `secs` since 1970 as a UTC date, YYYY-MM-DD (Howard Hinnant's civil_from_days).
@@ -2746,22 +2841,109 @@ mod tests {
     #[test]
     fn a_broken_library_is_set_aside_not_deleted() {
         let dir = crate::TempDir::new("set-aside");
-        let path = dir.join("library.sqlite");
+        let paths = crate::Paths::new(dir.join("data"));
+        paths.ensure().unwrap();
+        let path = paths.db();
         std::fs::write(&path, b"not a database").unwrap();
         assert!(Db::open(&path).is_err());
-        std::fs::write(dir.join("library.sqlite-wal"), b"wal").unwrap();
-        let aside = set_aside(&path).unwrap();
+        std::fs::write(dir.join("data/library.sqlite-wal"), b"wal").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        let aside = set_aside(&paths).unwrap();
         let name = aside.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.starts_with("library-broken-") && name.ends_with(".sqlite"), "{name}");
-        assert_eq!(std::fs::read(&aside).unwrap(), b"not a database");
-        assert!(dir.join(format!("{name}-wal")).exists(), "its WAL goes with it");
-        assert!(!path.exists());
+        assert!(name.starts_with("library-broken-"), "{name}");
+        // Laid out as a library, so moving its contents back restores it.
+        let old = crate::Paths::new(&aside);
+        assert_eq!(std::fs::read(old.db()).unwrap(), b"not a database");
+        assert!(aside.join("library.sqlite-wal").exists(), "its WAL goes with it");
+        assert_eq!(std::fs::read(old.source_video(1, "mp4")).unwrap(), b"video", "its kept video goes with it");
+        assert!(!path.exists() && !paths.media().exists());
         // A new library opens in its place; a second one set aside the same day gets -2.
         drop(Db::open(&path).unwrap());
-        let again = set_aside(&path).unwrap();
-        assert!(again.to_string_lossy().ends_with("-2.sqlite"), "{}", again.display());
+        let again = set_aside(&paths).unwrap();
+        assert!(again.to_string_lossy().ends_with(&format!("{name}-2")), "{}", again.display());
         assert_eq!(date_of(0), "1970-01-01");
         assert_eq!(date_of(1790632794), "2026-09-28");
+    }
+
+    /// A move that fails and then can't all go back says what's left in the
+    /// set-aside folder, instead of asking to try again.
+    #[test]
+    fn a_library_partly_set_aside_says_what_is_left() {
+        let dir = crate::TempDir::new("set-aside-stuck");
+        let paths = crate::Paths::new(dir.join("data"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        // The thumbnails move, the downloads under way (the last) don't, and
+        // the thumbnails can't go back.
+        let (work, thumbs) = (paths.work(), paths.thumbs());
+        let rename = |from: &Path, to: &Path| {
+            if from == work || to == thumbs {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let failed = format!("{:#}", set_aside_with(&paths, &rename).unwrap_err());
+        assert!(failed.contains("couldn't be moved back") && failed.contains("thumbs"), "{failed}");
+        assert!(!failed.contains("start a new library again"), "{failed}");
+        let aside = dir.join("data").join(format!("library-broken-{}", date_of(now())));
+        assert!(aside.join("thumbs").is_dir(), "the thumbnails are in the set-aside folder, as it says");
+        assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "the rest is back");
+        assert!(paths.source_video(1, "mp4").exists());
+    }
+
+    /// A library whose folders can't all be moved is left as it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_library_that_cannot_be_set_aside_stays_whole() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::TempDir::new("set-aside-fails");
+        let paths = crate::Paths::split(dir.join("roaming"), dir.join("local"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        // Moving a folder elsewhere writes its "..": refused without write permission.
+        let mode = |p: &Path, m| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+        mode(&paths.media(), 0o500);
+        let failed = set_aside(&paths);
+        mode(&paths.media(), 0o700);
+        assert!(failed.is_err(), "{failed:?}");
+        assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "its file is back");
+        assert!(paths.source_video(1, "mp4").exists() && paths.thumbs().is_dir());
+        let left = |d: &Path| {
+            std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("library-broken-"))
+        };
+        assert!(!left(&dir.join("roaming")) && !left(&dir.join("local")), "a folder left");
+    }
+
+    /// On Windows a clip another app has open stops the move: nothing moves,
+    /// and the error names the file, for the recovery screen to show.
+    #[cfg(windows)]
+    #[test]
+    fn a_library_with_a_clip_open_elsewhere_stays_whole_and_says_which() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = crate::TempDir::new("set-aside-open");
+        let paths = crate::Paths::split(dir.join("roaming"), dir.join("local"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        let clip = paths.clip_file(1, "mp4");
+        std::fs::create_dir_all(paths.clips()).unwrap();
+        std::fs::write(&clip, b"clip").unwrap();
+        // Shared for reading only, as a player or an editor opens it.
+        let open = std::fs::OpenOptions::new().read(true).share_mode(1).open(&clip).unwrap();
+        let failed = set_aside(&paths).unwrap_err().to_string();
+        drop(open);
+        assert!(failed.contains("1.mp4") && failed.contains("open in another app"), "{failed}");
+        assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "its file is back");
+        assert!(paths.source_video(1, "mp4").exists() && clip.exists());
     }
 
     #[test]

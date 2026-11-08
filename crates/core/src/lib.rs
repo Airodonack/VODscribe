@@ -408,6 +408,30 @@ impl Paths {
         [self.models(), self.bin(), gpu::staging_dir(&gpu), gpu, self.emotes(), self.work()]
     }
 
+    /// The library's own folders and files besides its database, named for
+    /// its rows' ids or listing its files: a new library, whose ids start
+    /// again at 1, starts without them (`db::set_aside`). Not emote images,
+    /// which no row names.
+    pub fn library_files(&self) -> [PathBuf; 9] {
+        [
+            self.media(),
+            self.thumbs(),
+            self.peaks(),
+            self.storyboards(),
+            self.source_footage(),
+            self.clips(),
+            self.leftovers(),
+            self.clip_thumbs(),
+            self.work(),
+        ]
+    }
+
+    /// The layout of this library set aside as `name` (`db::set_aside`): a
+    /// folder of that name in each of its folders, laid out as a library.
+    pub fn aside(&self, name: &str) -> Paths {
+        Paths::split(self.root.join(name), self.local.join(name))
+    }
+
     /// Bytes used by `cache_dirs`.
     pub fn cache_size(&self) -> u64 {
         self.cache_dirs().iter().map(|d| size_on_disk(d)).sum()
@@ -552,8 +576,10 @@ mod tests {
                     continue;
                 }
                 // Tests make folders of their own as they like, in files of
-                // their own (`clips/tests.rs`) or a module's `mod tests`.
-                let tests = path.file_name().is_some_and(|n| n == "tests.rs");
+                // their own (`clips/tests.rs`, or `clips/tests/*.rs` for one
+                // in parts) or a module's `mod tests`.
+                let tests = path.file_name().is_some_and(|n| n == "tests.rs")
+                    || path.parent().is_some_and(|dir| dir.ends_with("tests"));
                 if path.extension().is_none_or(|e| e != "rs") || path.ends_with("crates/core/src/lib.rs") || tests {
                     continue;
                 }

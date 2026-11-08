@@ -402,7 +402,8 @@ pub(crate) fn own_file(paths: &vodscribe_core::Paths, file: &str) -> bool {
 /// (`let_go_files`); then the files the app couldn't delete when it last
 /// ran tried again, kept in the library's folder from now
 /// (`files::keep_leftovers_in`). Nothing else in the clips folder is
-/// touched: a file no clip here has may be a library's set aside.
+/// touched: a file no clip here has may be a library's that 0.7.2 set
+/// aside, leaving its clips here.
 pub(crate) fn tidy_at_start(paths: &vodscribe_core::Paths, db: &Db) -> Result<()> {
     for (id, file, handed_out) in db.forget_hidden_clips()? {
         let_go_files(paths, id, file.as_deref(), handed_out);
