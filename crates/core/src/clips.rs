@@ -209,13 +209,22 @@ pub fn missing_codecs(ffmpeg: &Path) -> Vec<ClipCodec> {
     ClipCodec::ALL.into_iter().filter(|c| lacks(&has, *c, true)).collect()
 }
 
+/// What a clip or an edit says when VODscribe's own ffmpeg can't make its
+/// format (`{format}`, its name).
+pub const CANT_MAKE_OWN: &str = "VODscribe's ffmpeg can't make {format}. Pick another format in Settings › Encoding.";
+/// The same, when the ffmpeg in use is the system's.
+pub const CANT_MAKE_SYSTEM: &str =
+    "Your system's ffmpeg can't make {format}. Pick another format in Settings › Encoding.";
+
 /// Refuses a clip or an edit in `encoding`, with a picture (`video`) or
-/// sound alone, when `ffmpeg` can't make it, saying which format and where
-/// to pick another, before anything is fetched for it. The choice stays as
-/// it is: made in another format, the file might not open in its editor.
-pub fn can_make(ffmpeg: &Path, encoding: ClipEncoding, video: bool) -> Result<()> {
+/// sound alone, when `ffmpeg` can't make it, saying which format, whose
+/// ffmpeg (VODscribe's own in `bin_dir`, or the system's) and where to pick
+/// another, before anything is fetched for it. The choice stays as it is:
+/// made in another format, the file might not open in its editor.
+pub fn can_make(ffmpeg: &Path, bin_dir: &Path, encoding: ClipEncoding, video: bool) -> Result<()> {
     if tools::encoders(ffmpeg).is_some_and(|has| lacks(&has, encoding.codec, video)) {
-        bail!("VODscribe's ffmpeg can't make {}. Pick another format in Settings › Encoding.", encoding.codec.name());
+        let said = if tools::own_ffmpeg(bin_dir, ffmpeg) { CANT_MAKE_OWN } else { CANT_MAKE_SYSTEM };
+        bail!(said.replace("{format}", encoding.codec.name()));
     }
     Ok(())
 }

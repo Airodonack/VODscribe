@@ -177,6 +177,8 @@ export type UseVodscription = "ask" | "always" | "never";
 export type ClipFormat = "mp4" | "mov";
 
 export type ClipCodec = "h264" | "h265" | "dnxhr" | "prores";
+/** The codecs the ffmpeg in use can't make, and whether it's VODscribe's own (`own`) or the system's (setup.rs `FfmpegCodecs`). */
+export type FfmpegCodecs = { missing: ClipCodec[]; own: boolean };
 
 export type ClipQuality = "proxy" | "standard" | "high";
 
@@ -966,8 +968,8 @@ export const api = {
   kickStream: (url: string) => invoke<{ name: string; height: number; url: string }[]>("kick_stream", { url }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
-  /** The clip codecs the ffmpeg in use can't make (Settings › Encoding greys them out). */
-  missingClipCodecs: () => invoke<ClipCodec[]>("missing_clip_codecs"),
+  /** The clip codecs the ffmpeg in use can't make (Settings › Encoding greys them out), and whether it's VODscribe's own. */
+  missingClipCodecs: () => invoke<FfmpegCodecs>("missing_clip_codecs"),
   resetSettings: () => invoke<Settings>("reset_settings"),
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
   installGpuPack: () => invoke<void>("install_gpu_pack"),

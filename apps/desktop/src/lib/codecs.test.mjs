@@ -12,7 +12,7 @@ const CODECS = [
 ];
 
 test("a format the ffmpeg can't make is greyed out, says why and can't be picked; the others are as they were", () => {
-  const { shown, hint } = codecChoices(CODECS, "h264", ["h265"]);
+  const { shown, hint } = codecChoices(CODECS, "h264", { missing: ["h265"], own: true });
   assert.deepEqual(
     shown.map((c) => [c.id, c.on, c.greyed, c.why, c.pickable]),
     [
@@ -25,7 +25,7 @@ test("a format the ffmpeg can't make is greyed out, says why and can't be picked
 });
 
 test("one already picked stays picked, its hint says clips fail, and it doesn't say so again on hover", () => {
-  const { shown, hint } = codecChoices(CODECS, "h265", ["h265"]);
+  const { shown, hint } = codecChoices(CODECS, "h265", { missing: ["h265"], own: true });
   assert.deepEqual(
     shown.filter((c) => c.on).map((c) => [c.id, c.greyed, c.why]),
     [["h265", true, undefined]],
@@ -34,9 +34,19 @@ test("one already picked stays picked, its hint says clips fail, and it doesn't 
 });
 
 test("with every format there, or the ffmpeg unable to say, nothing is greyed out", () => {
-  const { shown, hint } = codecChoices(CODECS, "dnxhr", []);
+  const { shown, hint } = codecChoices(CODECS, "dnxhr", { missing: [], own: true });
   assert.ok(shown.every((c) => !c.greyed && c.why === undefined && c.pickable));
   assert.equal(hint, "Large files.");
+});
+
+test("with the system's ffmpeg in use, the hover text and the hint say it's the system's", () => {
+  const greyed = codecChoices(CODECS, "h264", { missing: ["h265"], own: false });
+  assert.equal(greyed.shown[1].why, "Your system's ffmpeg can't make MP4 H.265.");
+  const picked = codecChoices(CODECS, "h265", { missing: ["h265"], own: false });
+  assert.equal(
+    picked.hint,
+    "Your system's ffmpeg can't make MP4 H.265. Clips and edits fail until you pick another format.",
+  );
 });
 
 test("until the app has answered, nothing is greyed out and nothing can be picked", () => {

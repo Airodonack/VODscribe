@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)". An entry opens with two or three plain sentences on what's new, as you'd tell a friend, then its changes. Each change opens with a headline of at most eight words, a plain statement ending in a full stop with no colon, dash or parenthesis, then one sentence of detail (a second only for a key, a menu name or a limit). A change goes beside the others about the same part of the app (the player and its timeline, clips and the editor, the transcript and search, chat, chapters, highlights and VODscriptions, the library, settings and privacy, the website), the bigger first, and the fixes under the closing "Fixes:" are grouped the same way.
+What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)". An entry opens with two or three plain sentences on what's new, as you'd tell a friend, then its changes. Each change opens with a headline of six words or fewer (eight when a feature's name takes two), a plain statement ending in a full stop with no colon, dash or parenthesis, then one sentence of detail (a second only for a key, a menu name or a limit). A change goes beside the others about the same part of the app (the player and its timeline, clips and the editor, the transcript and search, chat, chapters, highlights and VODscriptions, the library, settings and privacy, the website), the bigger first, and the fixes under the closing "Fixes:" are grouped the same way.
 
 ## 0.7.3 (unreleased)
 
@@ -13,10 +13,11 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Fixes:
   - Twitch starts on the first Play. At some window heights on Windows, its player took the controls under it for something covering it and waited for a second click.
   - Settings shows over an edit's picture. After a clip of the edit's clip bar was opened, the edit's picture drew over Settings and menus until you left the edit.
-  - Undo in a new clip stays in it. A clip made right after the newest one was deleted could, on Undo, take back a change made to the deleted clip.
+  - Undo no longer changes another clip. A clip made right after the newest one was deleted could, on Undo, take back a change made to the deleted clip.
   - Undo past a delete keeps one clip. Undoing a change made before a clip was deleted no longer adds a second clip beside the one brought back.
   - A file another app took stays. On a disk without hard links, such as exFAT, deleting or remaking a clip you had dragged into an editor deleted or replaced the file that editor was using.
   - Clipping again uses the new encoding. C on a stretch whose clip was made before a change in Settings › Encoding makes it again, instead of giving back the old file.
+  - Removing a VOD works without H.264. The stretch an edit uses is now kept in your chosen format.
   - A dragged piece reuses its clip. A piece of an edit dragged out of the window was made again, even when its VOD's clip bar had a clip of just that stretch.
   - A resized clip leaves the jobs list. A clip resized while it waited its turn was still listed as waiting once it was made.
   - New clips wait their turn. After several waiting clips were deleted at once, the next new clip could jump ahead of others.

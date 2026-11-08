@@ -14,7 +14,6 @@ use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod, give_way};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
 use vodscribe_core::search::AuthorSuggestion;
-use vodscribe_core::settings::{ClipEncoding, ClipFormat};
 use vodscribe_core::stretches::{self, Stretch};
 use vodscribe_core::{Paths, clips, fetch, local, pipeline, thumbs, tools};
 
@@ -478,7 +477,8 @@ fn realize_all(app: &AppHandle, id: i64) -> anyhow::Result<()> {
 
 /// Makes the stretch of VOD `vod_id` that piece `piece` is into a source of
 /// its own, exactly that stretch, cut from its footage (downloaded first if
-/// need be) into the kept videos' folder, and moves the piece to it
+/// need be) into the kept videos' folder (in `clips::encoding_to_keep`,
+/// refused as a clip is if `ffmpeg` can't make it), and moves the piece to it
 /// (`Db::realize_piece`). Made from the clip at one revision and moved
 /// against it: if the clip changed meanwhile, made again.
 fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &AtomicBool) -> anyhow::Result<()> {
@@ -491,6 +491,8 @@ fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &Atomi
             (row, base, db.vod(vod_id)?.context("That VOD is gone.")?)
         };
         let (start, end) = (row.start.seconds(), row.end.context("A piece without an end.")?.seconds());
+        // Before its footage is fetched.
+        let encoding = crate::clips::encoding_to_keep(app, ffmpeg, !vod.audio_only)?;
         crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
         let source = {
             let db = state.db.lock().unwrap();
@@ -499,11 +501,10 @@ fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &Atomi
         let (new, out) = {
             let db = state.db.lock().unwrap();
             let new = db.add_realized(vod_id, start, end)?;
-            (new, state.paths.source_video(new, clips::extension(vod.audio_only, ClipFormat::Mp4)))
+            (new, state.paths.source_video(new, clips::extension(vod.audio_only, encoding.format())))
         };
         let within = (start - source.offset, end - source.offset);
-        let made =
-            clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, ClipEncoding::default(), stop, |_| {});
+        let made = clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, encoding, stop, |_| {});
         let db = state.db.lock().unwrap();
         let moved = made.and_then(|()| {
             db.set_media_path(new, Some(&out.to_string_lossy()))?;

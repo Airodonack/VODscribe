@@ -1,8 +1,9 @@
 //! A format (codec) the ffmpeg in use can't make (handbook plans/clips-pilot.md,
 //! "Decided", 3: the clip fails with the app's own sentence, which format and
 //! Settings › Encoding, and that format's option in Settings is greyed out):
-//! through `add_clip`, `render_edit` by way of `remove_stretch`, and
-//! `missing_clip_codecs`, which the page asks for the options to grey out.
+//! through `add_clip`, `render_edit` by way of `remove_stretch`, `delete_vod`
+//! keeping an edit's stretch (`realize`), and `missing_clip_codecs`, which
+//! the page asks for the options to grey out.
 
 use super::*;
 
@@ -19,9 +20,12 @@ fn clips_are(app: &TestApp, codec: ClipCodec) {
     app.invoke("set_settings", json!({ "settings": { "clip_codec": codec } })).unwrap();
 }
 
-/// The codecs the page greys out (`missing_clip_codecs`).
+/// The codecs the page greys out (`missing_clip_codecs`), of the app's own
+/// ffmpeg (the testkit's is in its bin).
 fn greyed(app: &TestApp) -> Value {
-    app.invoke("missing_clip_codecs", json!({})).unwrap()
+    let answer = app.invoke("missing_clip_codecs", json!({})).unwrap();
+    assert_eq!(answer["own"], true, "VODscribe's own ffmpeg taken for the system's");
+    answer["missing"].clone()
 }
 
 /// How many times ffmpeg was asked for its list of encoders.
@@ -195,4 +199,85 @@ fn an_edit_whose_only_video_is_a_hole_is_made_as_sound_without_the_picture_s_enc
     let after = app.made(clip.id);
     assert_eq!((after.status, after.error), (ClipStatus::Ready, None));
     assert!(after.file_path.is_some_and(|f| f.ends_with(".m4a")), "sound alone");
+}
+
+/// An edit of VOD `vod_id`'s 0:05–0:15: Delete video keeps that stretch as
+/// a video of its own first (`realize`).
+fn in_an_edit(app: &TestApp, vod_id: i64) -> i64 {
+    let db = app.db();
+    let edit = db.add_edit("e").unwrap().id;
+    db.add_piece(edit, vod_id, (5.0, 15.0), "a", None).unwrap();
+    edit
+}
+
+/// The value after `flag` in the ffmpeg run that encoded with `encoder`.
+fn after(app: &TestApp, encoder: &str, flag: &str) -> Option<String> {
+    let runs = app.ffmpeg.runs();
+    let run = runs.iter().find(|r| r.iter().any(|a| a == encoder))?;
+    run.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone())
+}
+
+/// Remove and delete the video on a VOD an edit uses, then the file the
+/// edit's stretch was kept in (`realize`).
+fn delete_kept(app: &TestApp, vod_id: i64) -> String {
+    let edit = in_an_edit(app, vod_id);
+    let answer = app.invoke("delete_vod", json!({ "id": vod_id, "deleteVideo": true })).unwrap();
+    assert_eq!(answer, Value::Null, "the delete refused");
+    let kept = app.db().piece_rows(edit).unwrap()[0].vod_id;
+    app.db().media_path(kept).unwrap().unwrap()
+}
+
+/// The stretch an edit keeps replaces the VOD's footage, which goes next:
+/// it's made as before, H.264 at CRF 18, whatever quality clips are made in
+/// (re-review of fix-codecs-073, 1).
+#[test]
+fn a_kept_stretch_is_made_as_before_whatever_the_clips_quality() {
+    let app = TestApp::new();
+    app.invoke("set_settings", json!({ "settings": { "clip_codec": "h264", "clip_quality": "proxy" } })).unwrap();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let file = delete_kept(&app, vod.id);
+    assert!(file.ends_with(".mp4"), "kept as {file}");
+    assert_eq!(after(&app, "libx264", "-crf").as_deref(), Some("18"));
+}
+
+/// The same with clips made as MOV DNxHR (after Switch to MOV, say): an
+/// ffmpeg with H.264 keeps the stretch as before.
+#[test]
+fn a_kept_stretch_is_made_as_before_with_clips_made_as_mov() {
+    let app = TestApp::new();
+    app.invoke("set_settings", json!({ "settings": { "clip_codec": "dnxhr", "clip_format": "mov" } })).unwrap();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let file = delete_kept(&app, vod.id);
+    assert!(file.ends_with(".mp4"), "kept as {file}");
+    assert_eq!(after(&app, "libx264", "-crf").as_deref(), Some("18"));
+}
+
+/// With an ffmpeg without H.264, the stretch is kept in the codec Settings ›
+/// Encoding names, at High quality, so the delete goes ahead as clips are
+/// made (correctness review 0.7.3, 1).
+#[test]
+fn without_h264_a_kept_stretch_is_made_in_the_chosen_codec_at_high_quality() {
+    let app = TestApp::new();
+    app.ffmpeg.lacks("libx264");
+    app.invoke("set_settings", json!({ "settings": { "clip_codec": "dnxhr", "clip_quality": "proxy" } })).unwrap();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let file = delete_kept(&app, vod.id);
+    assert!(file.ends_with(".mov"), "kept as {file}");
+    assert_eq!(after(&app, "dnxhd", "-profile:v").as_deref(), Some("dnxhr_hq"));
+}
+
+/// Without H.264 and the chosen codec either, Remove and delete the video
+/// refuses with the app's sentence, as a clip in it fails, and keeps the
+/// VOD.
+#[test]
+fn without_h264_or_the_chosen_codec_delete_video_refuses_saying_which() {
+    let app = TestApp::new();
+    app.ffmpeg.lacks("libx264");
+    app.ffmpeg.lacks("libx265");
+    clips_are(&app, ClipCodec::H265);
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    in_an_edit(&app, vod.id);
+    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true })).unwrap();
+    assert_eq!(answer, json!(NO_H265));
+    assert!(app.db().vod(vod.id).unwrap().is_some(), "the VOD kept");
 }
