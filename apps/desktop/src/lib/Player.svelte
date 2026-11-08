@@ -1094,6 +1094,16 @@
     height: 100%;
   }
 
+  /* A site's player gets a layer of its own. In the flow, a frame whose
+     height has a fraction can round a pixel into the controls under it,
+     which paint over that row (their container query makes them a stacking
+     context); Twitch then counts its player as covered and won't autoplay
+     ("style visibility"), seen in a Windows web view 781 px tall. */
+  .frame:not(.own) .host {
+    position: relative;
+    isolation: isolate;
+  }
+
   /* Audio alone: the controls in the panel's own colors, at their own height,
      rather than floating on a video's black stage. */
   .stage.audio {

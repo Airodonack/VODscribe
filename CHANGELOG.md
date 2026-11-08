@@ -10,6 +10,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Drop links from your browser. A VOD link dragged onto VODscribe from a browser or another app adds it on Windows and macOS too, as it already did on Linux.
 - Fixes:
   - Settings shows over an edit's picture. After a clip of the edit's clip bar was opened, the edit's picture drew over Settings and menus until you left the edit.
+  - Twitch starts on the first Play. At some window heights on Windows, its player took the controls under it for something covering it and waited for a second click.
   - A Mac drop keeps every file. A video dragged in together with one its app hands over only once dropped is no longer left out.
 
 ## 0.7.2 — 2026-11-07
