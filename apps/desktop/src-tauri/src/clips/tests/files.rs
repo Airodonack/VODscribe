@@ -407,7 +407,9 @@ fn a_library_set_aside_keeps_its_clip_files_at_the_next_start() {
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
     let file = PathBuf::from(clip.file_path.clone().expect("made"));
-    let paths = app.paths();
+    // Set aside as the app does it, with the library closed: Windows moves
+    // no file a program has open.
+    let (_dir, paths) = app.quit();
     vodscribe_core::db::set_aside(&paths.db()).unwrap();
     let fresh = Db::open_in(&paths).unwrap();
     tidy_at_start(&paths, &fresh).unwrap();

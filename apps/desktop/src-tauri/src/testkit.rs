@@ -68,8 +68,9 @@ pub(crate) struct TestApp {
     files: PathBuf,
     // Kept for the chat queue, which the tests don't run: what's asked of it waits.
     _chats: std::sync::mpsc::Receiver<i64>,
-    // Removed once `drop` has closed what the app has open in it.
-    _dir: TempDir,
+    // Removed once `drop` has closed what the app has open in it; taken
+    // out by `quit`, which keeps it.
+    dir: Option<TempDir>,
 }
 
 impl Drop for TestApp {
@@ -132,7 +133,17 @@ impl TestApp {
         let chats = crate::manage_library(app.handle(), paths, db).unwrap();
         crate::start_queues(app.handle()).unwrap();
         let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
-        TestApp { app, window, ffmpeg, yt_dlp, heard, files, _chats: chats, _dir: dir }
+        TestApp { app, window, ffmpeg, yt_dlp, heard, files, _chats: chats, dir: Some(dir) }
+    }
+
+    /// Quits the app as `drop` does, closing its library, but keeps its
+    /// folder, for a test of what the next start finds there: the folder,
+    /// removed when the returned `TempDir` drops, and the library's paths.
+    pub(crate) fn quit(mut self) -> (TempDir, vodscribe_core::Paths) {
+        let paths = self.paths();
+        let dir = self.dir.take().expect("the app's folder");
+        drop(self);
+        (dir, paths)
     }
 
     pub(crate) fn handle(&self) -> &AppHandle {
@@ -170,7 +181,10 @@ impl TestApp {
             cmd: cmd.into(),
             callback: tauri::ipc::CallbackFn(0),
             error: tauri::ipc::CallbackFn(1),
-            url: "tauri://localhost".parse().unwrap(),
+            // The page's own origin, whose calls need no capability. Windows
+            // serves the page from http://tauri.localhost and takes a
+            // tauri:// call for a remote site's, which the kit grants nothing.
+            url: if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" }.parse().unwrap(),
             body: tauri::ipc::InvokeBody::Json(args),
             headers: Default::default(),
             invoke_key: tauri::test::INVOKE_KEY.into(),

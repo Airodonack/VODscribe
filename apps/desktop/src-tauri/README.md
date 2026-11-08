@@ -4,7 +4,7 @@ The Rust around the page: the commands it calls, the queues that do the work, th
 
 - [`src`](src): the shell's code.
 - `Cargo.toml`: the `vodscribe` crate, with two features never in a release: `e2e`, the tests' way in, and `embed-takeover`, a site's video drawn in the app's player.
-- `build.rs`: declares the app's commands to Tauri, writing `permissions/app.toml`.
+- `build.rs`: declares the app's commands to Tauri, writing `permissions/app.toml`, and embeds the Windows app manifest.
 - `tauri.conf.json`: the app's Tauri settings, with the content security policy and the updater's public key.
 - `tauri.linux.conf.json`, `tauri.windows.conf.json`: each system's bundles, sidecars and resources.
 - [`capabilities`](capabilities): what the main window may call.
