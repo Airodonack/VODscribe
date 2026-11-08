@@ -876,11 +876,18 @@ impl Db {
         Ok(serde_json::to_string(&(title, plays, chapters))?)
     }
 
+    /// What a file of clip `id` made now would be made of (`made_of`): taken
+    /// as its make begins, and recorded with the file (`set_made_of`), so a
+    /// change made meanwhile leaves it not current, to be made again.
+    pub fn made_of_now(&self, id: i64) -> Result<String> {
+        let title: String = self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0))?;
+        self.made_of(id, &title, &self.edit_pieces(id)?)
+    }
+
     /// Records that clip `id`'s file, just made, is of what the clip holds
     /// now (`made_of`).
     pub fn set_made_now(&self, id: i64) -> Result<()> {
-        let title: String = self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0))?;
-        self.set_made_of(id, &self.made_of(id, &title, &self.edit_pieces(id)?)?)
+        self.set_made_of(id, &self.made_of_now(id)?)
     }
 
     /// Records that clip `id`'s file was made of `made_of` (`made_of`).

@@ -56,6 +56,10 @@ pub(crate) struct Cutter {
     /// many such drags it's in: the same clip can be dragged out again while
     /// the first still hands it over.
     out: Mutex<HashMap<i64, usize>>,
+    /// Clips (and edits) a drag out of the window is handing out, each with
+    /// how many such drags: the names it gives may yet be taken by the app
+    /// it's let go on (`DragOut::taken`), so a remake leaves them (`giving`).
+    giving: Arc<Mutex<HashMap<i64, usize>>>,
     /// Pictures of clips to make again (`picture_again`), a listing's at a
     /// time: each clip's id and its file.
     pictures: Jobs<Vec<(i64, String)>>,
@@ -72,6 +76,7 @@ impl Cutter {
             canceled: Arc::default(),
             copies: Arc::default(),
             out: Mutex::default(),
+            giving: Arc::default(),
             pictures: Jobs::new(),
             pictured: Mutex::default(),
         }
@@ -97,6 +102,22 @@ impl Cutter {
     /// and is still being handed over (`dragged_out`).
     pub(crate) fn is_out(&self, id: i64) -> bool {
         self.out.lock().unwrap().contains_key(&id)
+    }
+
+    /// Clips (or an edit) `ids` are being handed out by a drag out of the
+    /// window, until the guard is dropped, as its drag ends.
+    pub(crate) fn giving(&self, ids: &[i64]) -> Giving {
+        let mut giving = self.giving.lock().unwrap();
+        for &id in ids {
+            *giving.entry(id).or_default() += 1;
+        }
+        Giving { giving: self.giving.clone(), ids: ids.to_vec() }
+    }
+
+    /// Whether a drag out of the window is handing out clip (or edit) `id`'s
+    /// file (`giving`).
+    pub(crate) fn is_giving(&self, id: i64) -> bool {
+        self.giving.lock().unwrap().contains_key(&id)
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
@@ -278,6 +299,27 @@ impl Cutter {
     /// The clip or edit being made, if one is, and those waiting, in order.
     pub(crate) fn listed(&self) -> (Option<i64>, Vec<i64>) {
         self.jobs.snapshot()
+    }
+}
+
+/// A drag out of the window handing out clips' (or an edit's) files, as
+/// `Cutter::giving` counts them, till it's dropped.
+pub(crate) struct Giving {
+    giving: Arc<Mutex<HashMap<i64, usize>>>,
+    ids: Vec<i64>,
+}
+
+impl Drop for Giving {
+    fn drop(&mut self) {
+        let mut giving = self.giving.lock().unwrap_or_else(|e| e.into_inner());
+        for id in &self.ids {
+            if let Some(drags) = giving.get_mut(id) {
+                *drags -= 1;
+                if *drags == 0 {
+                    giving.remove(id);
+                }
+            }
+        }
     }
 }
 
@@ -469,22 +511,48 @@ pub(crate) fn let_go_files(paths: &vodscribe_core::Paths, id: i64, file: Option<
     let dir = paths.clip_names(id);
     if let Some(file) = file.filter(|f| own_file(paths, f)) {
         if !handed_out {
-            // Only those that are this clip's file: a library from before
-            // 0.7.3 may give its last deleted clip's id once more, and that
-            // clip may have left names another app took. And only in a real
-            // folder: one that's a link (a library from elsewhere may hold
-            // one) would lead out of the clips folder.
-            if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-                for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-                    if same_file(&entry.path(), Path::new(file)) {
-                        delete_file(entry.path());
-                    }
-                }
-            }
+            delete_names(paths, id, Path::new(file));
         }
         delete_file(file);
     }
     let _ = std::fs::remove_dir(&dir);
+}
+
+/// Deletes the names clip (or edit) `id` handed out its file `file` by
+/// (`handed_out`), which no other app took: the caller's to know. Only those
+/// that are this file: a library from before 0.7.3 may give its last deleted
+/// clip's id once more, and that clip may have left names another app took;
+/// and a make before this one may have. And only in a real folder: one
+/// that's a link (a library from elsewhere may hold one) would lead out of
+/// the clips folder.
+fn delete_names(paths: &vodscribe_core::Paths, id: i64, file: &Path) {
+    let dir = paths.clip_names(id);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if same_file(&entry.path(), file) {
+                delete_file(entry.path());
+            }
+        }
+    }
+}
+
+/// Clip (or edit) `id`'s make `old`, its file before the one just made
+/// (`cut`, `edits::render_edit`), deleted, with the names it was handed out
+/// by unless another app may have one: one took a name of the clip
+/// (`Db::clip_handed_out`: which make's isn't known, so all stay), or a drag
+/// is handing them out now (`Cutter::is_giving`), whose drop may yet take
+/// one. Those left were handed out only to an app that took a copy
+/// (Finder, Explorer), or to none: deleted with the clip they'd stay for
+/// good, as it deletes only its current make's (`let_go_files`). Under the
+/// library's lock, as the drags name them (`hand_out_made`).
+pub(crate) fn let_go_make(app: &AppHandle, db: &Db, id: i64, old: &str) -> Result<()> {
+    let state = app.state::<AppState>();
+    if !db.clip_handed_out(id)? && !state.clips.is_giving(id) {
+        delete_names(&state.paths, id, Path::new(old));
+    }
+    delete_file(old);
+    let _ = std::fs::remove_dir(state.paths.clip_names(id));
+    Ok(())
 }
 
 #[derive(Serialize, Clone)]
@@ -538,17 +606,33 @@ pub(crate) fn encoding_to_keep(app: &AppHandle, ffmpeg: &Path, video: bool) -> R
     })
 }
 
+/// What clip `id`, a snippet, is once a file of it made of `made_of` (taken
+/// as its make began) is recorded: made, unless a change since has moved what
+/// it's made of (`Db::made_of_now`), when it's waiting for the remake that
+/// change queued. Queued again here too, once, so it never waits for nothing.
+pub(crate) fn status_once_made(app: &AppHandle, db: &Db, id: i64, made_of: &str) -> Result<ClipStatus> {
+    if db.made_of_now(id)? == made_of {
+        return Ok(ClipStatus::Ready);
+    }
+    app.state::<AppState>().clips.queue_once(id);
+    Ok(ClipStatus::Waiting)
+}
+
 /// Makes clip `id`'s file, if it's waiting and its VOD plays from a file here
 /// (and isn't being removed: `removing`).
 fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) -> Result<()> {
     let state = app.state::<AppState>();
-    let (clip, vod, source) = {
+    let (clip, vod, source, made_of) = {
         let db = state.db.lock().unwrap();
         let removed = |c: &Clip| removing.lock().unwrap().contains(&c.vod_id);
         let Some(clip) = db.clip(id)?.filter(|c| c.status != ClipStatus::Ready && !removed(c)) else { return Ok(()) };
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(()) };
         let source = crate::footage::find(app, &db, vod.id, clip.start, clip.end);
-        (clip, vod, source)
+        // What it's made of as it's cut, recorded with its file: a change in
+        // the editor as the cut ends (a piece added, which leaves the range
+        // guarded below as it was) then leaves it not current, and the remake
+        // queued with that change makes it again (`edits::render_edit`).
+        (clip, vod, source, db.made_of_now(id)?)
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
@@ -595,12 +679,16 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     let path = out.to_string_lossy();
     let recorded = match &result {
         Ok(()) => {
-            let recorded = db.set_clip_file(id, range.0, range.1, ClipStatus::Ready, Some(&path), None)?;
+            // Changed in the editor meanwhile (as ffmpeg ended): its file is
+            // kept, but it's still waiting for its remake, so nothing hands
+            // out this one as if it were made (`made_in`).
+            let status = status_once_made(app, &db, id, &made_of)?;
+            let recorded = db.set_clip_file(id, range.0, range.1, status, Some(&path), None)?;
             // What it's made of, so a change that leaves that as it was (a
             // chapter, which a cut file hasn't) doesn't make it again; and
             // what with, so a change of codec or quality does (dragout.ts).
             if recorded {
-                db.set_made_now(id)?;
+                db.set_made_of(id, &made_of)?;
                 db.set_made_as(id, Some(encoding))?;
             }
             recorded
@@ -622,7 +710,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         if db.clip_file_handed_out(id)? {
             db.take_back_clip(id)?;
         } else {
-            delete_file(old);
+            let_go_make(app, &db, id, old)?;
         }
     }
     if recorded && result.is_ok() && !vod.audio_only {
@@ -1541,6 +1629,7 @@ pub(crate) async fn drag_clip(
         let handing = handing.clone();
         move || handing.files()
     };
+    let ending = handing.clone();
     let taken = move || handing.taken();
     let out = ids.clone();
     let cutter = app.clone();
@@ -1550,6 +1639,10 @@ pub(crate) async fn drag_clip(
     let (asked, telling) = (out.clone(), cutter.clone());
     let let_go = AtomicBool::new(false);
     let dropped = move |out_now: bool| {
+        // Its end (after `taken`), however it ended.
+        if !out_now {
+            ending.over();
+        }
         if let_go.swap(out_now, std::sync::atomic::Ordering::SeqCst) == out_now {
             return;
         }
@@ -1575,11 +1668,22 @@ pub(crate) struct DragOut {
     app: AppHandle,
     /// Each clip's id, and the name it goes by.
     clips: Vec<(i64, String)>,
+    /// Noted as being handed out (`Cutter::giving`) till the drag is over.
+    giving: Mutex<Option<Giving>>,
 }
 
 impl DragOut {
     pub(crate) fn new(app: AppHandle, clips: Vec<(i64, String)>) -> Self {
-        DragOut { app, clips }
+        let ids: Vec<i64> = clips.iter().map(|(id, _)| *id).collect();
+        let giving = Mutex::new(Some(app.state::<AppState>().clips.giving(&ids)));
+        DragOut { app, clips, giving }
+    }
+
+    /// The drag is over, taken or not: the names it gave are another app's
+    /// if `taken` noted so, else the app's again to delete with the make they
+    /// hold (`let_go_make`).
+    pub(crate) fn over(&self) {
+        self.giving.lock().unwrap().take();
     }
 
     /// Where each clip's file is, as the receiver asks: under the name it

@@ -333,7 +333,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         return Ok(false);
     }
     let state = app.state::<AppState>();
-    let (out, whole, clip) = {
+    let (out, whole, clip, made_of, version) = {
         let db = state.db.lock().unwrap();
         let Some(clip) = db.clip(id)? else { return Ok(true) };
         if clip.status == ClipStatus::Ready {
@@ -345,7 +345,11 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         }
         let ext = file.path.extension().and_then(|e| e.to_str()).context("a clip's file has an extension")?;
         let whole = edits::cut_whole(&db.edit_pieces(id)?);
-        (db.next_clip_file(id, ext)?, whole, clip)
+        // What it's made of, and its revision, as the copy begins: recorded
+        // with the file, so a change in the editor while it's copied leaves
+        // it not current, and the remake queued with that change makes it
+        // again (`edits::render_edit`).
+        (db.next_clip_file(id, ext)?, whole, clip, db.made_of_now(id)?, db.revision(id)?)
     };
     crate::files::writing(&out);
     if let Err(e) = std::fs::copy(&file.path, &out) {
@@ -353,14 +357,25 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         crate::files::delete_file(&out);
         return Ok(false);
     }
+    // (A test holds it here, as a large clip on a slow disk takes a while.)
+    #[cfg(test)]
+    crate::testkit::copied(&out);
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
+    // A snippet changed in the editor meanwhile keeps the file but waits for
+    // its remake, so nothing hands this one out as if it were made
+    // (`clips::status_once_made`). A listed edit renders only when asked,
+    // so it's left made, and not current, as a render of it would be.
+    let status = match db.is_snippet(id)? {
+        Some(true) => crate::clips::status_once_made(app, &db, id, &made_of)?,
+        _ => ClipStatus::Ready,
+    };
     let recorded = if db.clip(id)?.is_none() {
         false
     } else if whole {
-        db.set_clip_file(id, clip.start, clip.end, ClipStatus::Ready, Some(&path), None)?
+        db.set_clip_file(id, clip.start, clip.end, status, Some(&path), None)?
     } else {
-        db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, db.revision(id)?)?;
+        db.set_edit_render(id, status, Some(&path), None, version)?;
         true
     };
     if !recorded {
@@ -368,7 +383,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         crate::files::delete_file(&out);
         return Ok(db.clip(id)?.is_none());
     }
-    db.set_made_now(id)?;
+    db.set_made_of(id, &made_of)?;
     db.set_made_as(id, file.encoding)?;
     if let Some(thumb) = &file.thumb
         && let Err(e) = std::fs::copy(thumb, crate::clips::thumb_path(app, id))

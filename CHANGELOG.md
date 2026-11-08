@@ -16,6 +16,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Undo no longer changes another clip. A clip made right after the newest one was deleted could, on Undo, take back a change made to the deleted clip.
   - Undo past a delete keeps one clip. Undoing a change made before a clip was deleted no longer adds a second clip beside the one brought back.
   - A file another app took stays. On a disk without hard links, such as exFAT, deleting or remaking a clip you had dragged into an editor deleted or replaced the file that editor was using.
+  - Deleted clips leave no copies behind. A clip dragged to Finder or Explorer, then made again and deleted, left a full-size file in the library.
+  - Late changes reach the clip's file. A piece added in the editor just as a clip was made, or while a pasted clip's file was copied, was left out of its file.
   - Clipping again uses the new encoding. C on a stretch whose clip was made before a change in Settings › Encoding makes it again, instead of giving back the old file.
   - Removing a VOD works without H.264. The stretch an edit uses is now kept in your chosen format.
   - A dragged piece reuses its clip. A piece of an edit dragged out of the window was made again, even when its VOD's clip bar had a clip of just that stretch.

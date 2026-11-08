@@ -203,7 +203,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         if db.clip_file_handed_out(id)? {
             db.edit_handed_out(id, true)?;
         } else {
-            crate::files::delete_file(old);
+            crate::clips::let_go_make(app, &db, id, &old)?;
         }
     }
     emit(app, &db, id);
@@ -605,6 +605,10 @@ pub(crate) async fn drag_edit(
     id: i64,
     drag: Option<u64>,
 ) -> CmdResult<bool> {
+    // Being handed out from before its name is made till the drag is over: a
+    // render ending meanwhile leaves the name, which the drop may yet take
+    // (`clips::let_go_make`).
+    let giving = std::sync::Mutex::new(Some(app.state::<AppState>().clips.giving(&[id])));
     let path = handed_out(&app, id)?;
     // Its own video, where no name could be made, is noted as handed out now,
     // as a clip's is (`clips::hand_out_made`): a render ending before the
@@ -619,7 +623,12 @@ pub(crate) async fn drag_edit(
     let taken = move || taken(&app, id, &given);
     let names = vec![crate::clips::Outgoing { name, job: None }];
     let files = move || vec![crate::clips::Made::Ready(path.clone())];
-    crate::clips::drag_file(window, drag, names, files, None, resolve, taken, |_| {}, || {}).await
+    let dropped = move |out_now: bool| {
+        if !out_now {
+            giving.lock().unwrap().take();
+        }
+    };
+    crate::clips::drag_file(window, drag, names, files, None, resolve, taken, dropped, || {}).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

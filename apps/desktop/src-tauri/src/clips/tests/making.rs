@@ -335,6 +335,101 @@ fn a_clip_resized_while_it_is_made_is_made_for_its_new_range() {
     assert!(cut_from(&media, file, 30.0) && near(media.duration, 5.0), "made as {media:?}");
 }
 
+/// A piece added to a clip in the editor while it's being cut stops the cut,
+/// and the clip is made again of both pieces (edits.rs `remake_snippet`:
+/// "its file is made again, as a clip moved in its clip bar is").
+#[test]
+fn a_piece_added_while_its_clip_is_cut_is_in_its_file() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    halfway.reached();
+    let changed = app.ffmpeg.runs().len();
+    app.invoke("add_range_to_edit", json!({ "editId": clip.id, "vodId": vod.id, "start": 30.0, "end": 40.0 })).unwrap();
+    app.ffmpeg.works();
+    halfway.open();
+    let (made, again) = made_again_since(&app, clip.id, changed);
+    assert_eq!(made.status, ClipStatus::Ready, "{:?}", made.error);
+    assert!(again, "not made again after the change");
+}
+
+/// The same as the cut ends, its ffmpeg done and the library not yet taken:
+/// the clip is recorded as made of what was cut, not of what it holds by
+/// then, so the change makes it again (`cut`, as `edits::render_edit` does;
+/// the 0.7.3 races review, finding 1). The window is held open by holding
+/// the library as ffmpeg ends, and the change is `add_range_to_edit`'s own
+/// steps under that lock.
+#[test]
+fn a_piece_added_as_its_clip_s_cut_ends_is_in_its_file() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let held = Gate::new();
+    app.ffmpeg.holds_at(0.5, &held);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    held.reached();
+    let out = app.paths().clip_make(clip.id, 1, "mp4");
+    let changed;
+    {
+        let db = app.db();
+        app.ffmpeg.works();
+        held.open();
+        eventually("the cut's file written", || out.is_file());
+        changed = app.ffmpeg.runs().len();
+        history::change(app.handle(), &db, Doc::Edit(clip.id), "Piece added", |db| {
+            db.add_piece(clip.id, vod.id, (30.0, 40.0), "b", None)
+        })
+        .unwrap();
+    }
+    let (made, again) = made_again_since(&app, clip.id, changed);
+    assert_eq!(made.status, ClipStatus::Ready, "{:?}", made.error);
+    assert!(again, "made and current with its first piece alone: {:?}", made.file_path);
+}
+
+/// The same with another clip ahead of its remake in the queue: till that
+/// remake, the clip waits, and isn't handed out with the file of its first
+/// piece alone; a drag meanwhile waits for the remake and gets it
+/// (`status_once_made`; the 0.7.3 races re-review, finding 1).
+#[test]
+fn a_clip_changed_as_its_cut_ends_is_not_handed_out_before_its_remake() {
+    use crate::testkit::{LetGo, Receiver};
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let first = Gate::new();
+    app.ffmpeg.holds_at(0.5, &first);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    first.reached();
+    // Another clip waits its turn, as when several are made at once.
+    app.add_clip(vod.id, "0:45", "0:50").unwrap();
+    let out = app.paths().clip_make(clip.id, 1, "mp4");
+    let second = Gate::new();
+    let cut;
+    {
+        let db = app.db();
+        // The next run (the other clip's) holds; this one goes on.
+        app.ffmpeg.holds_at(0.5, &second);
+        first.open();
+        eventually("the cut's file written", || out.is_file());
+        cut = Media::read(&out);
+        history::change(app.handle(), &db, Doc::Edit(clip.id), "Piece added", |db| {
+            db.add_piece(clip.id, vod.id, (30.0, 40.0), "b", None)
+        })
+        .unwrap();
+    }
+    // The other clip is being cut; the remake waits behind it.
+    second.reached();
+    let now = app.clip(clip.id).unwrap();
+    app.drag_out(&[clip.id]).unwrap();
+    let drag = app.drags().last();
+    drag.let_go(LetGo::On(Receiver::taking_files("Kdenlive")));
+    second.open();
+    app.drag_ended();
+    assert_ne!(now.status, ClipStatus::Ready, "says made while its remake waits, with {:?}", now.file_path);
+    let given = drag.given().first().and_then(|g| Media::read(g));
+    assert!(given.is_some() && given != cut, "a drag in that window was given its first piece alone: {given:?}");
+}
+
 /// A clip of an edit is titled with what's said at its start, not later in
 /// it (app clips.rs:574, `add_edit_clip`: "titled with what's said at its
 /// start").

@@ -199,6 +199,14 @@ impl Gate {
         self.0.1.notify_all();
     }
 
+    /// Waits here till the test opens the gate, counted as come to it
+    /// (`reached`): for a seam in the app's own code, where no fake runs.
+    pub fn wait(&self) {
+        self.arrive();
+        let (state, cv) = &*self.0;
+        drop(cv.wait_while(state.lock().unwrap(), |s| !s.open).unwrap());
+    }
+
     /// Waits till a run has come to the gate (up to five seconds; panics if
     /// none does): the moment the test acts in.
     pub fn reached(&self) {
