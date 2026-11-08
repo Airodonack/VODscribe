@@ -1212,17 +1212,11 @@ impl Db {
 
     /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) that
     /// plays just `start`..`end` seconds of it, its end cut at the VOD's: one
-    /// piece as it came, nothing struck, as `add_clip` makes it. The app gives
-    /// it for a piece of an edit carried out of the window, whose file has to
-    /// be just that piece.
+    /// piece as it came, nothing struck, as `add_clip` makes it (`Clip::plain`).
+    /// The app gives it for a stretch dragged from a VOD, the one shown or a
+    /// piece of an edit, whose file has to be just that stretch of its footage.
     pub fn vod_clip_playing(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
-        for clip in self.vod_clips_at(vod_id, start, end)? {
-            let pieces = self.edit_pieces(clip.id)?;
-            if cut_whole(&pieces) && pieces[0].vod_id == vod_id {
-                return Ok(Some(clip));
-            }
-        }
-        Ok(None)
+        Ok(self.vod_clips_at(vod_id, start, end)?.into_iter().find(|c| c.plain))
     }
 
     /// The clips on VOD `vod_id`'s clip bar listed at `start`..`end` seconds of
@@ -2085,6 +2079,17 @@ pub(crate) mod tests {
         assert_eq!((playing(10.0, 20.0), playing(30.0, 40.0)), (None, None), "a changed clip");
         let whole = db.add_clip(vod, 30.0, 40.0, "d", true).unwrap().id;
         assert_eq!(playing(30.0, 40.0), Some(whole));
+        // The page tells them apart as listed (clips.svelte.ts `find`).
+        let plain: Vec<_> = db.clips(vod).unwrap().iter().map(|c| (c.id, c.plain)).collect();
+        assert_eq!(plain, [(struck, false), (added, false), (whole, true)]);
+        // A line struck and put back is just the stretch again; a group isn't.
+        db.set_piece_struck(piece, &[]).unwrap();
+        assert_eq!(playing(10.0, 20.0), Some(struck), "struck and put back");
+        let grouped = db.add_clip(vod, 60.0, 70.0, "e", true).unwrap().id;
+        let into = db.add_clip(vod, 80.0, 90.0, "f", true).unwrap().id;
+        db.add_group(into, grouped, Some(0)).unwrap();
+        db.remove_piece(db.piece_rows(into).unwrap().last().unwrap().id).unwrap();
+        assert_eq!(db.clip(into).unwrap().map(|c| (c.start, c.plain)), Some((60.0, false)), "in a group");
     }
 
     #[test]

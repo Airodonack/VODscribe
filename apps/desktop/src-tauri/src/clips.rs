@@ -955,13 +955,14 @@ pub(crate) async fn add_clip(
     Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
-/// Makes a clip of a piece of an edit carried out of it (dragout.ts
-/// `carry`): `start`..`end` seconds of VOD `vod_id`, in that VOD's clip bar
-/// unless `shown` is false. As `add_clip`, but the clip made already that it
-/// gives is one that plays just that stretch (`Same::Plays`): the piece is
-/// what goes where it's dropped, and a clip listed at its stretch may have
-/// been changed in the editor. Its own command, not a flag of `add_clip`'s,
-/// as the two callers mean different things by the same stretch.
+/// Makes a clip of a stretch dragged from a VOD (dragout.ts `carry`): a
+/// stretch of the VOD shown, or a piece of an edit, `start`..`end` seconds
+/// of VOD `vod_id`, in that VOD's clip bar unless `shown` is false. As
+/// `add_clip`, but the clip made already that it gives is one that plays
+/// just that stretch (`Same::Plays`): a drag from a VOD is its footage, and
+/// a clip listed at the stretch may have been changed in the editor. Its own
+/// command, not a flag of `add_clip`'s, as C and a drag mean different
+/// things by the same stretch.
 #[tauri::command]
 pub(crate) async fn add_piece_clip(
     app: AppHandle,
@@ -982,14 +983,23 @@ pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64
     make_clips(&app, vod_id, ranges, true, Same::Listed)
 }
 
+/// Makes each of `ranges` of VOD `vod_id` a clip in its clip bar, as
+/// `add_clips` does, of stretches dragged from the VOD and dropped on its
+/// clip bar (several picked): each gives a clip made already only if it
+/// plays just that stretch, as `add_piece_clip`.
+#[tauri::command]
+pub(crate) async fn add_piece_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    make_clips(&app, vod_id, ranges, true, Same::Plays)
+}
+
 /// Which clip made already a stretch asked for again gives (`make_clips`).
 #[derive(Clone, Copy)]
 enum Same {
     /// The one its clip bar lists at that stretch, as the page finds it:
-    /// C, and a stretch of the VOD shown dragged out (`Db::vod_clip_of`).
+    /// C (`Db::vod_clip_of`).
     Listed,
-    /// One that plays just that stretch: a piece of an edit carried out
-    /// (`Db::vod_clip_playing`).
+    /// One that plays just that stretch: a stretch dragged from a VOD, the
+    /// one shown or a piece of an edit (`Db::vod_clip_playing`).
     Plays,
 }
 

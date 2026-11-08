@@ -31,7 +31,7 @@ const fakes = {
   "/bulk.ts": {
     ...both,
     "./actions": `export const removeEntries = async () => {};`,
-    "./dragout": `export const carrySet = () => {}; export const exportStretch = async () => null;
+    "./dragout": `export const carrySet = () => {}; export const pullStretch = async () => null;
       export const exportStretches = async () => {}; export const stretchSaid = () => "";`,
     "./media": `export const inEdit = () => undefined;`,
     "./playerKeys": `export const isEscape = () => false;`,

@@ -395,6 +395,10 @@ export interface Clip {
   /** What its file was made with; null if it isn't made, or was made
    *  before this was recorded (crates/core `Clip::encoding`). */
   encoding?: ClipEncoding | null;
+  /** On a VOD's clip bar, whether it still plays just its stretch of the VOD,
+   *  unchanged in the editor: what a drag of that stretch may give (crates/core
+   *  `Clip::plain`). */
+  plain?: boolean;
 }
 
 /** A video made of pieces of VODs (crates/core `edits::Edit`). */
@@ -840,10 +844,13 @@ export const api = {
   cancelMark: (id: number) => marking(invoke<void>("cancel_mark", { id })),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_clip", { vodId, start, end, shown }),
-  /** A clip of a piece of an edit carried out of it: one made already only if
-   *  it plays just that stretch (app clips.rs `add_piece_clip`). */
+  /** A clip of a stretch dragged from a VOD (the one shown, or a piece of an
+   *  edit): one made already only if it plays just that stretch (app clips.rs
+   *  `add_piece_clip`). */
   addPieceClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_piece_clip", { vodId, start, end, shown }),
+  /** `addClips` of stretches dragged from VOD `vodId` onto its clip bar, each as `addPieceClip` makes one. */
+  addPieceClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_piece_clips", { vodId, ranges }),
   /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change. */
   addClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_clips", { vodId, ranges }),
   /** Puts clip `id` (one only dragged out) in the clip bar. */
