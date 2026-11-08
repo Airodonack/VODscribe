@@ -320,7 +320,6 @@ fn a_waiting_clip_deleted_is_never_made() {
 /// shows what's being made."). Seen in the queue the list of jobs is made
 /// from (`Cutter::listed`), which leaves out clips that are gone.
 #[test]
-#[ignore = "disagreement: delete_clips only stops each clip, leaving a waiting one in the queue"]
 fn several_waiting_clips_deleted_at_once_leave_the_queue() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
@@ -333,6 +332,27 @@ fn several_waiting_clips_deleted_at_once_leave_the_queue() {
     app.invoke("delete_clips", json!({ "ids": [second.id, third.id] })).unwrap();
     let next = app.add_clip(vod.id, "0:05", "0:08").unwrap();
     assert_eq!(app.state().clips.listed(), (Some(first.id), vec![next.id]), "deleted clips still waiting");
+    halfway.open();
+    all_made(&app, vod.id);
+}
+
+/// Several waiting clips cut at once (Ctrl+X) are deleted, there being no
+/// file to keep, and leave the queue as deleted ones do (clips.rs
+/// `cut_clips`: "one not made yet is deleted, as there's nothing to keep";
+/// the spec above).
+#[test]
+fn several_waiting_clips_cut_at_once_leave_the_queue() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let first = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    halfway.reached();
+    let second = app.add_clip(vod.id, "0:30", "0:40").unwrap();
+    let third = app.add_clip(vod.id, "0:50", "0:55").unwrap();
+    ctrl_x(&app, &[second.id, third.id]);
+    assert!(app.clip(second.id).is_none() && app.clip(third.id).is_none(), "kept, with nothing made");
+    assert_eq!(app.state().clips.listed(), (Some(first.id), vec![]), "cut clips still waiting");
     halfway.open();
     all_made(&app, vod.id);
 }

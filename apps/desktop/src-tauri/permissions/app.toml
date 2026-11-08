@@ -37,6 +37,7 @@ permissions = [
   "allow-captions",
   "allow-list-clips",
   "allow-add-clip",
+  "allow-add-piece-clip",
   "allow-add-clips",
   "allow-set-clip-range",
   "allow-rename-clip",

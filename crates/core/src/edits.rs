@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{ClipStatus, Db, MARK_DETAIL_COLUMNS, MarkDetail, mark_detail, now};
+use crate::db::{CLIP_COLUMNS, CLIP_JOIN, ClipStatus, Db, MARK_DETAIL_COLUMNS, MarkDetail, mark_detail, now};
 use crate::footage::Source;
 use crate::render::Piece;
 use crate::settings::ClipEncoding;
@@ -1193,6 +1193,48 @@ impl Db {
         self.bar_clip_of(edit, &parts)
     }
 
+    /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) listed
+    /// at exactly `start`..`end` seconds of it, its end cut at the VOD's
+    /// (`vod_span`), if there's one: its first piece's stretch, whatever the
+    /// editor changed after it (a line struck, a piece added), as the page
+    /// finds it (clips.svelte.ts `find`). The app gives it (C on its
+    /// stretch), as `edit_clip_of` for an edit.
+    pub fn vod_clip_of(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
+        Ok(self.vod_clips_at(vod_id, start, end)?.into_iter().next())
+    }
+
+    /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) that
+    /// plays just `start`..`end` seconds of it, its end cut at the VOD's: one
+    /// piece as it came, nothing struck, as `add_clip` makes it. The app gives
+    /// it for a piece of an edit carried out of the window, whose file has to
+    /// be just that piece.
+    pub fn vod_clip_playing(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
+        for clip in self.vod_clips_at(vod_id, start, end)? {
+            let pieces = self.edit_pieces(clip.id)?;
+            if cut_whole(&pieces) && pieces[0].vod_id == vod_id {
+                return Ok(Some(clip));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The clips on VOD `vod_id`'s clip bar listed at `start`..`end` seconds of
+    /// it (`vod_clip_of`), in the bar's order: one query.
+    fn vod_clips_at(&self, vod_id: i64, start: f64, end: f64) -> Result<Vec<crate::db::Clip>> {
+        let (start, end) = self.vod_span(vod_id, start, end)?;
+        let sql = format!(
+            "SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN}
+             WHERE c.bar_of = (SELECT id FROM clips WHERE whole_of = ?1)
+               AND abs(i.start - ?2) < ?4 AND abs(i.end - ?3) < ?4
+             ORDER BY c.bar_position, c.id"
+        );
+        let (start, end, near) =
+            (Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, Flicks::from_seconds(0.001).0);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let clips = stmt.query_map(params![vod_id, start, end, near], |r| crate::db::clip_from_row(r, &self.files))?;
+        Ok(clips.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// The clip on edit `edit`'s clip bar that plays just what `parts` do.
     fn bar_clip_of(&self, edit: i64, parts: &[StretchPiece]) -> Result<Option<crate::db::Clip>> {
         let near = |a: f64, b: f64| (a - b).abs() < 0.001;
@@ -2010,6 +2052,32 @@ pub(crate) mod tests {
         assert_eq!(db.rate(vod).unwrap(), Some(Rate::new(30000, 1001)));
         db.delete_vod(vod).unwrap();
         assert_eq!(db.vod_clip(vod).unwrap(), None, "goes with the VOD");
+    }
+
+    /// The clip of a VOD's stretch is the one its clip bar lists there (its
+    /// first piece's stretch), whatever the editor changed in it: a line
+    /// struck, or a piece added. The page finds it so (clips.svelte.ts
+    /// `find`), and the app gives it (plans/clips-pilot.md, Decided 1; the
+    /// clips-fixes review, M1).
+    #[test]
+    fn a_vod_s_clip_of_a_stretch_is_the_one_listed_there_struck_or_added_to() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let struck = db.add_clip(vod, 10.0, 20.0, "a", true).unwrap().id;
+        let piece = db.piece_rows(struck).unwrap()[0].id;
+        db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
+        let added = db.add_clip(vod, 30.0, 40.0, "b", true).unwrap().id;
+        db.add_piece(added, vod, (50.0, 52.0), "c", None).unwrap();
+        let of = |start, end| db.vod_clip_of(vod, start, end).unwrap().map(|c| c.id);
+        assert_eq!(of(10.0, 20.0), Some(struck), "a line struck");
+        assert_eq!(of(30.0, 40.0), Some(added), "a piece added");
+        assert_eq!(of(10.0, 19.0), None, "a stretch of its own");
+        assert_eq!(of(50.0, 52.0), None, "a piece after the first");
+        // What plays just the stretch: neither of those, but one as it came.
+        let playing = |start, end| db.vod_clip_playing(vod, start, end).unwrap().map(|c| c.id);
+        assert_eq!((playing(10.0, 20.0), playing(30.0, 40.0)), (None, None), "a changed clip");
+        let whole = db.add_clip(vod, 30.0, 40.0, "d", true).unwrap().id;
+        assert_eq!(playing(30.0, 40.0), Some(whole));
     }
 
     #[test]

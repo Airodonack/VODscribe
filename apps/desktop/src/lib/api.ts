@@ -838,6 +838,10 @@ export const api = {
   cancelMark: (id: number) => marking(invoke<void>("cancel_mark", { id })),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_clip", { vodId, start, end, shown }),
+  /** A clip of a piece of an edit carried out of it: one made already only if
+   *  it plays just that stretch (app clips.rs `add_piece_clip`). */
+  addPieceClip: (vodId: number, start: number, end: number, shown = true) =>
+    invoke<Clip>("add_piece_clip", { vodId, start, end, shown }),
   /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change. */
   addClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_clips", { vodId, ranges }),
   /** Puts clip `id` (one only dragged out) in the clip bar. */

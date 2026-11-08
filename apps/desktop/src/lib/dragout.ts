@@ -870,10 +870,11 @@ export function carry({
   highlight,
   home,
 }: Carry): Promise<void> {
-  // A stretch of the VOD shown is made a clip through its clip bar; another's (an edit's piece) directly.
+  // A stretch of the VOD shown is made a clip through its clip bar; another's
+  // (an edit's piece) directly, as a clip that plays just the piece.
   const make = async (shown: boolean): Promise<Clip | null> => {
     if (vod.id === clips.vodId) return exportStretch(start, end, shown);
-    return api.addClip(vod.id, start, end, shown).catch((e) => {
+    return api.addPieceClip(vod.id, start, end, shown).catch((e) => {
       clips.error = String(e);
       return null;
     });

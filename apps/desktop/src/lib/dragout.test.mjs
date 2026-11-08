@@ -151,6 +151,7 @@ const fake = {
     /** @param {number} id */
     keepClip: async (id) => void fake.kept.push(id),
     addClip: async () => null,
+    addPieceClip: async () => null,
     setClipRange: async () => null,
     listVods: async () => [],
     listClips: async () => [],

@@ -6,8 +6,6 @@
 //! "A span of any length is a clip" (core clips.rs:42; CHANGELOG.md 0.7.0,
 //! "Clips can be any length.") is `every_span_is_checked_the_same_way` in
 //! edits.rs, which checks a four-hour span, so it isn't said again here.
-//! The folder per channel `file_path` returns is untested until the owner
-//! says whether it stays (the pilot plan, disagreement 3).
 
 use super::*;
 use crate::testkit::media::Video;
@@ -90,17 +88,18 @@ fn a_written_title_of_only_spaces_is_none() {
 
 // ----------------------------------------------------------------- names
 
-/// `file_path`'s name only.
+/// `file_name` of a VOD with no date.
 fn named(title: &str, (start, end): (f64, f64)) -> String {
-    file_path(None, None, title, (start, end), false, ClipFormat::Mp4).1
+    file_name(None, title, (start, end), false, ClipFormat::Mp4)
 }
 
 /// "The name is the stream's date (ISO 8601, when the site says), the VOD's
 /// title made safe, and the clip's start and end to the millisecond:
-/// `2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`" (core clips.rs:76).
+/// `2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`" (core clips.rs,
+/// `file_name`).
 #[test]
 fn a_clip_s_name_is_its_vod_s_date_title_and_range_to_the_millisecond() {
-    let name = |published, title, range| file_path(None, published, title, range, false, ClipFormat::Mp4).1;
+    let name = |published, title, range| file_name(published, title, range, false, ClipFormat::Mp4);
     assert_eq!(
         name(Some("2026-10-15"), "Title", (3723.125, 3750.5)),
         "2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4"
@@ -108,11 +107,11 @@ fn a_clip_s_name_is_its_vod_s_date_title_and_range_to_the_millisecond() {
     assert_eq!(name(None, "Title", (3723.125, 3750.5)), "Title 01h02m03.125s-01h02m30.500s.mp4", "no date, none named");
 }
 
-/// "ISO 8601, when the site says" (core clips.rs:76); the check's comment at
-/// :93: "Only a date as ISO 8601 has it (YYYY-MM-DD), as yt-dlp gives it."
+/// "ISO 8601, when the site says" (core clips.rs, `file_name`), and the
+/// check's comment there: "Only a date as ISO 8601 has it (YYYY-MM-DD), as yt-dlp gives it."
 #[test]
 fn a_date_not_written_as_iso_8601_is_left_out_of_the_name() {
-    let name = |published| file_path(None, Some(published), "x", (0.0, 1.0), false, ClipFormat::Mp4).1;
+    let name = |published| file_name(Some(published), "x", (0.0, 1.0), false, ClipFormat::Mp4);
     assert_eq!(name("2026-10-15"), "2026-10-15 x 00h00m00.000s-00h00m01.000s.mp4");
     for not_iso in ["20261015", "2026/10/15", "Oct 15, 2026", "2026-10-1", "2026-1O-15", "2026-10-155", ""] {
         assert_eq!(name(not_iso), "x 00h00m00.000s-00h00m01.000s.mp4", "{not_iso:?}");
@@ -213,7 +212,7 @@ fn a_clip_with_a_picture_is_mp4_or_mov_and_sound_alone_m4a_or_wav() {
         (true, ClipFormat::Mp4, ".m4a"),
         (true, ClipFormat::Mov, ".wav"),
     ] {
-        assert!(file_path(None, None, "x", (0.0, 1.0), audio, format).1.ends_with(ext), "{ext}");
+        assert!(file_name(None, "x", (0.0, 1.0), audio, format).ends_with(ext), "{ext}");
     }
 }
 

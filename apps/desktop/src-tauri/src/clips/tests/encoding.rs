@@ -387,3 +387,44 @@ fn a_copy_pasted_from_a_clip_made_before_codecs_were_recorded_reads_as_its_forma
     clips_are(&app, H264, HIGH);
     assert!(!made_as_wanted(&app, &pasted), "an MP4 from then taken as H.264 High");
 }
+
+/// C on a stretch whose clip was made in an encoding other than the one
+/// Settings › Encoding has now makes it again as clips are made now; one made
+/// as wanted is given as it is (plans/clips-pilot.md, Decided 2: "C on a
+/// stretch whose clip was made in an older encoding makes it again"; core
+/// clips.rs `made_as`).
+#[test]
+fn clipping_a_stretch_whose_clip_was_made_in_an_older_encoding_makes_it_again() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let h264 = PathBuf::from(clip.file_path.clone().unwrap());
+    clips_are(&app, H265, STANDARD);
+    let asked = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!((asked.id, asked.status), (clip.id, ClipStatus::Waiting), "given as it was");
+    let again = app.made(clip.id);
+    assert_eq!(picture_in(&app, &again), ("hevc".into(), "mp4".into()));
+    assert_eq!(again.encoding, Some(made_with(H265, STANDARD)));
+    assert!(!h264.exists(), "the H.264 file is left");
+    let given = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!((given.status, given.file_path), (ClipStatus::Ready, again.file_path), "made again as wanted");
+}
+
+/// The same on an edit's clip bar: C on a stretch whose clip was made in an
+/// older encoding makes it again (Decided 2, as above).
+#[test]
+fn clipping_an_edit_s_stretch_whose_clip_was_made_in_an_older_encoding_makes_it_again() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = edit_bar_clip(&app, vod.id);
+    let edit = match clip.bar {
+        Some(ClipBar::Edit { id }) => id,
+        bar => panic!("on {bar:?}"),
+    };
+    clips_are(&app, PRORES, HIGH);
+    let asked = app.invoke("add_edit_clip", json!({ "editId": edit, "from": 5.0, "to": 9.0 })).unwrap();
+    assert_eq!((asked["id"].as_i64(), asked["status"].as_str()), (Some(clip.id), Some("waiting")));
+    let again = app.made(clip.id);
+    assert_eq!(picture_in(&app, &again), ("prores".into(), "mov".into()));
+    assert_eq!(again.encoding, Some(made_with(PRORES, HIGH)));
+}

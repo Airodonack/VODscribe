@@ -391,9 +391,8 @@ fn a_clip_of_an_edit_s_bar_is_still_made_when_its_vod_is_removed() {
 /// (0.7.1: "A list shows what's being made.": "the clips and edits being
 /// made"; jobs.mjs: "show there with their names, the first being made,
 /// the other two waiting"). The plan's disagreement 6: `set_clip_range`
-/// (app clips.rs:716) queues it again with `queue`, not `queue_once`.
+/// (app clips.rs:716) queued it again with `queue`, not `queue_once`.
 #[test]
-#[ignore = "disagreement: set_clip_range queues a waiting clip a second time, so once made it's still listed as waiting"]
 fn a_clip_moved_while_it_waits_leaves_the_list_of_jobs_once_it_is_made() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);

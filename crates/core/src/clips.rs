@@ -74,22 +74,17 @@ fn file_stamp(seconds: f64) -> String {
 }
 
 /// The name a clip goes by where it's handed out (dragged to another app,
-/// copied, shown in its folder), and a folder for it: the channel's (none for
-/// files on this computer). The name is the stream's date (ISO 8601, when the
-/// site says), the VOD's title made safe, and the clip's start and end to the
-/// millisecond: `2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`. The clip's
-/// own file is named by its id (`Paths::clip_file`); its only caller
-/// (`drag_name`) uses the name and leaves the folder, so no folder per channel
-/// is made.
-pub fn file_path(
-    channel: Option<&str>,
+/// copied, shown in its folder): the stream's date (ISO 8601, when the site
+/// says), the VOD's title made safe, and the clip's start and end to the
+/// millisecond: `2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`. The
+/// clip's own file is named by its id (`Paths::clip_file`).
+pub fn file_name(
     published: Option<&str>,
     vod_title: &str,
     (start, end): (f64, f64),
     audio_only: bool,
     format: ClipFormat,
-) -> (Option<String>, String) {
-    let folder = channel.map(safe_name).filter(|c| c != "Clip");
+) -> String {
     // Only a date as ISO 8601 has it (YYYY-MM-DD), as yt-dlp gives it.
     let date = published.filter(|d| {
         d.len() == 10
@@ -97,11 +92,10 @@ pub fn file_path(
     });
     let ext = extension(audio_only, format);
     let range = format!("{}-{}", file_stamp(start), file_stamp(end));
-    let name = match date {
+    match date {
         Some(date) => format!("{date} {} {range}.{ext}", safe_name(vod_title)),
         None => format!("{} {range}.{ext}", safe_name(vod_title)),
-    };
-    (folder, name)
+    }
 }
 
 /// The file extension of a clip (or rendered edit) in `format`: sound alone is

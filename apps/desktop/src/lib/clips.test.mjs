@@ -10,7 +10,7 @@ import { test } from "node:test";
 const fakes = {
   "./api": `export const api = globalThis.fake.api; export const events = globalThis.fake.events;
     export const docKey = (doc) => doc.kind + ":" + doc.id;`,
-  "./permission": `export const hideNote = () => {}; export const noteHidden = () => true;`,
+  "./permission": `export const hideNote = () => {}; export const noteHidden = () => globalThis.fake.noteHidden;`,
   "./selection.svelte": `export const snippets = { items: [], set() {} };`,
   "./toasts.svelte": `export const toast = { error: () => 0, drop() {} };`,
 };
@@ -47,8 +47,12 @@ const answer = (name, value) => held.get(name)?.(value);
 const on = (name) => (/** @type {(value: any) => void} */ cb) => ((heard[name] = cb), Promise.resolve(() => {}));
 // The page's window: only listened to.
 Object.assign(globalThis, { window: { addEventListener() {} } });
+/** What the page asked of `add_clip`, in order. @type {unknown[][]} */
+const added = [];
 globalThis.fake = {
+  noteHidden: true,
   api: {
+    addClip: (/** @type {unknown[]} */ ...asked) => (added.push(asked), later("addClip")()),
     forgetGoneClips: async () => {},
     listClips: later("listClips"),
     renameClip: later("renameClip"),
@@ -109,4 +113,32 @@ test("an answer with no news since is shown", async () => {
     clips.list.map((c) => c.title),
     ["Renamed"],
   );
+});
+
+test("C on the stretch a changed clip is listed at asks the app for that clip, with no note", async () => {
+  // A site's VOD, the note on downloading not hidden.
+  globalThis.fake.noteHidden = false;
+  clips.open(2, true);
+  await settle();
+  // Listed as the app lists a clip changed in the editor: at its first piece's
+  // stretch (app clips.rs `make_clips` gives that clip: Decided 1; the
+  // clips-fixes review, M1).
+  const changed = { ...clip(7, "ready"), vod_id: 2, start: 10, end: 20 };
+  answer("listClips", [changed]);
+  await settle();
+  added.length = 0;
+  const made = clips.make(10, 20);
+  await settle();
+  assert.equal(clips.asking, null, "the note asked");
+  assert.deepEqual(added, [[2, 10, 20, true]]);
+  answer("addClip", changed);
+  assert.equal((await made)?.id, 7);
+  assert.deepEqual(pills(), [[7, "ready"]]);
+  // A stretch with no clip asks the note first.
+  const fresh = clips.make(30, 40);
+  await settle();
+  assert.notEqual(clips.asking, null, "no note asked for a new clip");
+  clips.answer(false);
+  assert.equal(await fresh, null);
+  globalThis.fake.noteHidden = true;
 });

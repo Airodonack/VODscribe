@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-piece-clip"
+description = "Enables the add_piece_clip command without any pre-configured scope."
+commands.allow = ["add_piece_clip"]
+
+[[permission]]
+identifier = "deny-add-piece-clip"
+description = "Denies the add_piece_clip command without any pre-configured scope."
+commands.deny = ["add_piece_clip"]

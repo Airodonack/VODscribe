@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
-use vodscribe_core::settings::Settings;
+use vodscribe_core::settings::{ClipEncoding, Settings};
 use vodscribe_core::{clips, tools};
 
 use crate::AppHandle;
@@ -56,6 +56,12 @@ pub(crate) struct Cutter {
     /// many such drags it's in: the same clip can be dragged out again while
     /// the first still hands it over.
     out: Mutex<HashMap<i64, usize>>,
+    /// Pictures of clips to make again (`picture_again`), a listing's at a
+    /// time: each clip's id and its file.
+    pictures: Jobs<Vec<(i64, String)>>,
+    /// The clips' files whose picture has been tried again since the app
+    /// started (`picture_again`): one that failed isn't tried at each listing.
+    pictured: Mutex<HashSet<String>>,
 }
 
 impl Cutter {
@@ -66,6 +72,8 @@ impl Cutter {
             canceled: Arc::default(),
             copies: Arc::default(),
             out: Mutex::default(),
+            pictures: Jobs::new(),
+            pictured: Mutex::default(),
         }
     }
 
@@ -120,6 +128,8 @@ impl Cutter {
                 }
             }
         }
+        let picturing = app.clone();
+        self.pictures.run("clip pictures", move |clips, stop| make_pictures(&picturing, clips, stop))?;
         let settling = app.clone();
         self.jobs.run_ended(
             "clips",
@@ -157,10 +167,17 @@ impl Cutter {
         self.jobs.push(id);
     }
 
-    /// Ends the queue for good (`Jobs::close`).
+    /// Whether no picture is being made again, or waits to be (`picture_again`).
+    #[cfg(test)]
+    pub(crate) fn pictures_idle(&self) -> bool {
+        self.pictures.snapshot() == (None, Vec::new())
+    }
+
+    /// Ends the queues for good (`Jobs::close`).
     #[cfg(test)]
     pub(crate) fn close(&self) {
         self.jobs.close();
+        self.pictures.close();
     }
 
     /// Clip `id`, just pasted, is to be given a copy of `file` when its turn
@@ -268,12 +285,7 @@ impl Cutter {
 /// piece as it came is cut; one changed in the editor (more pieces, lines
 /// struck, groups), or a listed edit, is rendered as an edit is.
 fn make(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) {
-    let snippet = {
-        let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
-        db.is_snippet(id)
-            .map(|s| s.map(|s| s && db.edit_pieces(id).is_ok_and(|p| vodscribe_core::edits::cut_whole(&p))))
-    };
+    let snippet = is_cut(&app.state::<AppState>().db.lock().unwrap(), id);
     match snippet {
         Ok(Some(false)) => {
             if let Err(e) = crate::edits::render_edit(app, id, stop) {
@@ -289,6 +301,12 @@ fn make(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i6
         eprintln!("clip {id}: {e:#}");
         fail(app, id, &e);
     }
+}
+
+/// Whether clip or edit `id` is a snippet of one piece as it came, which is
+/// cut (`cut`), not rendered; None if it's gone.
+fn is_cut(db: &Db, id: i64) -> Result<Option<bool>> {
+    db.is_snippet(id).map(|s| s.map(|s| s && db.edit_pieces(id).is_ok_and(|p| vodscribe_core::edits::cut_whole(&p))))
 }
 
 /// What a clip or edit canceled from the list of jobs shows, unless it was
@@ -577,6 +595,10 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         drop(db);
         if let Err(e) = clips::thumbnail(&ffmpeg, &out, &thumb_path(app, id)) {
             eprintln!("clip {id}: its picture: {e:#}");
+            // None rather than one of what it was before: its drag shows the
+            // app's icon, and its picture is tried again when it's next
+            // shown (`picture_again`).
+            let _ = std::fs::remove_file(thumb_path(app, id));
         }
         emit(app, &state.db.lock().unwrap(), id);
     } else if recorded {
@@ -607,7 +629,7 @@ pub(crate) fn bar_doc(clip: &Clip) -> Doc {
 /// The clips on edit `id`'s clip bar, in their order.
 #[tauri::command]
 pub(crate) async fn edit_clips(app: AppHandle, id: i64) -> CmdResult<Vec<Clip>> {
-    crate::with_reads(app, move |db| db.bar_clips(id)).await
+    listed(app, move |db| db.bar_clips(id)).await
 }
 
 /// Makes `from`..`to` seconds of edit `edit_id`'s timeline a clip, titled
@@ -636,13 +658,15 @@ pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f6
 /// What `add_edit_clip` and `add_edit_clips` do: a clip of each range, each
 /// titled with what's said at its start, as one change (all of them, or none
 /// if one can't be made); then each is queued to be made. A range with a
-/// clip already (C pressed twice) gives that one, made again only if it failed.
+/// clip already (C pressed twice) gives that one, made again only if it
+/// failed or was made otherwise than clips are made now (`again`).
 fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
+    let now = Settings::load(&state.paths.settings()).clip_encoding();
     let (made, queued) = {
         let db = state.db.lock().unwrap();
         let doc = Doc::Edit(edit_id);
-        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown).map_err(err)?;
+        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown, now).map_err(err)?;
         history::changed(app, &db, doc);
         made
     };
@@ -658,6 +682,7 @@ fn make_edit_clips_in(
     edit_id: i64,
     ranges: Vec<(f64, f64)>,
     shown: bool,
+    now: ClipEncoding,
 ) -> Result<(Vec<Clip>, Vec<i64>)> {
     let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
     history.change(db, Doc::Edit(edit_id), label, |db| {
@@ -668,8 +693,7 @@ fn make_edit_clips_in(
             let mut clip = db.add_edit_clip(edit_id, from, to, &title, shown)?;
             match had {
                 None => queued.push(clip.id),
-                Some(had) if had.status == ClipStatus::Error => {
-                    db.set_edit_render(clip.id, ClipStatus::Waiting, None, None, None)?;
+                Some(had) if again(db, &had, now)? => {
                     clip = db.clip(clip.id)?.context("That clip is gone.")?;
                     queued.push(clip.id);
                 }
@@ -681,9 +705,117 @@ fn make_edit_clips_in(
     })
 }
 
+/// Whether clip `had`, asked for again (C on its stretch), is made again:
+/// if it failed, or if it was made otherwise than clips are made now (`now`,
+/// `clips::made_as`); it's then waiting to be. One waiting or being made, or
+/// made as wanted, is given as it is.
+fn again(db: &Db, had: &Clip, now: ClipEncoding) -> Result<bool> {
+    let older = |file: &str| !clips::made_as(Path::new(file), had.encoding, now);
+    let again = match had.status {
+        ClipStatus::Error => true,
+        ClipStatus::Ready => had.file_path.as_deref().is_some_and(older),
+        ClipStatus::Waiting | ClipStatus::Cutting => false,
+    };
+    if again {
+        db.set_edit_render(had.id, ClipStatus::Waiting, None, None, None)?;
+    }
+    Ok(again)
+}
+
+/// VOD `vod_id`'s clips, on its clip bar or only dragged out, in their order.
 #[tauri::command]
 pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Clip>> {
-    crate::with_reads(app, move |db| db.clips(vod_id)).await
+    listed(app, move |db| db.clips(vod_id)).await
+}
+
+/// A clip bar's clips, as `list` gives them, for the page to show: those
+/// whose picture couldn't be made when they were have it tried again
+/// (`picture_again`).
+async fn listed(app: AppHandle, list: impl FnOnce(&Db) -> Result<Vec<Clip>> + Send + 'static) -> CmdResult<Vec<Clip>> {
+    let paths = app.state::<AppState>().paths.clone();
+    let handle = app.clone();
+    let (clips, unpictured) = crate::with_reads(app.clone(), move |db| {
+        let clips = list(db)?;
+        let tried = handle.state::<AppState>().clips.pictured.lock().unwrap().clone();
+        let unpictured = clips.iter().filter(|c| lacks_picture(db, &paths, &tried, c)).filter_map(made_file).collect();
+        Ok((clips, unpictured))
+    })
+    .await?;
+    picture_again(&app, unpictured);
+    Ok(clips)
+}
+
+/// Clip `clip`'s id and file, if it's made.
+fn made_file(clip: &Clip) -> Option<(i64, String)> {
+    Some((clip.id, clip.file_path.clone().filter(|_| clip.status == ClipStatus::Ready)?))
+}
+
+/// Whether clip `clip` is made, and cut (`cut` makes a picture of a cut
+/// clip's first frame), with a picture in its file, but has no picture, and
+/// its file isn't one of those `tried` again already (`picture_again`).
+fn lacks_picture(db: &Db, paths: &vodscribe_core::Paths, tried: &HashSet<String>, clip: &Clip) -> bool {
+    let sound_alone = |file: &str| {
+        let ext = Path::new(file).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+        matches!(ext.as_deref(), Some("m4a" | "wav"))
+    };
+    // The library asked last: of a long clip bar, few lack one.
+    made_file(clip).is_some_and(|(_, file)| !sound_alone(&file) && !tried.contains(&file))
+        && !paths.clip_thumb(clip.id).exists()
+        && is_cut(db, clip.id).is_ok_and(|cut| cut == Some(true))
+}
+
+/// Queues the pictures of `clips` (each id and its file), which couldn't
+/// be made when they were, to be made again (`make_pictures`): each file
+/// once while the app runs, so one that fails for good (a file ffmpeg can't
+/// read) isn't tried at each listing; the page lists a VOD's clips every
+/// tenth of a second while a drag waits on one (clips.svelte.ts `ready`).
+/// A clip made again has a new file, which `cut` gives its own picture.
+fn picture_again(app: &AppHandle, clips: Vec<(i64, String)>) {
+    let cutter = &app.state::<AppState>().clips;
+    let clips: Vec<_> = {
+        let mut pictured = cutter.pictured.lock().unwrap();
+        clips.into_iter().filter(|(_, file)| pictured.insert(file.clone())).collect()
+    };
+    if !clips.is_empty() {
+        cutter.pictures.push(clips);
+    }
+}
+
+/// Makes the pictures of `clips` (each id and its file) again, as
+/// `picture_again` queued them, till `stop`: each kept only if its clip's
+/// file is still that one (`cut` makes a picture for a new one).
+fn make_pictures(app: &AppHandle, clips: Vec<(i64, String)>, stop: &AtomicBool) {
+    let state = app.state::<AppState>();
+    let Some(ffmpeg) = tools::find_ffmpeg(&state.paths.bin()) else {
+        eprintln!("clips' pictures: {}", crate::worker::NO_FFMPEG);
+        return;
+    };
+    for (id, file) in clips {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let thumb = thumb_path(app, id);
+        let part = thumb.with_extension("again.png");
+        let made = clips::thumbnail(&ffmpeg, Path::new(&file), &part);
+        // Under the library's lock, as `cut` records a new file under it
+        // before it makes that one's picture.
+        let db = state.db.lock().unwrap();
+        let same = db.clip(id).ok().flatten().is_some_and(|c| made_file(&c).is_some_and(|(_, f)| f == file));
+        match made {
+            Ok(()) if same => {
+                if let Err(e) = std::fs::rename(&part, &thumb) {
+                    eprintln!("clip {id}: its picture: {e}");
+                }
+            }
+            Ok(()) => {
+                let _ = std::fs::remove_file(&part);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                eprintln!("clip {id}: its picture again: {e:#}");
+            }
+        }
+    }
 }
 
 /// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled
@@ -697,7 +829,26 @@ pub(crate) async fn add_clip(
     end: f64,
     shown: Option<bool>,
 ) -> CmdResult<Clip> {
-    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true))?;
+    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true), Same::Listed)?;
+    Ok(made.into_iter().next().expect("a clip for its one range"))
+}
+
+/// Makes a clip of a piece of an edit carried out of it (dragout.ts
+/// `carry`): `start`..`end` seconds of VOD `vod_id`, in that VOD's clip bar
+/// unless `shown` is false. As `add_clip`, but the clip made already that it
+/// gives is one that plays just that stretch (`Same::Plays`): the piece is
+/// what goes where it's dropped, and a clip listed at its stretch may have
+/// been changed in the editor. Its own command, not a flag of `add_clip`'s,
+/// as the two callers mean different things by the same stretch.
+#[tauri::command]
+pub(crate) async fn add_piece_clip(
+    app: AppHandle,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    shown: Option<bool>,
+) -> CmdResult<Clip> {
+    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true), Same::Plays)?;
     Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
@@ -706,36 +857,75 @@ pub(crate) async fn add_clip(
 /// stretches selected, clipped at once).
 #[tauri::command]
 pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
-    make_clips(&app, vod_id, ranges, true)
+    make_clips(&app, vod_id, ranges, true, Same::Listed)
+}
+
+/// Which clip made already a stretch asked for again gives (`make_clips`).
+#[derive(Clone, Copy)]
+enum Same {
+    /// The one its clip bar lists at that stretch, as the page finds it:
+    /// C, and a stretch of the VOD shown dragged out (`Db::vod_clip_of`).
+    Listed,
+    /// One that plays just that stretch: a piece of an edit carried out
+    /// (`Db::vod_clip_playing`).
+    Plays,
 }
 
 /// What `add_clip` and `add_clips` do: a clip of each range (its end kept
 /// within the VOD), each titled with what's said in it, as one change (all of
-/// them, or none if one can't be made); then each is queued to be made.
-fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
+/// them, or none if one can't be made); then each is queued to be made. A
+/// range with a clip already (C pressed twice) gives that one, as for an
+/// edit (`make_edit_clips`), put in the clip bar if `shown`.
+fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool, same: Same) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
-    let made = make_clips_in(&state.db.lock().unwrap(), &state.history, vod_id, ranges, shown).map_err(err)?;
-    state.clips.queue_made(&made.iter().map(|c| c.id).collect::<Vec<_>>(), shown);
+    let now = Settings::load(&state.paths.settings()).clip_encoding();
+    let db = state.db.lock().unwrap();
+    let (made, queued) = make_clips_in(&db, &state.history, vod_id, ranges, shown, now, same).map_err(err)?;
+    drop(db);
+    state.clips.queue_made(&queued, shown);
     Ok(made)
 }
 
-/// What `make_clips` does in the library, recorded in `history`.
+/// What `make_clips` does in the library, recorded in `history`: the clips,
+/// and those of them to be made.
 fn make_clips_in(
     db: &Db,
     history: &history::History,
     vod_id: i64,
     ranges: Vec<(f64, f64)>,
     shown: bool,
-) -> Result<Vec<Clip>> {
+    now: ClipEncoding,
+    same: Same,
+) -> Result<(Vec<Clip>, Vec<i64>)> {
     db.vod(vod_id)?.context("That VOD is gone.")?;
     let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
     history.change(db, Doc::Vod(vod_id), label, |db| {
-        let mut made = Vec::new();
+        let (mut made, mut queued) = (Vec::new(), Vec::new());
         for (start, end) in ranges {
-            let words = db.words_between(vod_id, start, end)?;
-            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), shown)?);
+            let had = match same {
+                Same::Listed => db.vod_clip_of(vod_id, start, end)?,
+                Same::Plays => db.vod_clip_playing(vod_id, start, end)?,
+            };
+            let clip = match had {
+                Some(had) => {
+                    if shown && !had.shown {
+                        db.show_clip(had.id)?;
+                    }
+                    if again(db, &had, now)? {
+                        queued.push(had.id);
+                    }
+                    db.clip(had.id)?.context("That clip is gone.")?
+                }
+                None => {
+                    let words = db.words_between(vod_id, start, end)?;
+                    let clip = db.add_clip(vod_id, start, end, &clips::title(&words, start), shown)?;
+                    queued.push(clip.id);
+                    clip
+                }
+            };
+            made.push(clip);
         }
-        Ok(made)
+        Ok((made, queued))
     })
 }
 
@@ -751,8 +941,10 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
             .map_err(err)?;
         db.clip(id).map_err(err)?.ok_or("That clip is gone.")?
     };
+    // Made once, at its new range: one waiting keeps its place, and isn't
+    // listed with the jobs as still waiting once made.
     state.clips.stop(id);
-    state.clips.queue(id);
+    state.clips.queue_once(id);
     Ok(clip)
 }
 
@@ -794,7 +986,10 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
 #[tauri::command]
 pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    let gone = delete_clips_in(&db, &state.history, &ids, |id| state.clips.stop(id)).map_err(err)?;
+    let gone = delete_clips_in(&db, &state.history, &ids, |id| {
+        state.clips.cancel(id);
+    })
+    .map_err(err)?;
     // Their files once they're gone from the library, as `remove` does for one.
     for (clip, handed_out) in gone {
         after_delete(&app, clip.id, clip.file_path, handed_out);
@@ -812,7 +1007,10 @@ pub(crate) async fn cut_clips(app: AppHandle, state: State<'_, AppState>, ids: V
     let files = crate::clipboard::copied_files(&app);
     let db = state.db.lock().unwrap();
     let holds = |clip: &Clip| held_by(clip, &files);
-    let (gone, held) = take_off_in(&db, &state.history, &ids, holds, CUT, |id| state.clips.stop(id)).map_err(err)?;
+    let take_out = |id| {
+        state.clips.cancel(id);
+    };
+    let (gone, held) = take_off_in(&db, &state.history, &ids, holds, CUT, take_out).map_err(err)?;
     crate::clipboard::hold(&app, &held);
     for id in held {
         emit(&app, &db, id);
@@ -835,19 +1033,26 @@ pub(crate) fn held_by(clip: &Clip, files: &[PathBuf]) -> bool {
 /// What `delete_clips` does in the library: clips `ids` deleted in one
 /// transaction, each clip bar's change recorded in `history`. One that's
 /// gone, or one that can't be deleted, leaves all of them as they were and
-/// records nothing. `stop` is given each one's id before it goes (its file
-/// being made is stopped). Returns those deleted, each with whether its file
+/// records nothing. `take_out` is given each one's id once it's gone, to take
+/// it out of the queue, or stop its file being made, as `remove` does for one.
+/// Returns those deleted, each with whether its file
 /// was dragged out of the app (its names not the app's to delete then), and
 /// with no file where that itself went to another app (`file_to_let_go`).
-fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl Fn(i64)) -> Result<Vec<(Clip, bool)>> {
-    Ok(take_off_in(db, history, ids, |_| false, ("Clip deleted", "Clips deleted"), stop)?.0)
+fn delete_clips_in(
+    db: &Db,
+    history: &history::History,
+    ids: &[i64],
+    take_out: impl Fn(i64),
+) -> Result<Vec<(Clip, bool)>> {
+    Ok(take_off_in(db, history, ids, |_| false, ("Clip deleted", "Clips deleted"), take_out)?.0)
 }
 
 /// A clip deleted, with whether its file was dragged out of the app.
 type Gone = (Clip, bool);
 
 /// `delete_clips_in`, but the clips `hold` says are held instead (a cut):
-/// off their bar, kept with their files and not stopped. Each bar's change
+/// off their bar, kept with their files and left in the queue (`take_out`
+/// is given those deleted, once they are). Each bar's change
 /// is recorded as `labels` says, for one clip or several. Those deleted, as
 /// `delete_clips_in` gives them, and the ids of those held.
 fn take_off_in(
@@ -856,7 +1061,7 @@ fn take_off_in(
     ids: &[i64],
     hold: impl Fn(&Clip) -> bool,
     labels: (&'static str, &'static str),
-    stop: impl Fn(i64),
+    take_out: impl Fn(i64),
 ) -> Result<(Vec<Gone>, Vec<i64>)> {
     let mut gone = Vec::new();
     for &id in ids {
@@ -876,13 +1081,16 @@ fn take_off_in(
         }
     }
     let (held, gone): (Vec<_>, Vec<_>) = gone.into_iter().partition(|(clip, _)| hold(clip));
-    for (clip, _) in &gone {
-        stop(clip.id);
-    }
     db.atomically(|db| {
         gone.iter().try_for_each(|(clip, _)| db.delete_clip(clip.id))?;
         held.iter().try_for_each(|(clip, _)| db.hide_clip(clip.id))
     })?;
+    // Out of the queue once they're gone, so a delete that fails leaves them
+    // queued. The library is held, so one whose turn has just come finds
+    // itself gone.
+    for (clip, _) in &gone {
+        take_out(clip.id);
+    }
     for (doc, before) in docs {
         let of_doc = |list: &[Gone]| list.iter().filter(|(c, _)| bar_doc(c) == doc).count();
         let label = if of_doc(&gone) + of_doc(&held) == 1 { labels.0 } else { labels.1 };
@@ -1143,7 +1351,9 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 /// once it's made (a file manager waits for it; an app that takes only files
 /// already made gets none, and the page says so: `DragEnded`). Linux, macOS
 /// and Windows; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the
-/// files at the window's edge before the drag begins (dragout.ts).
+/// files at the window's edge before the drag begins (dragout.ts). That
+/// switch is a developer's fallback, not a setting: no changelog, support
+/// page or dialog names it.
 pub(crate) fn drags_before_made() -> bool {
     cfg!(any(target_os = "linux", target_os = "macos", windows))
         && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
@@ -1399,7 +1609,7 @@ pub(crate) struct Outgoing {
 
 /// The name clip `id`'s file goes by where it's handed out: an edit's (or a
 /// snippet changed in the editor) its title, a clip its VOD's date, title
-/// and range (`clips::file_path`). With its file's extension if it's made,
+/// and range (`clips::file_name`). With its file's extension if it's made,
 /// else the one it will have, made in `format`.
 pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> String {
     let named = || -> Result<Option<String>> {
@@ -1414,8 +1624,7 @@ pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, i
             return Ok(Some(format!("{}.{ext}", clips::safe_name(&title))));
         }
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(None) };
-        let (_, name) = clips::file_path(
-            vod.info.channel.as_deref(),
+        let name = clips::file_name(
             vod.info.published.as_deref(),
             &vod.info.title,
             (clip.start, clip.end),

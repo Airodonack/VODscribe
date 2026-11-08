@@ -196,9 +196,10 @@ class Clips {
   /**
    * Makes `start`..`end` of the document whose clip bar this is (a VOD's
    * time, or an edit's timeline) a clip, or gives the one made already
-   * (putting it in the clip bar if `shown`; one that failed is made again).
-   * Before the first downloaded from a site, the note on permission is
-   * answered first. Null if it's declined or fails.
+   * (putting it in the clip bar if `shown`; one that failed, or was made
+   * otherwise than clips are made now, is made again). Before the first
+   * downloaded from a site, the note on permission is answered first. Null
+   * if it's declined or fails.
    */
   make(start: number, end: number, shown = true): Promise<Clip | null> {
     const doc = this.doc;
@@ -215,8 +216,8 @@ class Clips {
   }
 
   /** `make` on an edit's clip bar: the app gives the clip of that stretch
-   *  made already, and makes one that failed again (crates/core edits.rs
-   *  `add_edit_clip`), as `#make` does on a VOD's. */
+   *  made already, and makes again one that failed or was made otherwise
+   *  than clips are made now (app clips.rs `make_edit_clips`), as on a VOD's. */
   async #makeOfEdit(editId: number, from: number, to: number, shown: boolean): Promise<Clip | null> {
     try {
       const since = this.#serial;
@@ -232,27 +233,21 @@ class Clips {
 
   async #make(start: number, end: number, shown: boolean): Promise<Clip | null> {
     const vodId = this.vodId;
+    if (vodId === null) return null;
+    // One made already is the app's to give, as it is or made again (app
+    // clips.rs `make_clips`): no note to answer first.
     const made = this.find(start, end);
-    // One that failed is tried again.
-    if (made?.status === "error") {
-      await this.#run(api.setClipRange(made.id, made.start, made.end));
-      if (shown && !made.shown) await this.#run(api.keepClip(made.id));
-      return this.list.find((c) => c.id === made.id) ?? made;
-    }
-    if (made && shown && !made.shown) {
-      await this.#run(api.keepClip(made.id));
-      return this.list.find((c) => c.id === made.id) ?? made;
-    }
-    if (made) return made;
-    if (vodId === null || this.asking) return null;
-    if (this.#fromSite && !noteHidden()) {
-      const download = await new Promise<boolean>((answer) => (this.asking = answer));
-      this.asking = null;
-      if (!download) return null;
+    if (!made) {
+      if (this.asking) return null;
+      if (this.#fromSite && !noteHidden()) {
+        const download = await new Promise<boolean>((answer) => (this.asking = answer));
+        this.asking = null;
+        if (!download) return null;
+      }
     }
     try {
       const since = this.#serial;
-      const clip = await api.addClip(vodId, start, end, shown);
+      const clip = await api.addClip(vodId, made?.start ?? start, made?.end ?? end, shown);
       this.#answer(clip, since);
       this.error = null;
       return clip;

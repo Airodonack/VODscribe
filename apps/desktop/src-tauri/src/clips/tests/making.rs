@@ -387,6 +387,120 @@ fn a_failed_clip_of_an_edit_clipped_again_is_made_again() {
     assert!(near(app.clip_media(&app.made(first.id)).duration, 10.0));
 }
 
+/// The same stretch of a VOD clipped twice gives the one clip, made: the
+/// command keeps the rule, as it does for an edit, not only the page
+/// (plans/clips-pilot.md, Decided 1: "One clip per stretch: the command
+/// keeps the rule for VODs as for edits"; CHANGELOG.md, 0.7.0 Fixes:
+/// "Pressing C twice on the same stretch of an edit makes one clip, as on a
+/// VOD").
+#[test]
+fn clipping_a_vod_s_stretch_twice_gives_the_one_clip() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let first = app.make_clip(vod.id, "0:10", "0:20");
+    let again = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!(again.id, first.id);
+    assert_eq!(list_clips(&app, vod.id).len(), 1);
+    // Given as it is, made: not made again.
+    assert_eq!(again.status, ClipStatus::Ready, "made again");
+    assert!(!app.state().clips.is_waiting(first.id), "queued to be made again");
+    // One asked for past the VOD's end is the stretch it was cut to.
+    let to_the_end = app.make_clip(vod.id, "0:50", "1:00");
+    assert_eq!(app.add_clip(vod.id, "0:50", "1:30").unwrap().id, to_the_end.id);
+}
+
+/// C on the stretch a clip of the clip bar is listed at gives that clip,
+/// though it was changed in the editor (a piece added after its first): the
+/// page finds it there and asks no download note, so the command gives the
+/// same one, as 0.7.2's page did (Decided 1, as above; clips.svelte.ts
+/// `find`: "The clip of exactly `start`..`end`"; the clips-fixes review, M1).
+#[test]
+fn c_on_the_stretch_of_a_clip_changed_in_the_editor_gives_that_clip() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let first = app.make_clip(vod.id, "0:10", "0:20");
+    let range = json!({ "editId": first.id, "vodId": vod.id, "start": 30.0, "end": 32.0 });
+    app.invoke("add_range_to_edit", range).unwrap();
+    let changed = app.made(first.id);
+    let listed = list_clips(&app, vod.id);
+    assert_eq!((listed.len(), listed[0].start, listed[0].end), (1, 10.0, 20.0), "listed at its first piece");
+    let again = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!(again.id, first.id, "a second clip of that stretch");
+    assert_eq!(list_clips(&app, vod.id).len(), 1);
+    assert_eq!(app.clip_media(&app.made(first.id)), app.clip_media(&changed), "made again");
+}
+
+/// A piece of an edit carried out of the window is a clip that plays just
+/// that piece: a clip of the VOD's clip bar listed at its stretch but changed
+/// in the editor (a piece added) isn't it, though one that plays just the
+/// stretch is given, made already (dragout.ts `carry`; CHANGELOG.md, 0.7.3
+/// Fixes: "A dragged piece reuses its clip."; the clips-fixes re-review, N1).
+#[test]
+fn a_piece_carried_out_is_a_clip_that_plays_just_it() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let changed = app.make_clip(vod.id, "0:10", "0:20");
+    let range = json!({ "editId": changed.id, "vodId": vod.id, "start": 30.0, "end": 32.0 });
+    app.invoke("add_range_to_edit", range).unwrap();
+    app.made(changed.id);
+    let carried = app.run(add_piece_clip(app.handle().clone(), vod.id, 10.0, 20.0, Some(false))).unwrap();
+    assert_ne!(carried.id, changed.id, "the changed clip handed out for the piece");
+    let carried = app.made(carried.id);
+    assert!(near(app.clip_media(&carried).duration, 10.0));
+    let whole = app.make_clip(vod.id, "0:40", "0:50");
+    let again = app.run(add_piece_clip(app.handle().clone(), vod.id, 40.0, 50.0, Some(false))).unwrap();
+    assert_eq!((again.id, again.status), (whole.id, ClipStatus::Ready), "made again for a piece it plays");
+}
+
+/// Several stretches clipped at once, one with a clip already, give that
+/// one and make the others, in their order (Decided 1, as above;
+/// CHANGELOG.md, 0.6.0: "Clip and delete several at once.").
+#[test]
+fn clips_made_at_once_give_the_one_made_already() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let first = app.make_clip(vod.id, "0:10", "0:20");
+    let made = add_clips(&app, vod.id, &[("0:30", "0:40"), ("0:10", "0:20")]).unwrap();
+    assert_eq!(made[1].id, first.id);
+    assert_eq!(list_clips(&app, vod.id).len(), 2);
+    made_all(&app, &made);
+}
+
+/// A stretch of a VOD whose clip failed, clipped again, is made again
+/// (Decided 1, as above; CHANGELOG.md, 0.7.0 Fixes: "pressing it again on a
+/// clip that failed tries it again", for an edit "as on a VOD").
+#[test]
+fn a_failed_clip_of_a_vod_clipped_again_is_made_again() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    app.ffmpeg.fails_at(0.5, "Error while decoding stream #0:0");
+    let first = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!(app.made(first.id).status, ClipStatus::Error);
+    app.ffmpeg.works();
+    let again = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!(again.id, first.id);
+    assert_eq!((again.status, again.error), (ClipStatus::Waiting, None));
+    assert!(near(app.clip_media(&app.made(first.id)).duration, 10.0));
+}
+
+/// A stretch whose clip was made only for a drag out of the window, clipped,
+/// is that clip put on the clip bar; a drag of a stretch on the bar is the
+/// bar's clip (Decided 1, as above; app clips.rs `add_clip`: "in the clip
+/// bar unless `shown` is false (one only dragged out of the window)").
+#[test]
+fn a_stretch_dragged_out_and_clipped_is_one_clip() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let dragged = drag_clip_of(&app, vod.id, "0:10", "0:20");
+    let kept = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!(kept.id, dragged.id);
+    assert!(kept.shown, "still off the clip bar");
+    assert_eq!(undo(&app, Doc::Vod(vod.id)).as_deref(), Some("Clip added"));
+    let pill = app.make_clip(vod.id, "0:30", "0:40");
+    assert_eq!(drag_clip_of(&app, vod.id, "0:30", "0:40").id, pill.id);
+    assert!(app.clip(pill.id).unwrap().shown, "taken off the clip bar by a drag");
+}
+
 /// A clip of an edit that would start where the edit has ended is refused,
 /// saying so (crates/core/src/edits.rs:1676, `check_edit_span`: "a span of
 /// clip `clip`'s timeline (an edit's: as long as what its pieces play),
