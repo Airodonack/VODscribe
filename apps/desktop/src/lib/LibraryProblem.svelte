@@ -1,8 +1,12 @@
 <!--
   Shown instead of the app when its library won't open (recovery.rs): what
   went wrong, and what can be done. Nothing here deletes anything: starting
-  a new library sets the old file aside, kept for recovering or for a bug
-  report.
+  a new library sets the old one aside (its file and the folders named for
+  its rows, `db::set_aside`), kept for recovering or for a bug report. On
+  Windows those are in two folders, the file in the roaming one and its
+  videos and clips in the local one, so the page names both. If another app
+  has one of its files open, nothing moves and the error says which, under
+  the buttons.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -13,6 +17,7 @@
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
   import { SUPPORT } from "./links";
+  import { os } from "./platform";
   import { theme } from "./theme.svelte";
 
   let { error }: { error: string } = $props();
@@ -59,10 +64,18 @@
     </div>
     <div class="choice">
       <button class="primary" onclick={startNew} disabled={busy}>Start a new library</button>
-      <p class="muted">
-        Starts empty. The old file is kept beside it, renamed <code>library-broken-</code> with today's date, so it can be
-        recovered or sent with a bug report.
-      </p>
+      {#if os === "windows"}
+        <p class="muted">
+          Starts empty. The old library moves to folders named <code>library-broken-</code> with today's date, so it can
+          be recovered or sent with a bug report: its file to the one in <code>AppData\Roaming</code>, its videos and
+          clips to the one in <code>AppData\Local</code>.
+        </p>
+      {:else}
+        <p class="muted">
+          Starts empty. The old library moves to a folder beside it, named <code>library-broken-</code> with today's date,
+          its videos and clips with it, so it can be recovered or sent with a bug report.
+        </p>
+      {/if}
     </div>
   </div>
 

@@ -175,9 +175,14 @@ class Clips {
     this.list = at < 0 ? [...this.list, clip] : this.list.map((c, i) => (i === at ? clip : c));
   }
 
-  /** The clip of exactly `start`..`end`, if one's been made. */
-  find(start: number, end: number): Clip | undefined {
-    return this.list.find((c) => Math.abs(c.start - start) < 0.001 && Math.abs(c.end - end) < 0.001);
+  /** The clip of exactly `start`..`end`, if one's been made; with `footage`,
+   *  only one that still plays just that stretch of the VOD (`plain`): a drag
+   *  of the stretch from the VOD is its footage, not a clip listed there that
+   *  was changed in the editor. */
+  find(start: number, end: number, footage = false): Clip | undefined {
+    return this.list.find(
+      (c) => Math.abs(c.start - start) < 0.001 && Math.abs(c.end - end) < 0.001 && (!footage || c.plain),
+    );
   }
 
   /** The clips in the clip bar: saved there, not only dragged out of the window. */
@@ -185,38 +190,44 @@ class Clips {
     return this.list.filter((c) => c.shown);
   }
 
-  /** Whether making `ranges` clips here asks the note on permission first:
-   *  a VOD from a site, the note not hidden, one of them not made yet. */
-  asksFor(ranges: { start: number; end: number }[]): boolean {
+  /** Whether making `ranges` clips here (of the VOD's `footage`, as `find`)
+   *  asks the note on permission first: a VOD from a site, the note not
+   *  hidden, one of them not made yet. */
+  asksFor(ranges: { start: number; end: number }[], footage = false): boolean {
     return (
-      this.doc?.kind === "vod" && this.#fromSite && !noteHidden() && ranges.some((r) => !this.find(r.start, r.end))
+      this.doc?.kind === "vod" &&
+      this.#fromSite &&
+      !noteHidden() &&
+      ranges.some((r) => !this.find(r.start, r.end, footage))
     );
   }
 
   /**
    * Makes `start`..`end` of the document whose clip bar this is (a VOD's
    * time, or an edit's timeline) a clip, or gives the one made already
-   * (putting it in the clip bar if `shown`; one that failed is made again).
-   * Before the first downloaded from a site, the note on permission is
-   * answered first. Null if it's declined or fails.
+   * (putting it in the clip bar if `shown`; one that failed, or was made
+   * otherwise than clips are made now, is made again). Before the first
+   * downloaded from a site, the note on permission is answered first. Null
+   * if it's declined or fails. With `footage` (a stretch dragged from a
+   * VOD), the one made already is one that plays just that stretch (`find`).
    */
-  make(start: number, end: number, shown = true): Promise<Clip | null> {
+  make(start: number, end: number, shown = true, footage = false): Promise<Clip | null> {
     const doc = this.doc;
     if (!doc) return Promise.resolve(null);
     // Asked twice before the first is answered (C pressed twice), it's made once.
-    const key = `${docKey(doc)} ${start} ${end}`;
+    const key = `${docKey(doc)} ${start} ${end} ${footage}`;
     const making = this.#making.get(key);
     if (making) return making;
     const made = (
-      doc.kind === "edit" ? this.#makeOfEdit(doc.id, start, end, shown) : this.#make(start, end, shown)
+      doc.kind === "edit" ? this.#makeOfEdit(doc.id, start, end, shown) : this.#make(start, end, shown, footage)
     ).finally(() => this.#making.delete(key));
     this.#making.set(key, made);
     return made;
   }
 
   /** `make` on an edit's clip bar: the app gives the clip of that stretch
-   *  made already, and makes one that failed again (crates/core edits.rs
-   *  `add_edit_clip`), as `#make` does on a VOD's. */
+   *  made already, and makes again one that failed or was made otherwise
+   *  than clips are made now (app clips.rs `make_edit_clips`), as on a VOD's. */
   async #makeOfEdit(editId: number, from: number, to: number, shown: boolean): Promise<Clip | null> {
     try {
       const since = this.#serial;
@@ -230,29 +241,24 @@ class Clips {
     }
   }
 
-  async #make(start: number, end: number, shown: boolean): Promise<Clip | null> {
+  async #make(start: number, end: number, shown: boolean, footage: boolean): Promise<Clip | null> {
     const vodId = this.vodId;
-    const made = this.find(start, end);
-    // One that failed is tried again.
-    if (made?.status === "error") {
-      await this.#run(api.setClipRange(made.id, made.start, made.end));
-      if (shown && !made.shown) await this.#run(api.keepClip(made.id));
-      return this.list.find((c) => c.id === made.id) ?? made;
-    }
-    if (made && shown && !made.shown) {
-      await this.#run(api.keepClip(made.id));
-      return this.list.find((c) => c.id === made.id) ?? made;
-    }
-    if (made) return made;
-    if (vodId === null || this.asking) return null;
-    if (this.#fromSite && !noteHidden()) {
-      const download = await new Promise<boolean>((answer) => (this.asking = answer));
-      this.asking = null;
-      if (!download) return null;
+    if (vodId === null) return null;
+    // One made already is the app's to give, as it is or made again (app
+    // clips.rs `make_clips`): no note to answer first.
+    const made = this.find(start, end, footage);
+    if (!made) {
+      if (this.asking) return null;
+      if (this.#fromSite && !noteHidden()) {
+        const download = await new Promise<boolean>((answer) => (this.asking = answer));
+        this.asking = null;
+        if (!download) return null;
+      }
     }
     try {
       const since = this.#serial;
-      const clip = await api.addClip(vodId, start, end, shown);
+      const add = footage ? api.addPieceClip : api.addClip;
+      const clip = await add(vodId, made?.start ?? start, made?.end ?? end, shown);
       this.#answer(clip, since);
       this.error = null;
       return clip;
@@ -266,14 +272,15 @@ class Clips {
    * Makes each of `ranges` a clip in the clip bar, in their order, as `make`
    * makes one (the note on permission first, once): those not made yet as
    * one change, so undo takes them all back; any made already as `make`
-   * gives them. On an edit's clip bar, of its timeline.
+   * gives them (of the VOD's `footage`, as it does). On an edit's clip bar,
+   * of its timeline.
    */
-  async makeAll(ranges: { start: number; end: number }[]): Promise<void> {
+  async makeAll(ranges: { start: number; end: number }[], footage = false): Promise<void> {
     if (this.doc?.kind === "edit") return this.#makeAllOfEdit(this.doc.id, ranges);
     const vodId = this.vodId;
     if (vodId === null || this.asking) return;
-    const fresh = ranges.filter((r) => !this.find(r.start, r.end));
-    for (const r of ranges) if (this.find(r.start, r.end)) await this.make(r.start, r.end);
+    const fresh = ranges.filter((r) => !this.find(r.start, r.end, footage));
+    for (const r of ranges) if (this.find(r.start, r.end, footage)) await this.make(r.start, r.end, true, footage);
     if (!fresh.length) return;
     if (this.#fromSite && !noteHidden()) {
       const download = await new Promise<boolean>((answer) => (this.asking = answer));
@@ -282,7 +289,7 @@ class Clips {
     }
     try {
       const since = this.#serial;
-      const made = await api.addClips(
+      const made = await (footage ? api.addPieceClips : api.addClips)(
         vodId,
         fresh.map((r) => [r.start, r.end]),
       );

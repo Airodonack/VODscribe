@@ -17,6 +17,11 @@
 // if what it brings is still that: something copied since, in any app, is
 // what's meant.
 //
+// Ctrl+X is a cut, to be pasted: the clips it takes off their bar are held
+// in the app with their files (clipboard.rs), so a paste brings their
+// frames back at once, until the next copy or cut, or quit, deletes them.
+// Undo of the cut puts the clips themselves back.
+//
 // The clipboard is never read by the app itself, only handed over by the
 // paste a person makes: macOS asks the user whether to allow an app that
 // reads it on its own.
@@ -28,7 +33,7 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { tick } from "svelte";
 import { api, type Doc, type Put, type Vod } from "./api";
-import { chosenClips, chosenEntries, chosenSegments, removeChosenClips, whereKeys } from "./bulk";
+import { chosenClips, chosenEntries, chosenSegments, whereKeys } from "./bulk";
 import { copiedSaid, copiedText, pastedSaid } from "./clipboardText";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
@@ -103,7 +108,8 @@ function copied(): Put[] {
 
 /** Copies what's selected or picked (`copied`), writes its text to the
  *  system's clipboard and says so; with `cut`, then takes it out as Delete
- *  would: clips picked off their bar, and in an edit its stretches too. */
+ *  would, the clips held for its pastes: clips picked off their bar, and in
+ *  an edit its stretches too. */
 async function copyPicked(cut: boolean, vodOf: (id: number) => Vod | undefined) {
   const items = copied();
   if (!items.length) return void toast.show(NOTHING);
@@ -122,9 +128,10 @@ async function copyPicked(cut: boolean, vodOf: (id: number) => Vod | undefined) 
   }
 }
 
-/** Ctrl+X's taking out, once copied (`said`): the clips picked go, as
- *  Delete takes them; in an edit (`doc`, the open one), the stretches
- *  picked or the selection too. A VOD's stretches stay: they're splits. */
+/** Ctrl+X's taking out, once copied (`said`): the clips picked go off
+ *  their bar, held for the cut's pastes (`api.cutClips`); in an edit
+ *  (`doc`, the open one), the stretches picked or the selection too. A
+ *  VOD's stretches stay: they're splits. */
 async function cutOut(
   doc: Doc | null,
   picked: {
@@ -145,12 +152,25 @@ async function cutOut(
       [stretches.length, "stretch", "stretches"],
       [picked.clips.length, "clip", "clips"],
     ]);
-    if (await edits.removeFrom([], stretches, picked.clips))
+    if (await edits.removeFrom([], stretches, picked.clips, true))
       toast.show(`Cut ${what}`, { label: "Undo", run: () => undoIn(doc) });
     return;
   }
-  if (picked.clips.length) return void (await removeChosenClips(picked.clips, doc));
+  if (picked.clips.length && doc) return void (await cutClips(picked.clips, doc));
   toast.show(`${said} (a VOD's stretch stays)`);
+}
+
+/** Clips `ids` of `doc`'s bar taken off it by a cut, held for its pastes,
+ *  with Undo for the bar. */
+async function cutClips(ids: number[], doc: Doc) {
+  snippets.clear();
+  clips.hovered = null;
+  try {
+    await api.cutClips(ids);
+    toast.show(`Cut ${count([[ids.length, "clip", "clips"]])}`, { label: "Undo", run: () => undoIn(doc) });
+  } catch (e) {
+    clips.error = String(e);
+  }
 }
 
 /**

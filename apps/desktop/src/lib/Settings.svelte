@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CODEC_NAMES, QUALITY_NAMES } from "./dragout";
+  import { codecChoices } from "./codecs";
   // Settings, a section at a time; which one is shown, and the list of them,
   // are settingsWindow.svelte.ts's, so a section can be opened from elsewhere.
   import Controls from "./Controls.svelte";
@@ -14,6 +15,7 @@
     type ClipQuality,
     type Device,
     type DownloadProgress,
+    type FfmpegCodecs,
     type GpuStatus,
     type UnlistenFn,
   } from "./api";
@@ -68,6 +70,32 @@
       hint: "Large files that scrub smoothly in Final Cut and other Apple editors.",
     },
   ] as const;
+  // The formats the ffmpeg in use can't make, greyed out (codecs.ts); asked
+  // each time the section opens, as the ffmpeg may have changed meanwhile.
+  // Only the latest answer applies, as with `refresh`.
+  // Null until the first answer, which comes in a moment: a format clicked
+  // meanwhile is held, and picked then unless it's one of them.
+  let missingCodecs = $state<FfmpegCodecs | null>(null);
+  let heldPick: (typeof CODECS)[number] | null = null;
+  let askedCodecs = 0;
+  $effect(() => {
+    if (settingsWindow.section !== "encoding") return;
+    const n = ++askedCodecs;
+    api
+      .missingClipCodecs()
+      .catch((): FfmpegCodecs => ({ missing: [], own: true }))
+      .then((ffmpeg) => {
+        if (n !== askedCodecs) return;
+        missingCodecs = ffmpeg;
+        const held = heldPick;
+        heldPick = null;
+        if (held && !ffmpeg.missing.includes(held.id)) pickCodec(held);
+      });
+  });
+  let codecs = $derived(codecChoices(CODECS, clipCodec, missingCodecs));
+  function pickCodec(c: (typeof CODECS)[number]) {
+    appSettings.update({ clip_codec: c.id, clip_format: c.format });
+  }
   const QUALITIES = [
     { id: "proxy", label: QUALITY_NAMES.proxy },
     { id: "standard", label: QUALITY_NAMES.standard },
@@ -417,18 +445,25 @@
         <span class="eyebrow">Encoding</span>
         <p class="label">Clips and edits are made as</p>
         <div class="segmented" role="radiogroup" aria-label="Clip format">
-          {#each CODECS as c (c.id)}
+          {#each codecs.shown as c (c.id)}
+            <!-- Greyed out but not disabled, so its title shows on hover. -->
             <button
               role="radio"
-              aria-checked={clipCodec === c.id}
-              class:on={clipCodec === c.id}
-              onclick={() => appSettings.update({ clip_codec: c.id, clip_format: c.format })}
+              aria-checked={c.on}
+              aria-disabled={c.greyed}
+              class:on={c.on}
+              class:greyed={c.greyed}
+              title={c.why}
+              onclick={() => {
+                if (missingCodecs === null) heldPick = c;
+                else if (c.pickable) pickCodec(c);
+              }}
             >
               {c.label}
             </button>
           {/each}
         </div>
-        <p class="muted hint">{CODECS.find((c) => c.id === clipCodec)?.hint}</p>
+        <p class="muted hint">{codecs.hint}</p>
         <p class="label">Quality</p>
         <div class="segmented" role="radiogroup" aria-label="Clip quality">
           {#each QUALITIES as q (q.id)}
@@ -791,6 +826,12 @@
   .segmented button.on {
     color: var(--text);
     background: var(--accent-soft);
+  }
+
+  /* A codec the ffmpeg in use can't make, faded as a disabled button is. */
+  .segmented button.greyed {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .hint {

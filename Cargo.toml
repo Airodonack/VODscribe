@@ -3,7 +3,7 @@ members = ["crates/core", "crates/dragndrop-source", "crates/dragndrop-target", 
 resolver = "3"
 
 [workspace.package]
-version = "0.7.2"
+version = "0.7.3"
 edition = "2024"
 publish = false
 

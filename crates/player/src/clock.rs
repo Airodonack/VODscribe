@@ -1080,6 +1080,10 @@ fn end(inner: &Inner, epoch: u64) {
 /// Sound queued before it's let out, so it doesn't run dry at once.
 const START: f64 = 0.1;
 
+/// How long the output stream runs on, silent, once nothing plays, before
+/// it's paused: longer than the sound a device holds handed to it.
+const SETTLE: Duration = Duration::from_millis(200);
+
 /// Where `stretch`'s sound comes from: its own file, or its source's.
 fn sound_of(stretch: &Stretch) -> Option<&Path> {
     stretch.sound.as_ref().map(|s| s.path.as_path()).or(stretch.source.as_ref().map(|s| s.path.as_path()))
@@ -1109,14 +1113,26 @@ fn run_sound(inner: &Inner) {
         out.set_running(false);
         out.clear();
         {
-            let mut s = inner.state.lock().unwrap();
-            while !s.playing && !inner.quit.load(Ordering::Acquire) {
-                s = inner.wake.wait(s).unwrap();
+            // Paused: the stream writes silence a moment, so what it was
+            // given plays out rather than waiting in it for the next play,
+            // then stops till then (an idle stream wakes the computer
+            // every few milliseconds, and underruns when it's busy).
+            let s = inner.state.lock().unwrap();
+            let (mut s, _) = inner
+                .wake
+                .wait_timeout_while(s, SETTLE, |s| !s.playing && !inner.quit.load(Ordering::Acquire))
+                .unwrap();
+            if !s.playing && !inner.quit.load(Ordering::Acquire) {
+                out.pause();
+                while !s.playing && !inner.quit.load(Ordering::Acquire) {
+                    s = inner.wake.wait(s).unwrap();
+                }
             }
         }
         if inner.quit.load(Ordering::Acquire) {
             return;
         }
+        out.resume();
         let Some(mut walk) = Walk::start(inner) else {
             // Nothing to play where it is: wait for a change (a new timeline,
             // a seek, a pause), rather than look again at once.

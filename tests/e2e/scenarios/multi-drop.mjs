@@ -239,7 +239,9 @@ export default {
     await until("the clip bar lit", () => app.js(`return !!document.querySelector(".clip-bar.over")`), 10_000);
     await ctx.checkpoint("stretches-over-the-clip-bar");
     await letGo();
-    const barClips = () => app.invoke("edit_clips", { id: edit.id });
+    // The clips the carry made ahead for a drag out (not shown) are deleted
+    // and new ones put on the clip bar, under new ids: the pills are those.
+    const barClips = async () => (await app.invoke("edit_clips", { id: edit.id })).filter((c) => c.shown);
     const onBar = await until(
       "a clip of each on the edit's clip bar, in the order picked",
       async () => {
@@ -381,10 +383,12 @@ export default {
       await until("the system's drag, over", () => app.js("return window.__dragsEnded"), 10_000);
       if (!paths) throw new Error("the drag never came back over the window with its files");
       // Each under the name it's handed out by, in a folder beside its file
-      // (`Paths::clip_names`): a hard link, the same file.
+      // named by its clip's id (`Paths::clip_names`; the file is `<id>-<n>`,
+      // its make, `Paths::clip_make`): a hard link, the same file.
       const want = ready.map((c) => c.file_path);
+      const folderOf = (file) => file.replace(/(\/\d+)-\d+(\.[^./]*)$/, "$1$2").replace(/\.[^./]*$/, "");
       const handedOut = (file) =>
-        paths.find((p) => path.dirname(p) === file.replace(/\.[^./]*$/, "") && statSync(p).ino === statSync(file).ino);
+        paths.find((p) => path.dirname(p) === folderOf(file) && statSync(p).ino === statSync(file).ino);
       if (paths.length !== 2 || !want.every(handedOut))
         throw new Error(`the drag held ${JSON.stringify(paths)}, not names of ${JSON.stringify(want)}`);
       ctx.log(

@@ -13,12 +13,13 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::db::Db;
 use vodscribe_core::{thumbs, tools};
 use vodscribe_player::storyboard::{self, Fingerprint, Storyboard};
 use vodscribe_player::timeline::Timeline;
 
+use crate::AppHandle;
 use crate::history::Doc;
 use crate::jobs::Jobs;
 use crate::{AppState, emit_vod};
@@ -38,6 +39,12 @@ pub(crate) struct Storyboards {
 impl Storyboards {
     pub(crate) fn new() -> Self {
         Storyboards { jobs: Jobs::new(), boards: Mutex::default(), edits: Mutex::default() }
+    }
+
+    /// Ends the queue for good (`Jobs::close`).
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        self.jobs.close();
     }
 
     /// Starts the queue's thread; called once the app's state is in place.

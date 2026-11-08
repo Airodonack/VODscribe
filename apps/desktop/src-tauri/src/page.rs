@@ -11,11 +11,14 @@
 //! Tauri sends it.
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
+
+use crate::AppHandle;
 
 /// Sends `event` with `payload` to the page.
 pub(crate) fn emit<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
-    #[cfg(target_os = "linux")]
+    // (Not in the tests, which have no main loop: `testkit`.)
+    #[cfg(all(target_os = "linux", not(test)))]
     if !gtk::is_initialized_main_thread() {
         // The source only sends: it takes no lock, so the loop it runs in
         // can't be waiting on one. Sources of one priority run in the order

@@ -177,6 +177,8 @@ export type UseVodscription = "ask" | "always" | "never";
 export type ClipFormat = "mp4" | "mov";
 
 export type ClipCodec = "h264" | "h265" | "dnxhr" | "prores";
+/** The codecs the ffmpeg in use can't make, and whether it's VODscribe's own (`own`) or the system's (setup.rs `FfmpegCodecs`). */
+export type FfmpegCodecs = { missing: ClipCodec[]; own: boolean };
 
 export type ClipQuality = "proxy" | "standard" | "high";
 
@@ -393,6 +395,10 @@ export interface Clip {
   /** What its file was made with; null if it isn't made, or was made
    *  before this was recorded (crates/core `Clip::encoding`). */
   encoding?: ClipEncoding | null;
+  /** On a VOD's clip bar, whether it still plays just its stretch of the VOD,
+   *  unchanged in the editor: what a drag of that stretch may give (crates/core
+   *  `Clip::plain`). */
+  plain?: boolean;
 }
 
 /** A video made of pieces of VODs (crates/core `edits::Edit`). */
@@ -814,9 +820,10 @@ export const api = {
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
-  /** Takes `pieces`, `stretches` (of its timeline) and clips `clips` of its clip bar out of edit `id`, as one change. */
-  removeFromEdit: (id: number, pieces: number[], stretches: [number, number][], clips: number[]) =>
-    invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips }),
+  /** Takes `pieces`, `stretches` (of its timeline) and clips `clips` of its clip bar out of edit
+   *  `id`, as one change; with `cut` (Ctrl+X, copied just before), the clips are held for its pastes. */
+  removeFromEdit: (id: number, pieces: number[], stretches: [number, number][], clips: number[], cut = false) =>
+    invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips, cut }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
   /** The jobs as they are now (then the `jobs` news). */
@@ -837,6 +844,13 @@ export const api = {
   cancelMark: (id: number) => marking(invoke<void>("cancel_mark", { id })),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_clip", { vodId, start, end, shown }),
+  /** A clip of a stretch dragged from a VOD (the one shown, or a piece of an
+   *  edit): one made already only if it plays just that stretch (app clips.rs
+   *  `add_piece_clip`). */
+  addPieceClip: (vodId: number, start: number, end: number, shown = true) =>
+    invoke<Clip>("add_piece_clip", { vodId, start, end, shown }),
+  /** `addClips` of stretches dragged from VOD `vodId` onto its clip bar, each as `addPieceClip` makes one. */
+  addPieceClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_piece_clips", { vodId, ranges }),
   /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change. */
   addClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_clips", { vodId, ranges }),
   /** Puts clip `id` (one only dragged out) in the clip bar. */
@@ -846,6 +860,9 @@ export const api = {
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
   /** Deletes clips `ids`, as one change in each clip bar's history. */
   deleteClips: (ids: number[]) => invoke<void>("delete_clips", { ids }),
+  /** Ctrl+X's taking off of clips `ids`, copied just before: as `deleteClips`, but each one made
+   *  is held, with its file, for the cut's pastes until the next copy or cut, or quit. */
+  cutClips: (ids: number[]) => invoke<void>("cut_clips", { ids }),
   /** Takes clips whose file was deleted outside the app off `doc`'s clip bar (`clip-removed` for each). */
   forgetGoneClips: (doc: Doc) =>
     invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),
@@ -879,8 +896,6 @@ export const api = {
         pixels: new ImageData(new Uint8ClampedArray(b, 20, w * h * 4), w, h),
       };
     }),
-  /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
-  saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
   keepVideo: (id: number, height?: number) => invoke<void>("keep_video", { id, height }),
   /** Stops (and discards) VOD `id`'s video download. */
@@ -960,6 +975,8 @@ export const api = {
   kickStream: (url: string) => invoke<{ name: string; height: number; url: string }[]>("kick_stream", { url }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
+  /** The clip codecs the ffmpeg in use can't make (Settings › Encoding greys them out), and whether it's VODscribe's own. */
+  missingClipCodecs: () => invoke<FfmpegCodecs>("missing_clip_codecs"),
   resetSettings: () => invoke<Settings>("reset_settings"),
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
   installGpuPack: () => invoke<void>("install_gpu_pack"),

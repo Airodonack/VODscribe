@@ -30,6 +30,7 @@ export interface EditPlayback {
 
 export class EditPlayer implements EditPlayback {
   private screen: ReturnType<typeof mount>;
+  private host: HTMLElement;
   private driver = new NativeDriver();
   private editId: number | null = null;
   private openingEdit: Promise<unknown> | null = null;
@@ -41,6 +42,7 @@ export class EditPlayer implements EditPlayback {
     host: HTMLElement,
     private onerror: (message: string | null) => void,
   ) {
+    this.host = host;
     this.screen = mount(Screen, { target: host });
     const saved = prefs.volume();
     if (saved !== null) this.driver.volume.set(saved);
@@ -75,6 +77,17 @@ export class EditPlayer implements EditPlayback {
     const stretches = await api.playerPlan(id);
     if (mine === this.plans) this.driver.length = stretches.reduce((end, s) => Math.max(end, s.at + s.length), 0);
     return stretches;
+  }
+
+  /** Puts the screen in `host`, the view's frame made again: a screen left
+   *  in the old one, out of the page, would never move or hide the picture
+   *  again. The new one comes first, so the old one going doesn't hide it. */
+  moveTo(host: HTMLElement) {
+    if (host === this.host || this.gone) return;
+    const old = this.screen;
+    this.host = host;
+    this.screen = mount(Screen, { target: host });
+    unmount(old);
   }
 
   time = () => this.driver.time();

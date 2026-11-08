@@ -53,6 +53,19 @@ pub enum ClipCodec {
 }
 
 impl ClipCodec {
+    /// Every codec, in the order Settings › Encoding offers them.
+    pub const ALL: [ClipCodec; 4] = [ClipCodec::H264, ClipCodec::H265, ClipCodec::Dnxhr, ClipCodec::Prores];
+
+    /// Its name as Settings › Encoding shows it (the page's `CODEC_NAMES`).
+    pub fn name(self) -> &'static str {
+        match self {
+            ClipCodec::H264 => "MP4 H.264",
+            ClipCodec::H265 => "MP4 H.265",
+            ClipCodec::Dnxhr => "MOV DNxHR",
+            ClipCodec::Prores => "MOV ProRes",
+        }
+    }
+
     /// The file a picture in this codec goes in.
     pub fn format(self) -> ClipFormat {
         match self {

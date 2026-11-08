@@ -75,12 +75,11 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     // With no output, ffmpeg prints the file's details to stderr and exits with an error.
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+    tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(&path)
-        .stdin(Stdio::null())
-        .output()
-        .context("run ffmpeg")?;
+        .stdin(Stdio::null());
+    let out = tools::output(&mut cmd).context("run ffmpeg")?;
     let details = String::from_utf8_lossy(&out.stderr);
     let streams = parse_streams(&details);
     if !streams.audio && !streams.picture {
@@ -106,12 +105,11 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
 /// (cover art, an "attached pic", isn't video).
 pub fn codecs(ffmpeg: &Path, path: &Path) -> Result<crate::playable::Streams> {
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+    tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .context("run ffmpeg")?;
+        .stdin(Stdio::null());
+    let out = tools::output(&mut cmd).context("run ffmpeg")?;
     Ok(parse_codecs(&String::from_utf8_lossy(&out.stderr)))
 }
 
@@ -130,12 +128,11 @@ fn parse_codecs(details: &str) -> crate::playable::Streams {
 /// for sound alone.
 pub fn frame_rate(ffmpeg: &Path, path: &Path) -> Result<Option<f64>> {
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+    tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .context("run ffmpeg")?;
+        .stdin(Stdio::null());
+    let out = tools::output(&mut cmd).context("run ffmpeg")?;
     Ok(parse_frame_rate(&String::from_utf8_lossy(&out.stderr)))
 }
 
@@ -215,12 +212,11 @@ fn fields(line: &str) -> impl Iterator<Item = &str> {
 /// What's in `path` (`Media`), as ffmpeg reads it.
 pub fn media(ffmpeg: &Path, path: &Path) -> Result<Media> {
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow_for(&mut cmd, tools::FFMPEG_AUDIO, path)
+    tools::ffmpeg_allow_for(&mut cmd, tools::FFMPEG_AUDIO, path)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .context("run ffmpeg")?;
+        .stdin(Stdio::null());
+    let out = tools::output(&mut cmd).context("run ffmpeg")?;
     Ok(parse_media(&String::from_utf8_lossy(&out.stderr)))
 }
 
@@ -264,13 +260,12 @@ fn exact_rate(shown: f64) -> f64 {
 /// The frame showing at `time` seconds into `path`, as a JPEG `width` pixels wide.
 pub fn frame(ffmpeg: &Path, path: &Path, time: f64, width: u32) -> Result<Vec<u8>> {
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), path)
+    tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), path)
         .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{:.3}", time.max(0.0)), "-i"])
         .arg(path)
         .args(["-frames:v", "1", "-vf", &format!("scale={width}:-2"), "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"])
-        .stdin(Stdio::null())
-        .output()
-        .context("run ffmpeg")?;
+        .stdin(Stdio::null());
+    let out = tools::output(&mut cmd).context("run ffmpeg")?;
     if !out.status.success() || out.stdout.is_empty() {
         bail!("ffmpeg couldn't read a frame: {}", String::from_utf8_lossy(&out.stderr).trim());
     }

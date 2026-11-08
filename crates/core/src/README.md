@@ -9,7 +9,8 @@ One module per subject.
 - `transcript.rs`: words and lines as the model gives them.
 - `fetch.rs`: a VOD's details and audio through yt-dlp.
 - `kick.rs`: Kick's VODs, which yt-dlp can't read yet.
-- `twitch.rs`: Twitch clips.
+- `twitch.rs`: Twitch clips, and a VOD's channel.
+- `youtube.rs`: a YouTube video's channel, through oEmbed.
 - `local.rs`: files on this computer, read in place.
 - `pipeline.rs`: gets a stretch's audio and runs the worker on it.
 - `audio.rs`: decodes any media to 16 kHz mono with ffmpeg.
@@ -17,7 +18,7 @@ One module per subject.
 - `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
 - `gpu.rs`: the optional NVIDIA GPU add-on.
 - `deps.rs`: the pinned ffmpeg and Deno downloads.
-- `tools.rs`: finds and updates yt-dlp and ffmpeg.
+- `tools.rs`: finds and updates yt-dlp and ffmpeg, asks ffmpeg which encoders it has, and starts programs.
 - `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
 - `net.rs`: downloads, with stall and cancel handling.
 - `query.rs`: the search box's language, parsed.
@@ -28,6 +29,7 @@ One module per subject.
 - `word_emotes.rs`: 7TV, BetterTTV and FrankerFaceZ emotes that chat writes as words.
 - `layers.rs`: saved chat searches drawn on the timeline.
 - `clips.rs`: clips cut to the frame with ffmpeg, in the codec and quality Settings picks.
+- [`clips`](clips): clips' tests.
 - `edits.rs`: edits, documents of pieces of VODs.
 - `render.rs`: renders an edit as one file, encoded as clips are.
 - `footage.rs`: where a stretch's picture and sound come from.
@@ -42,4 +44,6 @@ One module per subject.
 - `playable.rs`: what this computer's web view can play.
 - `settings.rs`: the app's settings.
 - `choices.rs`: the small choices the page remembers.
+- `testkit.rs`: what tests stand in for programs, the network and media with; tests and the `testkit` feature only.
+- [`testkit`](testkit): the fakes, the library helper, and how to write a test with them.
 - [`bin`](bin): the developer CLI.

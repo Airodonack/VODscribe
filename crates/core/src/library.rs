@@ -111,10 +111,12 @@ const KINDS: [Kind; 5] = [
     },
     Kind {
         what: "file",
-        rows: "SELECT clip_id, clip_id, file_path, file_ext FROM renders
+        // (Its second column, a VOD's id for the others, is which make the
+        // file is: `Paths::clip_make`.)
+        rows: "SELECT clip_id, coalesce(make, 0), file_path, file_ext FROM renders
                WHERE file_path IS NOT NULL OR file_ext IS NOT NULL",
         folder: crate::Paths::clips,
-        built: |p, id, _, ext| p.clip_file(id, ext),
+        built: |p, id, make, ext| p.clip_make(id, make, ext),
         write: "UPDATE renders SET file_ext = ?2, file_path = ?3 WHERE clip_id = ?1",
     },
 ];
@@ -345,10 +347,11 @@ fn same_file(a: &Path, b: &Path) -> bool {
     stat(a).is_some_and(|a| Some(a) == stat(b))
 }
 
-/// Whether `settle` may take the file at `path` from folder `dir`: inside
-/// it by its name as written (`named_inside`), looked at only then, and
-/// inside it on disk too, so a link there to a file elsewhere isn't.
-fn may_take(path: &Path, dir: &Path) -> bool {
+/// Whether the file at `path` is the app's to take (`settle`) or delete
+/// from folder `dir`: inside it by its name as written (`named_inside`),
+/// looked at only then, and inside it on disk too, so a link there to a
+/// file elsewhere isn't.
+pub fn may_take(path: &Path, dir: &Path) -> bool {
     named_inside(path, dir) && inside(path, dir)
 }
 
@@ -417,7 +420,7 @@ mod tests {
     const BEFORE_072: &str = "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext;
         ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext;
         ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url;
-        ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 36;";
+        ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;";
 
     /// `db`, its files settled as the app does at start.
     fn settled(db: Db) -> Db {

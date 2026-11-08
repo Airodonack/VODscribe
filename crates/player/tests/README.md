@@ -10,6 +10,7 @@ Each test makes its videos with ffmpeg and reads back what the compositor drew. 
 - `waiting.rs`: footage not here yet waits for a site's VOD and plays black in an edit.
 - `shown_later.rs`: a site's first segment, whose first frame is shown later than it's decoded.
 - `sound_apart.rs`: a picture and its sound from two files, played as one.
+- `sound_idle.rs`: the sound output stream stops while paused and starts again on Play.
 - `sound_loss.rs`: the sound output going away while playing; run by hand with `VODSCRIBE_SOUND_OFF` and `VODSCRIBE_SOUND_ON`.
 - `empty.rs`: an edit with no pieces plays nothing and doesn't spin.
 - `diagnosis.rs`: what the player reports of itself for a stall.

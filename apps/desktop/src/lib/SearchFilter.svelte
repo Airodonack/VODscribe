@@ -7,9 +7,11 @@
 </script>
 
 <script lang="ts">
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { untrack } from "svelte";
   import { api, type AuthorSuggestion, type SearchQuery, type Vod } from "./api";
   import Icon from "./Icon.svelte";
+  import { SUPPORT } from "./links";
   import Popover from "./Popover.svelte";
   import {
     DEFAULT_WITHIN,
@@ -252,6 +254,13 @@
       {/if}
       {#if typed?.from != null}{@render setByText("from:")}{/if}
     </div>
+    <p class="muted note syntax">
+      You can also type these in the search box: <code>"a phrase"</code> for those exact words, <code>-word</code> to
+      leave out matches near it, <code>from:name</code> and <code>within:1h</code>.
+      <button class="link" onclick={() => openUrl(`${SUPPORT}#search`)}
+        >All the ways to search <Icon name="external" size={11} /></button
+      >
+    </p>
   </Popover>
 </div>
 
@@ -411,6 +420,12 @@
 
   .note {
     font-size: 12px;
+  }
+
+  .syntax {
+    margin: 12px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
   }
 
   .set {

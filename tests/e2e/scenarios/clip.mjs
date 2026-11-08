@@ -1,6 +1,7 @@
 // A clip: cuts at 1 and 3 s (B), then Clip with the playhead between them
-// (App.clipOneToThree); resized, it's made again, a new file in its place;
-// then deleting it, and undoing
+// (App.clipOneToThree); resized, it's made again as a new file, the one
+// before gone (every make writes a file of its own: plans/clips-pilot.md
+// "Decided" 4b); then deleting it, and undoing
 // that and the resize. Last, its file deleted outside the app (as in a file
 // manager): back in the window, its pill goes; undone, the clip is made
 // again, and the chapter added before that goes only with the next undo.
@@ -28,8 +29,8 @@ export default {
     await until("the chip to show it made", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);
     await checkpoint("clip-bar");
 
-    // Resized to 1 to 4 s: made again, a new file in its place (its path is
-    // built from its id, `Paths::clip_file`).
+    // Resized to 1 to 4 s: made again as a new file (its path is built from
+    // its id and which make it is, `Paths::clip_make`; 4b), the one before gone.
     const first = clip.file_path;
     const before = statSync(first).ino;
     await app.invoke("set_clip_range", { id: clip.id, start: 1, end: 4 });
@@ -43,7 +44,8 @@ export default {
       },
       MINUTE,
     );
-    if (moved.file_path !== first) throw new Error(`the resized clip moved from ${first} to ${moved.file_path}`);
+    if (moved.file_path === first || existsSync(first))
+      throw new Error(`the resized clip is ${moved.file_path}, and ${first} is ${existsSync(first) ? "still there" : "gone"}`);
     await until("the chip to show it made", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);
     await app.click('.chip.ready button[aria-label="Delete clip"]');
     await until(

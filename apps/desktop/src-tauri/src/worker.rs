@@ -10,12 +10,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::db::{Db, Status, Vod};
 use vodscribe_core::pipeline::{Transcription, WorkerSpec};
 use vodscribe_core::settings::{Device, Settings};
 use vodscribe_core::stretches::Stretch;
 use vodscribe_core::{Paths, gpu, model, pipeline, tools};
+
+use crate::AppHandle;
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// How many downloaded requests may wait for the transcriber before the
@@ -45,6 +47,8 @@ struct Queue {
     jobs: Vec<Job>,
     /// While set, stages start nothing new (see `Worker::hold`), and from `Worker::start` to `Worker::run`.
     held: bool,
+    /// Ended (`Worker::close`): the stages' threads stop.
+    closed: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,6 +60,9 @@ enum Stage {
 pub struct Worker {
     wakes: Mutex<[Sender<()>; 2]>,
     queue: Arc<Mutex<Queue>>,
+    /// The stages' threads, for `close` to wait for.
+    #[cfg(test)]
+    threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 /// Keeps the queue held until dropped; see `Worker::hold`.
@@ -74,7 +81,9 @@ impl Worker {
     /// and a job left from last time is there to start at once.
     pub fn start(app: AppHandle, paths: Paths) -> Result<Self> {
         Db::open_in(&paths)?.requeue_interrupted()?;
-        let queue = Arc::new(Mutex::new(Queue { jobs: Vec::new(), held: true }));
+        let queue = Arc::new(Mutex::new(Queue { jobs: Vec::new(), held: true, closed: false }));
+        #[cfg(test)]
+        let mut threads = Vec::new();
         let (dl_tx, dl_rx) = mpsc::channel();
         let (tr_tx, tr_rx) = mpsc::channel();
         for (stage, rx) in [(Stage::Download, dl_rx), (Stage::Transcribe, tr_rx)] {
@@ -92,15 +101,42 @@ impl Worker {
                 Stage::Download => "download",
                 Stage::Transcribe => "transcribe",
             };
-            std::thread::Builder::new().name(name.into()).spawn(move || run(stage, ctx, rx))?;
+            let thread = std::thread::Builder::new().name(name.into()).spawn(move || run(stage, ctx, rx))?;
+            #[cfg(test)]
+            threads.push(thread);
+            #[cfg(not(test))]
+            drop(thread);
         }
-        Ok(Self { wakes: Mutex::new([dl_tx, tr_tx]), queue })
+        Ok(Self {
+            wakes: Mutex::new([dl_tx, tr_tx]),
+            queue,
+            #[cfg(test)]
+            threads: Mutex::new(threads),
+        })
     }
 
     /// Lets the stages start jobs; see `start`.
     pub fn run(&self) {
         self.queue.lock().unwrap().held = false;
         self.wake();
+    }
+
+    /// Ends both stages for good: nothing new starts, what's running is
+    /// paused, and their threads end; returns once they have. For the tests'
+    /// app (`testkit`), which ends with its test.
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        {
+            let mut queue = self.queue.lock().unwrap();
+            (queue.held, queue.closed) = (true, true);
+            for job in &queue.jobs {
+                job.stop(Stop::Pause);
+            }
+        }
+        self.wake();
+        for thread in self.threads.lock().unwrap().drain(..) {
+            let _ = thread.join();
+        }
     }
 
     /// Tells both stages to look for work.
@@ -218,6 +254,9 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
         // Pick and register the job in one step; see `Queue`.
         let picked = {
             let mut queue = ctx.queue.lock().unwrap();
+            if queue.closed {
+                return;
+            }
             let next = if queue.held { Ok(None) } else { next_job(stage, &ctx) };
             next.unwrap_or_else(|e| {
                 eprintln!("queue: {e:#}");

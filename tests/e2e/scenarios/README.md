@@ -20,17 +20,19 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `clip-format.mjs`: clips made in each format and quality, their pictures read back, and a sound-only file's clip as WAV.
 - `clip-sources-long.mjs`: a clip in the editor whose links to its VODs scroll sideways keeps every link clickable.
 - `clip.mjs`: a clip cut between two cuts, resized and made again.
+- `codec-missing.mjs`: a clip format the app's ffmpeg can't make is greyed out in Settings, and a clip in it says why.
 - `controls.mjs`: keyboard controls changed in Settings › Controls take effect.
 - `copy-chapters.mjs`: Copy chapters puts each chapter's time and title on the clipboard.
 - `copy-moment.mjs`: the header's timestamp copies a link to the playhead's moment; needs the network.
-- `copy-paste.mjs`: Ctrl+C and Ctrl+V copy and paste clips and stretches as copies.
+- `copy-paste.mjs`: Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste clips and stretches; a cut keeps its file for the paste.
 - `download-play.mjs`: a VOD from a site without a usable player plays as its video downloads.
 - `drag-file-time.mjs`: how long a clip dragged out takes to land whole in a file manager.
 - `drag-note.mjs`: a site's clip dragged out before the download note was answered starts no drag.
 - `drag-out.mjs`: clips dragged out of the window with the OS's mouse.
 - `drag-promise.mjs`: a clip dragged out before it's made lands once it's made.
 - `drag-resolve.mjs`: an MP4 clip or edit dropped on DaVinci Resolve on Linux is held back, and the app offers MOV; one made in another codec or quality is made again when dragged.
-- `drop-virtual.mjs`: a video with no path dropped on the window (a zip in Explorer or an archive manager, a promise on a Mac) opens once received, and one its app can't give is said; on Linux also a sandboxed app's file.
+- `drop-link.mjs`: a VOD link dragged in from another app, as a link or as text, adds it; one of the page's own adds nothing.
+- `drop-virtual.mjs`: a video with no path dropped on the window (a zip in Explorer or an archive manager, a promise on a Mac) opens once received, and one its app can't give is said; on a Mac also a promise and a file dragged together, on Linux a sandboxed app's file.
 - `edit-footage-thumbnail.mjs`: the timeline's thumbnail over an edit's piece from a site.
 - `edits.mjs`: making, renaming, cutting and rendering an edit.
 - `export-whole.mjs`: C with no cuts clips the whole video.
@@ -47,6 +49,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `perf-page.mjs`: Settings and a VOD with twenty clips opening, against their budgets.
 - `perf-player.mjs`: opening and seeking in the app's own player, against their budgets.
 - `perf-switch.mjs`: switching between library entries, timed and watched for jank.
+- `picture-covered.mjs`: Settings and the search filter show over an edit's picture after its clip is opened and left.
 - `platforms.mjs`: the test video on Twitch, Kick and YouTube, added and played; needs the network.
 - `player-open.mjs`: a file opens on its picture before Play.
 - `player-picture.mjs`: what the app's own player shows, seen on the screen and clicked with the OS's mouse.
@@ -55,6 +58,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `readd-erasing.mjs`: a VOD removed and added again while it's being erased.
 - `readd-stuck.mjs`: a VOD removed and added again while its work won't stop.
 - `recovery.mjs`: a library that won't open starts the recovery screen.
+- `refresh-offer.mjs`: a slow file host asked again by two refreshes offers once; Check for a VODscription shows it's asking.
 - `reload.mjs`: a page reload brings back what was open.
 - `remembered.mjs`: the small choices the page remembers outlast a restart.
 - `remove.mjs`: removing a VOD asks first.
@@ -65,6 +69,8 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `settings.mjs`: settings, the clip format and quality among them, outlast a restart, and Reset settings puts them back.
 - `setup.mjs`: first-run setup, then the library; always runs first when chosen.
 - `short-mode.mjs`: a short window shows the player alone.
+- `site-autoplay.mjs`: Twitch starts on Play where its frame ends on a fraction of a pixel; needs the network.
+- `site-refused.mjs`: Twitch's player too small to start on Play: a toast asks for its own Play, and goes once it plays at its size again; needs the network.
 - `site-embed.mjs`: a site's VOD with the app's picture under its player; needs the network and an `embed-takeover` build.
 - `site-frames.mjs`: the time by frame under a site's own player; needs the network.
 - `site-in-out.mjs`: I right after a timeline click, on a site's VOD; needs the network.

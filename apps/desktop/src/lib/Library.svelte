@@ -19,7 +19,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { api, type Put, type Vod } from "./api";
-  import { fromSite, os } from "./platform";
+  import { fromSite } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, releaseNotes } from "./links";
@@ -40,6 +40,7 @@
   import { actionsFor } from "./actions";
   import { offers } from "./offers.svelte";
   import { refreshDetails } from "./refresh.svelte";
+  import { InsideDrag } from "./insideDrag";
   import { pressToDrag, type Pressed } from "./pressToDrag";
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
@@ -122,9 +123,8 @@
   }
 
   // Dropping onto the window. Files arrive through the webview's drop event with
-  // their paths, and on Linux dropped links do too. Windows and macOS don't pass
-  // link drops to the app at all, so there links have to be pasted.
-  const linksDrop = os === "linux";
+  // their paths, and links dragged in from another app do too (the app's own
+  // drop target gives them as paths on Windows and macOS, as wry does on Linux).
   // A link dragged over the page (DOM events) or files over the window (the
   // webview's own events); either shows the drop overlay.
   let linkOver = $state(false);
@@ -143,8 +143,19 @@
   $effect(() => {
     document.body.classList.toggle("dropping", linkDragged || filesOver);
   });
-  // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
+  // A drag that started inside the app (transcript text, a thumbnail, a streamer
+  // card's link) isn't a drop to add. The window's native events hear it too,
+  // late: insideDrag.ts tells which are its own.
   let draggingInside = false;
+  const inside = new InsideDrag();
+  function onDragStart(e: DragEvent) {
+    draggingInside = true;
+    inside.start(e.dataTransfer?.getData("text/uri-list") || e.dataTransfer?.getData("text/plain") || "");
+  }
+  function onDragEnd() {
+    draggingInside = false;
+    inside.end();
+  }
   // Taken from dragenter on too: a quick drag can be dropped before any
   // dragover, and a drop no handler has claimed opens the link in the window.
   function onDragOver(e: DragEvent) {
@@ -205,13 +216,17 @@
           return;
         }
         if (payload.type === "enter") {
+          const own = inside.enter(payload.paths);
           // macOS reports every drag, even ones with nothing the app can use.
           // A clip being dragged out of the app isn't one to add.
-          filesOver = payload.paths.length > 0 && !draggingInside && !draggingOut() && !isOutgoing(payload.paths);
-        } else if (payload.type === "leave") filesOver = false;
-        else if (payload.type === "drop") {
+          filesOver = payload.paths.length > 0 && !own && !draggingOut() && !isOutgoing(payload.paths);
+        } else if (payload.type === "leave") {
+          inside.leave();
           filesOver = false;
-          if (!draggingInside && !draggingOut() && !isOutgoing(payload.paths)) adder.items(payload.paths, true);
+        } else if (payload.type === "drop") {
+          filesOver = false;
+          const paths = inside.drop(payload.paths);
+          if (!draggingOut() && !isOutgoing(paths)) adder.items(paths, true);
         }
       })
       .then(
@@ -384,8 +399,8 @@
 </script>
 
 <svelte:window
-  ondragstart={() => (draggingInside = true)}
-  ondragend={() => (draggingInside = false)}
+  ondragstart={onDragStart}
+  ondragend={onDragEnd}
   ondragenter={onDragOver}
   ondragover={onDragOver}
   ondrop={onDrop}
@@ -394,7 +409,7 @@
 />
 
 {#if dropping}
-  <div class="drop">{linksDrop ? "Drop video files or VOD links to add them" : "Drop video files to add them"}</div>
+  <div class="drop">Drop video files or VOD links to add them</div>
 {/if}
 
 <aside class="library-pane">
@@ -449,7 +464,7 @@
       {...demoOff("The web demo can't transcribe. In the app, you can add video files from your computer too.")}
       >add video files…</button
     >
-    {#if !DEMO}or drop {linksDrop ? "files and links" : "video files"} anywhere{/if}
+    {#if !DEMO}or drop files and links anywhere{/if}
   </p>
   {#if adder.error}
     <p class="error-text add-error">{adder.error}</p>

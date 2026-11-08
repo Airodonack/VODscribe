@@ -14,8 +14,9 @@
 //!
 //! On Windows the window's drops are all taken here (`Window`, for
 //! `drop_target`): those with paths reach the page as Tauri's own drag-drop
-//! events did, so the page hears the same. On macOS only drags of promises
-//! are; wry gives the page the rest, as before. On Linux the web view keeps
+//! events did, so the page hears the same, and links from a browser the
+//! same way, as paths. On macOS only drags of promises, and of links from
+//! another app, are; wry gives the page the rest, as before. On Linux the web view keeps
 //! the drops it takes (file addresses), and those taken here reach the page
 //! the same way: a sandboxed app's files, which the document portal gives as
 //! paths, as a drop with them.
@@ -170,11 +171,12 @@ mod taking {
     use std::time::{Duration, Instant};
 
     use serde::Serialize;
-    use tauri::{AppHandle, Emitter, Manager};
+    use tauri::{Emitter, Manager};
 
     use super::{Receiving, file_name, free_name, part_of, rename_new};
     use dragndrop_target::{Destination, Item};
 
+    use crate::AppHandle;
     use crate::AppState;
     use crate::drop_target::{self, Event};
 
@@ -192,7 +194,7 @@ mod taking {
     /// Takes the drops on `window` (built without Tauri's drag-drop handler)
     /// with the app's own drop target, the web view's own turned off.
     #[cfg(windows)]
-    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    pub(crate) fn take_drops(window: &crate::WebviewWindow) -> tauri::Result<()> {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller4;
         use windows_core::Interface;
 
@@ -216,7 +218,7 @@ mod taking {
     /// Takes the drops of file promises on `window`'s web view (wry's drop
     /// target, hooked), and the promises' types.
     #[cfg(target_os = "macos")]
-    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    pub(crate) fn take_drops(window: &crate::WebviewWindow) -> tauri::Result<()> {
         let target = Window { app: window.app_handle().clone(), label: window.label().to_string() };
         window.with_webview(move |webview| match drop_target::register(webview.inner(), Box::new(target), trace) {
             Ok(()) => trace("taking promised files on the web view"),
@@ -227,7 +229,7 @@ mod taking {
     /// Takes the drops on `window`'s page that its web view can't (files with
     /// no address yet); the web view keeps the rest.
     #[cfg(target_os = "linux")]
-    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    pub(crate) fn take_drops(window: &crate::WebviewWindow) -> tauri::Result<()> {
         let target = Window { app: window.app_handle().clone(), label: window.label().to_string() };
         match crate::webview::page(window) {
             Ok(page) => {
@@ -297,19 +299,24 @@ mod taking {
     impl drop_target::Target for Window {
         /// Told to the page as Tauri's own events: a drag of virtual files
         /// comes with their names for paths (the page shows it's welcome),
-        /// and its drop with none (they come in as jobs).
+        /// and its drop without them (they come in as jobs); links come as
+        /// paths, as wry gives them on Linux (the page adds the links among
+        /// a drop's paths).
         fn heard(&self, event: Event) {
             match event {
-                Event::Enter { paths, names, at } => {
-                    let paths = if paths.is_empty() { names.into_iter().map(PathBuf::from).collect() } else { paths };
-                    self.tell("tauri://drag-enter", Some(paths), at)
+                Event::Enter { paths, names, links, at } => {
+                    let named = names.into_iter().chain(links).map(PathBuf::from);
+                    self.tell("tauri://drag-enter", Some(paths.into_iter().chain(named).collect()), at)
                 }
                 Event::Over { at } => self.tell("tauri://drag-over", None, at),
                 Event::Leave => {
                     let target = tauri::EventTarget::Webview { label: self.label.clone() };
                     let _ = self.app.emit_to(target, "tauri://drag-leave", ());
                 }
-                Event::Drop { paths, at } => self.tell("tauri://drag-drop", Some(paths), at),
+                Event::Drop { paths, links, at } => {
+                    let paths = paths.into_iter().chain(links.into_iter().map(PathBuf::from)).collect();
+                    self.tell("tauri://drag-drop", Some(paths), at)
+                }
             }
         }
 

@@ -20,7 +20,9 @@
 //!   (IDataObjectAsyncCapability, as Explorer does), the operation is started
 //!   there and the reading goes on a thread of its own, so `Drop` returns at
 //!   once and the source shows its own copy progress; otherwise everything is
-//!   read before `fetch` returns.
+//!   read before `fetch` returns. [`windows::links`] reads the web links of
+//!   a link dragged from a browser (UniformResourceLocatorW), or of text
+//!   that is links only.
 //! - **macOS** ([`macos`]): give it the `NSDraggingInfo` of
 //!   `performDragOperation:` (and of `draggingEntered:`, to decide).
 //!   [`macos::paths`] reads the file URLs; [`macos::items`] reads the
@@ -30,6 +32,8 @@
 //!   item from its reader block, on a queue of its own: a folder destination
 //!   has the file moved in, a sink is fed from it. Bytes so far are known
 //!   only at the end, and a cancel waits for the source's file.
+//!   [`macos::links`] reads the web links a drag offers (its URLs, or text
+//!   that is links only).
 //! - **Linux** ([`linux`], GTK 3): give it the `GdkDragContext` of your
 //!   widget's drag signals. [`linux::paths`] reads text/uri-list (from your
 //!   `drag-data-received`), [`linux::items`] an XdndDirectSave offer (in
@@ -62,6 +66,8 @@ mod choice;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod descriptor;
 mod folder;
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+mod links;
 
 #[cfg(target_os = "linux")]
 pub mod linux;

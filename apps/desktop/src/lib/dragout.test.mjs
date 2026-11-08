@@ -26,7 +26,9 @@ const fakes = {
   "./edits.svelte": `export const edits = globalThis.fake.edits;
     export const putOf = (s) => ({ kind: "range", vodId: s.vodId, start: s.start, end: s.end, title: s.title });`,
   "./media": `export const PEAKS_RATE = 1; export const columns = () => []; export const stretchIn = () => undefined;`,
-  "./platform": `export const formatTime = (s) => String(s); export const playsFromFile = () => true;`,
+  // The page's own time formatting, so the stretch reads as the page says it (stretchSaid).
+  "./platform": `export { formatTime } from ${JSON.stringify(new URL("./platform.ts", import.meta.url).href)};
+    export const playsFromFile = () => true;`,
 };
 const hooks = `
 const fakes = ${JSON.stringify(fakes)};
@@ -149,6 +151,7 @@ const fake = {
     /** @param {number} id */
     keepClip: async (id) => void fake.kept.push(id),
     addClip: async () => null,
+    addPieceClip: async () => null,
     setClipRange: async () => null,
     listVods: async () => [],
     listClips: async () => [],
@@ -231,7 +234,19 @@ Object.assign(globalThis, {
     querySelector: () => null,
   },
 });
-const { carry, carrySet, backOver, backLeft, dragEditOut } = await import("./dragout.ts");
+const {
+  carry,
+  carrySet,
+  backOver,
+  backLeft,
+  dragEditOut,
+  madeAsWanted,
+  finishedOnly,
+  making,
+  downloading,
+  isOutgoing,
+  stretchSaid,
+} = await import("./dragout.ts");
 
 /** @param {number} x @param {number} y @param {number} [buttons] */
 const move = (x, y, buttons = 1) => send({ type: "pointermove", clientX: x, clientY: y, buttons });
@@ -884,4 +899,215 @@ test("a drag the app refused is said, even when its words say released", async (
   await tick();
   assert.equal(fake.clips.error, "The clip was released from the library.");
   assert.deepEqual(fake.deleted, [3, 4]);
+});
+
+// What a clip's file is made as, said by `madeAsWanted` (the page's half of
+// what crates/core clips.rs `made_as` says).
+
+/** A made clip's file and the encoding recorded for it. @param {string} file_path @param {{ codec: string, quality: string }} [encoding] */
+const madeClip = (file_path, encoding) =>
+  /** @type {Parameters<typeof madeAsWanted>[0]} */ (/** @type {unknown} */ ({ file_path, encoding }));
+/** Clips are made as @param {"mp4" | "mov"} clip_format @param {string} [clip_codec] @param {string} [clip_quality] */
+const wanted = (clip_format, clip_codec, clip_quality) =>
+  /** @type {Parameters<typeof madeAsWanted>[1]} */ (
+    /** @type {unknown} */ ({ clip_format, clip_codec, clip_quality })
+  );
+
+/**
+ * A file in another format is not as clips are made now (crates/core
+ * clips.rs:116: "The page asks the same"; dragout.ts:308 `madeAsWanted`).
+ */
+test("a file in another format is not as clips are made now", () => {
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.mp4", { codec: "h264", quality: "standard" }), wanted("mov", "dnxhr", "proxy")),
+    false,
+  );
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.mov", { codec: "dnxhr", quality: "proxy" }), wanted("mp4", "h264", "standard")),
+    false,
+  );
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.MOV", { codec: "dnxhr", quality: "proxy" }), wanted("mp4")),
+    false,
+    "whatever the case of its extension",
+  );
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.mp4", { codec: "h264", quality: "standard" }), wanted("mp4", "h264", "standard")),
+    true,
+  );
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.mov", { codec: "prores", quality: "high" }), wanted("mov", "prores", "high")),
+    true,
+  );
+});
+
+/**
+ * A file in another codec or quality is not as clips are made now
+ * (0.7.2.md, "The owner's walkthrough", Fix before the tag (walk-clips): a
+ * clip made as H.264 stayed as it was after clips were set to H.265;
+ * dragout.ts:308 `madeAsWanted`).
+ */
+test("a file in another codec or quality is not as clips are made now", () => {
+  const h264 = madeClip("/c/1.mp4", { codec: "h264", quality: "standard" });
+  assert.equal(madeAsWanted(h264, wanted("mp4", "h265", "standard")), false, "codec");
+  assert.equal(madeAsWanted(h264, wanted("mp4", "h264", "high")), false, "quality");
+  assert.equal(madeAsWanted(h264, wanted("mp4", "h265", "high")), false, "both");
+  const prores = madeClip("/c/1.mov", { codec: "prores", quality: "high" });
+  assert.equal(madeAsWanted(prores, wanted("mov", "dnxhr", "high")), false, "a MOV in another codec");
+  assert.equal(madeAsWanted(prores, wanted("mov", "prores", "standard")), false, "a MOV in another quality");
+  assert.equal(madeAsWanted(h264, wanted("mp4", "h264", "standard")), true, "as now");
+});
+
+/**
+ * A file with no encoding recorded reads as its format was made when codecs
+ * were no choice: MP4 as H.264 standard, MOV as DNxHR proxy (dragout.ts:302
+ * and :308: "else as a file of its format was made before that was").
+ */
+test("a file with no encoding recorded reads as its format was made then", () => {
+  assert.equal(madeAsWanted(madeClip("/c/1.mp4"), wanted("mp4", "h264", "standard")), true);
+  assert.equal(madeAsWanted(madeClip("/c/1.mp4"), wanted("mp4", "h265", "standard")), false);
+  assert.equal(madeAsWanted(madeClip("/c/1.mp4"), wanted("mp4", "h264", "high")), false);
+  assert.equal(madeAsWanted(madeClip("/c/1.mov"), wanted("mov", "dnxhr", "proxy")), true);
+  assert.equal(madeAsWanted(madeClip("/c/1.mov"), wanted("mov", "prores", "proxy")), false);
+  assert.equal(madeAsWanted(madeClip("/c/1.mov"), wanted("mov", "dnxhr", "standard")), false);
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.mp4"), wanted("mp4")),
+    true,
+    "settings that choose nothing want the format's own",
+  );
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.mov"), wanted("mov")),
+    true,
+    "settings that choose nothing want the format's own",
+  );
+});
+
+/**
+ * Sound alone is as wanted in any codec of its format (dragout.ts:308: "Sound
+ * alone is the same in every codec of its format"): .m4a is MP4's, .wav MOV's.
+ */
+test("sound alone is as wanted in any codec of its format", () => {
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.m4a", { codec: "h264", quality: "standard" }), wanted("mp4", "h265", "high")),
+    true,
+  );
+  assert.equal(madeAsWanted(madeClip("/c/1.m4a"), wanted("mp4", "h265", "high")), true);
+  assert.equal(
+    madeAsWanted(madeClip("/c/1.wav", { codec: "dnxhr", quality: "proxy" }), wanted("mov", "prores", "high")),
+    true,
+  );
+  assert.equal(madeAsWanted(madeClip("/c/1.WAV"), wanted("mov", "prores", "high")), true);
+  assert.equal(
+    madeAsWanted(madeClip("/c/take.m4a.mp4", { codec: "h264", quality: "standard" }), wanted("mp4", "h265", "high")),
+    false,
+    "a picture's file only named so",
+  );
+  assert.equal(madeAsWanted(madeClip("/c/1.m4a"), wanted("mov", "dnxhr", "proxy")), false, "but in its format");
+  assert.equal(madeAsWanted(madeClip("/c/1.wav"), wanted("mp4", "h264", "standard")), false, "but in its format");
+});
+
+/**
+ * An app that takes finished files only is named when its name is known
+ * (0.7.1: "Some apps take finished files only. If one takes nothing or
+ * refuses the drop before the clip is made, VODscribe says which app it
+ * was"; dragout.ts:108).
+ */
+test("an app that takes finished files only is named when its name is known", () => {
+  assert.equal(
+    finishedOnly("Kdenlive", 1),
+    "Kdenlive takes finished files only. The clip is being made; drag it from the clip bar when it's ready.",
+  );
+  assert.equal(
+    finishedOnly(null, 1),
+    "That app takes finished files only. The clip is being made; drag it from the clip bar when it's ready.",
+  );
+  assert.equal(finishedOnly("", 1).startsWith("That app takes"), true, "an empty name is none");
+});
+
+/** Several clips refused by such an app are said as they (dragout.ts:108). */
+test("several clips refused by such an app are said as they", () => {
+  assert.equal(
+    finishedOnly("Kdenlive", 2),
+    "Kdenlive takes finished files only. The clips are being made; drag them from the clip bar when they're ready.",
+  );
+  assert.equal(
+    finishedOnly(null, 3),
+    "That app takes finished files only. The clips are being made; drag them from the clip bar when they're ready.",
+  );
+});
+
+/**
+ * Clips let go while being made are said to land once made (0.7.1: "once you
+ * let it go on another app, VODscribe says it's being made"; dragout.ts:123).
+ */
+test("clips let go while being made are said to land once made", () => {
+  assert.equal(making(1), "Making the clip. It'll be where you dropped it once it's made.");
+  assert.equal(making(2), "Making 2 clips. They'll be where you dropped them once they're made.");
+  assert.equal(making(5), "Making 5 clips. They'll be where you dropped them once they're made.");
+});
+
+/**
+ * A clip downloaded into the clip bar instead says so (0.7.1 Fixes: "The
+ * download note survives a drag ... Download clip puts it on the clip bar to
+ * drag out once it's made"; drag-note.mjs: "Download clip makes the clip in
+ * the clip bar ... and says so"; dragout.ts:115).
+ */
+test("a clip downloaded into the clip bar instead says so", () => {
+  assert.equal(downloading(1), "Downloading the clip. Drag it from the clip bar when it's ready.");
+  assert.equal(downloading(2), "Downloading the clips. Drag them from the clip bar when they're ready.");
+});
+
+/**
+ * A drag's own files coming back are not added to the library (0.4.1 Fixes:
+ * "A clip dragged out of the window and back in couldn't be dropped on an
+ * edit or the clip bar"; dragout.ts:77: the files, or the names they're
+ * handed out by in the folder beside each, `Paths::clip_names`).
+ */
+test("a drag's own files coming back are not added to the library", async () => {
+  reset();
+  assert.equal(isOutgoing(["/lib/clips/7.mp4"]), false, "none is being dragged");
+  const done = carriedSet(true, async () => [
+    { id: 7, start: 0, end: 5, shown: false, status: "ready", file_path: "/lib/clips/7.mp4" },
+    { id: 8, start: 5, end: 10, shown: false, status: "ready", file_path: "C:\\lib\\clips\\8.mp4" },
+    { id: 11, start: 10, end: 15, shown: false, status: "ready", file_path: "/lib/clips/11-1.mp4" },
+  ]);
+  move(120, 120);
+  move(0, 300);
+  await done;
+  // A clip made since each make got a file of its own (`Paths::clip_make`):
+  // its names are still in the folder named by its id.
+  assert.equal(isOutgoing(["/lib/clips/11-1.mp4"]), true, "a later make's file");
+  assert.equal(isOutgoing(["/lib/clips/11/Day 3 10-15.mp4"]), true, "a name of a later make");
+  assert.equal(isOutgoing(["/lib/clips/11-1/x.mp4"]), false, "no folder is named by the make");
+  assert.equal(isOutgoing(["/lib/clips/7.mp4"]), true, "the file");
+  assert.equal(isOutgoing(["/lib/clips/7/Day 3 0-5.mp4"]), true, "a name it is handed out by");
+  assert.equal(isOutgoing(["C:\\lib\\clips\\8\\Day 3 5-10.mp4"]), true, "a name, on Windows");
+  assert.equal(isOutgoing(["/lib/clips/7.mp4", "/lib/clips/7/x.mp4", "C:\\lib\\clips\\8.mp4"]), true, "all of them");
+  assert.equal(isOutgoing(["/lib/clips/7.mp4", "/home/me/other.mp4"]), false, "one that is not");
+  assert.equal(isOutgoing(["/lib/clips/70/x.mp4"]), false, "another clip's folder");
+  assert.equal(isOutgoing(["/lib/clips/7.mp4.bak"]), false, "another file");
+  assert.equal(isOutgoing(["/lib/clips/7"]), false, "the folder itself is not a file of it");
+  assert.equal(isOutgoing([]), false, "nothing");
+  assert.equal(isOutgoing(["/lib/clips/7.mp4", "/lib/clips/7/Day 3 0-5.mp4"]), true, "the file and its name together");
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
+  await tick();
+  // A dot in a folder's name is not the file's extension.
+  const dotted = carriedSet(true, async () => [
+    { id: 9, start: 0, end: 5, shown: false, status: "ready", file_path: "/lib/v1.2/clips/9.mp4" },
+    { id: 10, start: 5, end: 10, shown: false, status: "ready", file_path: "/lib/v1.2/clips/10.mp4" },
+  ]);
+  move(120, 120);
+  move(0, 300);
+  await dotted;
+  assert.equal(isOutgoing(["/lib/v1.2/clips/9/Day 3 0-5.mp4"]), true, "a name, under a dotted folder");
+  assert.equal(isOutgoing(["/lib/v1.2/other.mp4"]), false, "a file beside, not of it");
+  // Over: the drag is no longer outgoing once its end is heard and a moment passed.
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
+  await tick();
+});
+
+/** A carried stretch is said as its length, then its times (dragout.ts:422: "0:05  1:00–1:05"). */
+test("a carried stretch is said as its length then its times", () => {
+  assert.equal(stretchSaid(60, 65), "0:05  1:00–1:05");
+  assert.equal(stretchSaid(3725, 3785), "1:00  1:02:05–1:03:05");
 });

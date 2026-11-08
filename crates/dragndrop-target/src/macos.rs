@@ -4,7 +4,8 @@
 //! Call these from your `NSDraggingDestination`, on the main thread: [`paths`]
 //! and [`items`] (or [`offer`]) in `draggingEntered:` to decide whether to
 //! take the drag (with [`promises_preferred`] when it offers both), again in
-//! `performDragOperation:`, then [`fetch`] there with the items you take.
+//! `performDragOperation:`, then [`fetch`] there with the items you take. A
+//! drag of neither may be of web links ([`links`]).
 //! Your view must be registered for `NSFilePromiseReceiver.readableDraggedTypes`
 //! (as well as file URLs) to be asked about promises at all.
 //!
@@ -35,8 +36,9 @@ use objc2_foundation::{
     NSString, NSURL,
 };
 
-use crate::choice::{Offered, promises_taken};
+use crate::choice::{self, Offered, Taken};
 use crate::folder::FolderSink;
+use crate::links;
 use crate::{Destination, Error, Fetch, Item, Job, Offer, Shared, Sink, To};
 
 /// How much of a received file is read at a time, for a sink.
@@ -91,33 +93,64 @@ pub fn items(info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<Item> {
 /// of another type than the promised file, so a stand-in for it (Photos
 /// offers a video as a JPEG of a frame, and a promise of the movie). A file
 /// URL of the promised type is taken as the file: nothing is copied.
+///
+/// None when the file URLs are the files to take ([`paths`]); else the
+/// paths to take beside the promises: the file URLs of the items that
+/// promise nothing, in a drag mixing the two.
 #[allow(deprecated)] // (NSWorkspace's type calls: UTType, their successor, is Swift's and newer.)
-pub fn promises_preferred(info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
-    let Some(items) = info.draggingPasteboard().pasteboardItems() else { return false };
+pub fn promises_preferred(info: &ProtocolObject<dyn NSDraggingInfo>) -> Option<Vec<PathBuf>> {
+    let items = info.draggingPasteboard().pasteboardItems()?;
     let (promise, promised) = (NSString::from_str(PROMISE_ITEM), NSString::from_str(PROMISED_TYPE));
     // SAFETY: a static AppKit string.
     let url = unsafe { NSPasteboardTypeFileURL };
     let workspace = NSWorkspace::sharedWorkspace();
-    // Each item's (file URL's type, whether a promise, the promised type).
+    // Each item's (file URL, its type, whether a promise, the promised type).
     let read: Vec<_> = items
         .iter()
         .map(|item| {
-            let file = item.stringForType(url).and_then(|u| NSURL::URLWithString(&u)?.to_file_path());
-            let file = file.and_then(|f| workspace.typeOfFile_error(&NSString::from_str(f.to_str()?)).ok());
+            let path = item.stringForType(url).and_then(|u| NSURL::URLWithString(&u)?.to_file_path());
+            let file = path.as_ref().and_then(|f| workspace.typeOfFile_error(&NSString::from_str(f.to_str()?)).ok());
             let promise = item.types().containsObject(&promise);
             let promised = item.stringForType(&promised).filter(|_| promise);
-            (file.map(|t| t.to_string()), promise, promised.map(|t| t.to_string()))
+            (path, file.map(|t| t.to_string()), promise, promised.map(|t| t.to_string()))
         })
         .collect();
     let offered: Vec<_> = read
         .iter()
-        .map(|(file, promise, promised)| Offered {
+        .map(|(_, file, promise, promised)| Offered {
             file: file.as_deref(),
             promise: *promise,
             promised: promised.as_deref(),
         })
         .collect();
-    promises_taken(&offered, |a, b| workspace.type_conformsToType(&NSString::from_str(a), &NSString::from_str(b)))
+    let taken =
+        choice::taken(&offered, |a, b| workspace.type_conformsToType(&NSString::from_str(a), &NSString::from_str(b)));
+    if !taken.contains(&Taken::Promise) {
+        return None;
+    }
+    let files = read.into_iter().zip(taken).filter(|(_, t)| *t == Taken::File);
+    Some(files.filter_map(|((path, ..), _)| path).collect())
+}
+
+/// The web links (http and https) `info` offers: its URLs, else its text
+/// when that's links only, one a line (a link dragged from a browser offers
+/// both; selected text, the text alone); within `links`' caps.
+pub fn links(info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<String> {
+    let pasteboard = info.draggingPasteboard();
+    let urls = read(&pasteboard, NSURL::class());
+    let urls = links::web_links(
+        urls.iter().filter_map(|url| url.downcast_ref::<NSURL>()?.absoluteString()).map(|url| url.to_string()),
+    );
+    if !urls.is_empty() {
+        return urls;
+    }
+    let text = read(&pasteboard, NSString::class());
+    // (Measured before it's copied out: a string over the cap is never read whole.)
+    let text = text
+        .iter()
+        .filter_map(|t| t.downcast_ref::<NSString>())
+        .map(|t| (t.length() <= links::MAX_TEXT).then(|| t.to_string()));
+    links::joined(text).map(|t| links::links_in(&t)).unwrap_or_default()
 }
 
 /// Both [`paths`] (empty with none) and [`items`].

@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
-use vodscribe_core::settings::Settings;
+use vodscribe_core::settings::{ClipCodec, Settings};
 use vodscribe_core::{Progress, deps, model, tools};
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, err};
 
 #[derive(Serialize)]
@@ -75,8 +76,7 @@ pub(crate) async fn data_dir(state: State<'_, AppState>) -> CmdResult<String> {
 /// UI can't use it to open anything else.
 #[tauri::command]
 pub(crate) async fn open_data_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
-    app.opener().open_path(state.paths.root.display().to_string(), None::<String>).map_err(err)
+    crate::system::open(&app, &state.paths.root)
 }
 
 /// A `setup-progress` event: which item, and its `Progress`.
@@ -280,6 +280,32 @@ pub(crate) async fn reset_settings(state: State<'_, AppState>) -> CmdResult<Sett
 #[tauri::command]
 pub(crate) async fn set_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
     settings.save(&state.paths.settings()).map_err(err)
+}
+
+/// The codecs the ffmpeg in use can't make, and whose it is.
+#[derive(Serialize)]
+pub(crate) struct FfmpegCodecs {
+    missing: Vec<ClipCodec>,
+    /// VODscribe's own (`tools::own_ffmpeg`), else the system's: the page
+    /// says which can't make a format. With none found, its own, which
+    /// setup downloads.
+    own: bool,
+}
+
+/// The codecs Settings › Encoding offers that the ffmpeg in use can't make,
+/// for the page to grey out; asked of that ffmpeg once (`tools::encoders`).
+#[tauri::command]
+pub(crate) async fn missing_clip_codecs(state: State<'_, AppState>) -> CmdResult<FfmpegCodecs> {
+    let bin = state.paths.bin();
+    tauri::async_runtime::spawn_blocking(move || match tools::find_ffmpeg(&bin) {
+        Some(ffmpeg) => FfmpegCodecs {
+            missing: vodscribe_core::clips::missing_codecs(&ffmpeg),
+            own: tools::own_ffmpeg(&bin, &ffmpeg),
+        },
+        None => FfmpegCodecs { missing: Vec::new(), own: true },
+    })
+    .await
+    .map_err(err)
 }
 
 #[derive(Serialize)]

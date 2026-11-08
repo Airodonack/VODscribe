@@ -300,10 +300,11 @@ class Edits {
   }
 
   /** Takes what's picked out of the open edit, as one change: pieces
-   *  `pieces`, stretches `stretches` of its timeline, clips `clipIds` of its clip bar. */
-  async removeFrom(pieces: number[], stretches: [number, number][], clipIds: number[]): Promise<boolean> {
+   *  `pieces`, stretches `stretches` of its timeline, clips `clipIds` of its clip bar;
+   *  with `cut` (Ctrl+X), the clips are held for its pastes. */
+  async removeFrom(pieces: number[], stretches: [number, number][], clipIds: number[], cut = false): Promise<boolean> {
     if (this.openId === null) return false;
-    return this.#change(api.removeFromEdit(this.openId, pieces, stretches, clipIds));
+    return this.#change(api.removeFromEdit(this.openId, pieces, stretches, clipIds, cut));
   }
 
   async create(): Promise<Edit | null> {

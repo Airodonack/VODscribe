@@ -83,12 +83,104 @@ pub fn find_js_runtime(bin_dir: &Path) -> Option<(&'static str, PathBuf)> {
     })
 }
 
+/// VODscribe's own ffmpeg in `bin_dir`, else the system's on PATH.
 pub fn find_ffmpeg(bin_dir: &Path) -> Option<PathBuf> {
     let local = crate::deps::managed_path(bin_dir, "ffmpeg");
     if local.is_file() {
         return Some(local);
     }
     which::which("ffmpeg").ok()
+}
+
+/// Whether `ffmpeg` (as `find_ffmpeg` found it) is VODscribe's own, the one
+/// it downloaded into `bin_dir`, rather than the system's.
+pub fn own_ffmpeg(bin_dir: &Path, ffmpeg: &Path) -> bool {
+    ffmpeg == crate::deps::managed_path(bin_dir, "ffmpeg")
+}
+
+/// What tells one ffmpeg at a path from another there: its file's size and
+/// time, which an update or a new download changes.
+type FileVersion = (u64, Option<std::time::SystemTime>);
+
+/// How long ffmpeg has to list its encoders; it takes tens of milliseconds.
+const ENCODERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The encoders `ffmpeg` has (`ffmpeg -encoders`), asked once per ffmpeg:
+/// one at another path, or one replaced at the same path, is asked again.
+/// None when it can't say (it won't start, answers something else, or not
+/// within `ENCODERS_TIMEOUT`), so a caller goes on as if it had them all and
+/// lets ffmpeg answer for itself; that isn't kept, and is asked again next
+/// time. It runs ffmpeg the first time, so never on the page's thread.
+///
+/// A launcher that stays the same file while the ffmpeg behind it changes
+/// (a Scoop shim on Windows) keeps its old answer until the app restarts.
+pub fn encoders(ffmpeg: &Path) -> Option<Encoders> {
+    encoders_within(ffmpeg, ENCODERS_TIMEOUT)
+}
+
+/// The names of an ffmpeg's encoders (`encoders`).
+pub type Encoders = std::sync::Arc<std::collections::BTreeSet<String>>;
+
+/// What one path's ffmpeg answered, for the ffmpeg that was there then.
+type Asked = std::sync::Arc<std::sync::Mutex<Option<(FileVersion, Encoders)>>>;
+
+fn encoders_within(ffmpeg: &Path, timeout: std::time::Duration) -> Option<Encoders> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static PATHS: Mutex<Option<HashMap<PathBuf, Asked>>> = Mutex::new(None);
+    let meta = fs::metadata(ffmpeg).ok()?;
+    let version = (meta.len(), meta.modified().ok());
+    // Each path's answer behind its own lock, held while that ffmpeg answers:
+    // two asking of one ffmpeg at once (Settings and a cut) run it once
+    // between them, and one that hangs holds up no other path.
+    let asked = PATHS.lock().unwrap().get_or_insert_default().entry(ffmpeg.to_path_buf()).or_default().clone();
+    let mut asked = asked.lock().unwrap();
+    if let Some((was, list)) = asked.as_ref()
+        && *was == version
+    {
+        return Some(list.clone());
+    }
+    let list = Encoders::new(encoder_names(&list_encoders(ffmpeg, timeout)?)?);
+    *asked = Some((version, list.clone()));
+    Some(list)
+}
+
+/// What `ffmpeg -encoders` writes, or None if it doesn't start, fails, or
+/// isn't done within `timeout` (then it's stopped).
+fn list_encoders(ffmpeg: &Path, timeout: std::time::Duration) -> Option<String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut cmd = command(ffmpeg);
+    cmd.args(["-hide_banner", "-encoders"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = spawn(&mut cmd).ok()?;
+    let _tracked = child.track();
+    let mut stdout = child.stdout.take()?;
+    let read = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).into_owned()
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => return None,
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(5)),
+            _ => {
+                child.kill_tree();
+                return None;
+            }
+        }
+    }
+    read.join().ok()
+}
+
+/// The names in `ffmpeg -encoders`' list: after its line of dashes, an
+/// encoder a line, its flags and then its name. None without that line.
+fn encoder_names(listed: &str) -> Option<std::collections::BTreeSet<String>> {
+    let mut lines = listed.lines();
+    lines.by_ref().find(|l| l.trim_start().starts_with("------"))?;
+    Some(lines.filter_map(|l| l.split_whitespace().nth(1)).map(str::to_string).collect())
 }
 
 /// yt-dlp's release signing key (fingerprint AC0CBBE6848D6A873464AF4E57CF65933B5A7581),
@@ -475,6 +567,105 @@ fn group_left(id: u32) -> bool {
     !(found == 0 && unsafe { info.si_pid() } == id as libc::pid_t)
 }
 
+/// A program the app started (`spawn`): the process, or in a test build a
+/// fake that answers as the program does (`testkit::tools`). Its pipes are
+/// taken as a `std::process::Child`'s are.
+pub struct Child {
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
+    pub stdout: Option<Box<dyn std::io::Read + Send>>,
+    pub stderr: Option<Box<dyn std::io::Read + Send>>,
+    process: Box<dyn Running>,
+}
+
+/// What `Child` asks of what's running: the process, or a test's fake.
+pub(crate) trait Running: Send {
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus>;
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>>;
+    /// Stops it and all it started, and waits till they're gone (`kill_tree`).
+    fn kill_tree(&mut self);
+    /// `track`; None for a fake, which quitting needn't stop.
+    fn track(&self) -> Option<Tracked>;
+}
+
+impl Running for std::process::Child {
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        std::process::Child::wait(self)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        std::process::Child::try_wait(self)
+    }
+    fn kill_tree(&mut self) {
+        kill_tree(self)
+    }
+    fn track(&self) -> Option<Tracked> {
+        Some(track(self))
+    }
+}
+
+impl Child {
+    pub(crate) fn new(
+        stdin: Option<Box<dyn std::io::Write + Send>>,
+        stdout: Option<Box<dyn std::io::Read + Send>>,
+        stderr: Option<Box<dyn std::io::Read + Send>>,
+        process: Box<dyn Running>,
+    ) -> Self {
+        Self { stdin, stdout, stderr, process }
+    }
+
+    /// As `std::process::Child::wait`, which closes its stdin first.
+    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.stdin = None;
+        self.process.wait()
+    }
+
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.process.try_wait()
+    }
+
+    /// `kill_tree` for this program.
+    pub fn kill_tree(&mut self) {
+        self.process.kill_tree()
+    }
+
+    /// `track` for this program, until the guard is dropped.
+    pub fn track(&self) -> Option<Tracked> {
+        self.process.track()
+    }
+}
+
+/// Starts `cmd` (made by `command`), its pipes as `cmd` sets them. In a test
+/// build, a program a test has faked (`testkit::tools::fake`) runs as that
+/// fake instead.
+pub fn spawn(cmd: &mut Command) -> std::io::Result<Child> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(child) = crate::testkit::tools::spawn(cmd) {
+        return child;
+    }
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take().map(|p| Box::new(p) as Box<dyn std::io::Write + Send>);
+    let stdout = child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    let stderr = child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>);
+    Ok(Child::new(stdin, stdout, stderr, Box::new(child)))
+}
+
+/// `cmd.output()`, or a faked program's (`spawn`).
+pub fn output(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(output) = crate::testkit::tools::output(cmd) {
+        return output;
+    }
+    cmd.output()
+}
+
+/// `cmd.status()`, or a faked program's (`spawn`).
+pub fn status(cmd: &mut Command) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(output) = crate::testkit::tools::output(cmd) {
+        return output.map(|o| o.status);
+    }
+    cmd.status()
+}
+
 /// Runs ffmpeg's `cmd`, which writes to `part` and was given `-progress
 /// pipe:1`, reporting how far it is through `length` seconds of output from 0
 /// to 1; once done, `part` becomes `out` (so `out` is never half written).
@@ -492,14 +683,14 @@ pub fn encode(
     use std::process::Stdio;
     use std::sync::atomic::Ordering;
     let mut child =
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("start ffmpeg")?;
-    let _tracked = track(&child);
+        spawn(cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())).context("start ffmpeg")?;
+    let _tracked = child.track();
     let errors = drain(child.stderr.take().context("ffmpeg's errors")?);
     let mut canceled = false;
     for line in BufReader::new(child.stdout.take().context("ffmpeg's progress")?).lines() {
         if cancel.load(Ordering::Relaxed) {
             canceled = true;
-            kill_tree(&mut child);
+            child.kill_tree();
             break;
         }
         if let Some(us) = line?.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
@@ -537,6 +728,21 @@ pub fn shown(path: impl AsRef<Path>) -> String {
 mod tests {
     use super::*;
 
+    /// Whether the launcher's child writes into `dir` within a few seconds.
+    /// Not a fixed wait: macOS checks a program the first time it runs, and
+    /// on the Mac runner a script just written took about 750 ms to start.
+    #[cfg(unix)]
+    fn writes(dir: &Path) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::fs::read_dir(dir).unwrap().count() == 0 {
+            if std::time::Instant::now() > until {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        true
+    }
+
     /// What quitting stops: a tracked launcher and its child, and nothing
     /// that isn't tracked.
     #[cfg(unix)]
@@ -557,12 +763,11 @@ mod tests {
         let mut child = command(&script).arg(&tracked_out).spawn().unwrap();
         let guard = track(&child);
         let mut other = command(&script).arg(&other_out).spawn().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(writes(&tracked_out) && writes(&other_out), "they were writing");
         let id = child.id();
         stop_in(&TRACKED, |tracked| tracked == id, false);
         let _ = child.wait();
         let written = std::fs::read_dir(&tracked_out).unwrap().count();
-        assert!(written > 0, "it was writing");
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(std::fs::read_dir(&tracked_out).unwrap().count(), written, "it and its child stopped");
         let before = std::fs::read_dir(&other_out).unwrap().count();
@@ -632,10 +837,9 @@ mod tests {
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let mut child = command(&script).arg(&out).spawn().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(writes(&out), "the child was writing");
         kill_tree(&mut child);
         let written = std::fs::read_dir(&out).unwrap().count();
-        assert!(written > 0, "the child was writing");
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert_eq!(std::fs::read_dir(&out).unwrap().count(), written, "nothing written once stopped");
     }
@@ -693,5 +897,79 @@ mod tests {
         );
         let elsewhere = if cfg!(windows) { Path::new(r"D:\clips\a.mp4") } else { Path::new("/mnt/clips/a.mp4") };
         assert_eq!(shown(elsewhere), elsewhere.display().to_string());
+    }
+
+    #[test]
+    fn reads_ffmpegs_list_of_encoders() {
+        let listed = "Encoders:\n V..... = Video\n A..... = Audio\n ------\n \
+            V....D libx264              libx264 H.264 / AVC (codec h264)\n \
+            VFS... prores_ks            Apple ProRes (iCodec Pro) (codec prores)\n \
+            A....D aac                  AAC (Advanced Audio Coding)\n";
+        let names: Vec<_> = encoder_names(listed).unwrap().into_iter().collect();
+        assert_eq!(names, ["aac", "libx264", "prores_ks"]);
+        assert_eq!(encoder_names("Unrecognized option 'encoders'.\n"), None, "not a list");
+    }
+
+    /// An ffmpeg that doesn't list its encoders in time is stopped and taken
+    /// as unable to say, holding up no other ffmpeg meanwhile; what it said
+    /// (nothing) isn't kept, so it's asked again.
+    #[cfg(unix)]
+    #[test]
+    fn an_ffmpeg_slow_to_list_its_encoders_holds_up_no_other_and_is_asked_again() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        let dir = std::env::temp_dir().join(format!("vodscribe-encoders-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = |name: &str, body: &str| {
+            let path = dir.join(name);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let list = "echo ' ------'; echo ' V....D libx264  libx264 H.264'";
+        let (begun, quick) = (dir.join("begun"), dir.join("quick"));
+        let slow = script(
+            "ffmpeg-slow",
+            &format!("if [ -f '{}' ]; then {list}; exit 0; fi\ntouch '{}'\nsleep 30", quick.display(), begun.display()),
+        );
+        let other = script("ffmpeg-other", list);
+        let asked = std::thread::spawn({
+            let slow = slow.clone();
+            move || (encoders_within(&slow, Duration::from_secs(2)), Instant::now())
+        });
+        let waited = Instant::now();
+        while !begun.exists() {
+            assert!(waited.elapsed() < Duration::from_secs(5), "the slow one never began");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let other_asked = Instant::now();
+        assert!(encoders_within(&other, Duration::from_secs(2)).is_some_and(|l| l.contains("libx264")));
+        assert!(other_asked.elapsed() < Duration::from_secs(1), "waited {:?} on the slow one", other_asked.elapsed());
+        let (answer, ended) = asked.join().unwrap();
+        assert_eq!(answer, None, "stopped, it can't say");
+        assert!(ended - waited < Duration::from_secs(5), "not stopped at its time: {:?}", ended - waited);
+        fs::write(&quick, "").unwrap();
+        assert!(encoders_within(&slow, Duration::from_secs(2)).is_some(), "asked again, the same file");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An ffmpeg that fails as it lists its encoders can't say, whatever it
+    /// wrote first, and is asked again.
+    #[cfg(unix)]
+    #[test]
+    fn an_ffmpeg_that_fails_listing_its_encoders_cant_say_and_is_asked_again() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("vodscribe-encoders-failed-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (ran, path) = (dir.join("ran"), dir.join("ffmpeg"));
+        let body =
+            format!("echo x >> '{}'\necho ' ------'; echo ' V....D libx264  libx264 H.264'\nexit 1", ran.display());
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(encoders_within(&path, Duration::from_secs(5)), None);
+        assert_eq!(encoders_within(&path, Duration::from_secs(5)), None);
+        assert_eq!(fs::read_to_string(&ran).unwrap().lines().count(), 2, "asked again");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

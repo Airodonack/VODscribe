@@ -98,7 +98,7 @@ impl Drops {
                 // any): one for the page to see a drag of files come.
                 let names = linux::items(context).iter().map(|i| i.name().to_string()).collect::<Vec<_>>();
                 let names = if names.is_empty() { vec!["file".into()] } else { names };
-                self.target.heard(Event::Enter { paths: vec![], names, at });
+                self.target.heard(Event::Enter { paths: vec![], names, links: vec![], at });
                 *self.over.borrow_mut() = Over::Taken { context: context.clone(), portal };
             }
         }
@@ -137,7 +137,7 @@ impl Drops {
         };
         // Saved files come in as jobs: the page hears a drop with none now.
         if !portal {
-            self.target.heard(Event::Drop { paths: vec![], at });
+            self.target.heard(Event::Drop { paths: vec![], links: vec![], at });
         }
         let drops = self.clone();
         linux::receive(context, time, stage, move |received| {
@@ -148,7 +148,7 @@ impl Drops {
             let paths = received.offer().paths.clone();
             if portal {
                 (drops.trace)(&format!("let go with {} file(s) through the portal", paths.len()));
-                drops.target.heard(Event::Drop { paths, at });
+                drops.target.heard(Event::Drop { paths, links: vec![], at });
                 return;
             }
             let items = received.offer().items.clone();

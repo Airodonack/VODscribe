@@ -23,11 +23,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager, State};
+use tauri::{Manager, State};
 
 use vodscribe_core::db::Db;
 use vodscribe_core::{local, peaks, tools};
 
+use crate::AppHandle;
 use crate::loopback::{self, Request, Response};
 use crate::{AppState, CmdResult, err};
 

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker/master/packages/core/schema/stryker-core.schema.json",
+  "testRunner": "command",
+  "commandRunner": { "command": "node --test src/lib/dragout.test.mjs" },
+  "mutate": ["src/lib/dragout.ts:77-87", "src/lib/dragout.ts:108-129", "src/lib/dragout.ts:308-322", "src/lib/dragout.ts:422-424"],
+  "coverageAnalysis": "off",
+  "ignorePatterns": ["src-tauri", "static", ".svelte-kit", "build", ".scratch"],
+  "tempDirName": ".scratch/stryker-tmp",
+  "reporters": ["clear-text"],
+  "cleanTempDir": true,
+  "timeoutMS": 20000
+}

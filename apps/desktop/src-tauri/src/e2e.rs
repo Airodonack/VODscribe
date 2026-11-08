@@ -15,8 +15,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Listener, Manager};
+use tauri::{Listener, Manager};
 
+use crate::AppHandle;
 use crate::loopback::{self, Response};
 
 type Waiting = Arc<Mutex<HashMap<u64, mpsc::Sender<String>>>>;

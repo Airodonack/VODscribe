@@ -83,7 +83,7 @@ fn web_view(view: &NSView) -> Option<Retained<NSView>> {
 /// another image AppKit reads), while its mouse button is down. On the main
 /// thread. `on` hears how it goes.
 pub(crate) fn start(
-    window: &tauri::WebviewWindow,
+    window: &crate::WebviewWindow,
     items: Vec<Box<dyn Item>>,
     image: &[u8],
     on: impl Fn(Event) + Send + Sync + 'static,

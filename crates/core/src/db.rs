@@ -805,6 +805,26 @@ ALTER TABLE vod_annotations ADD COLUMN contexts TEXT;";
 const MIGRATE_V41: &str = "
 ALTER TABLE renders ADD COLUMN encoding TEXT;";
 
+/// Version 42: a deleted clip's id is never given to a new one, as a VOD's
+/// isn't (v14), so what still holds it (an undo step, the clipboard, the
+/// page, the clip's picture and files, all named by it) can't reach the new
+/// clip. Edits and VODs' own clips are rows of `clips` too, and a render is
+/// keyed by its clip, so the one counter covers them all. `clip_ids` holds
+/// the next id; `Db::new_clip` takes it, and the trigger moves it past any id
+/// inserted another way (an older version's, after a downgrade).
+const MIGRATE_V42: &str = "
+CREATE TABLE clip_ids (next INTEGER NOT NULL);
+INSERT INTO clip_ids SELECT coalesce(max(id), 0) + 1 FROM clips;
+CREATE TRIGGER clips_ids AFTER INSERT ON clips BEGIN
+    UPDATE clip_ids SET next = max(next, NEW.id + 1);
+END;";
+
+/// Version 43: which make of a clip (or edit) its file is (`Paths::clip_make`):
+/// each make writes a file of its own. Null for one made before, at the path
+/// its id alone builds, which it keeps; so nothing is moved.
+const MIGRATE_V43: &str = "
+ALTER TABLE renders ADD COLUMN make INTEGER;";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -962,6 +982,11 @@ pub struct Clip {
     /// What its file was made with (`set_made_as`); None if it isn't made, or
     /// was made before this was recorded.
     pub encoding: Option<ClipEncoding>,
+    /// On a VOD's clip bar, whether it still plays just its stretch of that
+    /// VOD: one piece of it, nothing struck, not in a group (as
+    /// `edits::cut_whole`), not changed in the editor. A drag of the stretch
+    /// from the VOD gives only such a clip (`Db::vod_clip_playing`).
+    pub plain: bool,
 }
 
 /// Whose clip bar a clip is on.
@@ -1091,7 +1116,10 @@ pub struct MarkState {
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
-     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding";
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding, r.make,
+     coalesce((SELECT count(*) = 1 AND max(json_array_length(p.struck)) = 0
+                      AND max(p.vod_id) IS (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)
+               FROM items p WHERE p.clip_id = c.id), 0)";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
 /// one (a clip pasted or dropped at its start): a group has no stretch to read.
@@ -1114,13 +1142,14 @@ pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<C
         end: Flicks(r.get::<_, Option<i64>>(3)?.unwrap_or(0)).seconds(),
         title: r.get(4)?,
         status: ClipStatus::parse(&r.get::<_, String>(5)?),
-        file_path: clip_file_of(files, id, r.get(6)?, r.get(12)?),
+        file_path: clip_file_of(files, id, r.get(6)?, r.get(14)?, r.get(12)?),
         error: r.get(7)?,
         shown: r.get(8)?,
         revision: r.get(9)?,
         bar: ClipBar::of(r.get(10)?, r.get(11)?),
         length: 0.0,
         encoding: r.get::<_, Option<String>>(13)?.and_then(|e| serde_json::from_str(&e).ok()),
+        plain: r.get(15)?,
     };
     clip.length = clip.end - clip.start;
     Ok(clip)
@@ -1133,6 +1162,12 @@ const KEPT_COPIES: usize = 2;
 /// gone wrong, but not for good, as a copy keeps what's been deleted since
 /// (the privacy page says so).
 const COPIES_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+
+/// Whether `name` is a copy of the library from before an upgrade
+/// (`keep_before_upgrade`).
+fn is_copy(name: &str) -> bool {
+    name.strip_prefix("library-v").and_then(|n| n.strip_suffix(".sqlite")).is_some_and(|v| v.parse::<i32>().is_ok())
+}
 
 /// Copies the library at `path` (format `version`, open on `conn`) to
 /// `library-v<version>.sqlite` beside it before it's upgraded, whole and as
@@ -1150,8 +1185,7 @@ fn keep_before_upgrade(conn: &Connection, path: &Path, version: i32) -> Result<(
     let mut copies: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(dir)?
         .flatten()
         .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.strip_prefix("library-v")?.strip_suffix(".sqlite")?.parse::<i32>().ok()?;
+            is_copy(&e.file_name().to_string_lossy()).then_some(())?;
             Some((e.metadata().ok()?.modified().ok()?, e.path()))
         })
         .collect();
@@ -1167,42 +1201,146 @@ fn keep_before_upgrade(conn: &Connection, path: &Path, version: i32) -> Result<(
 fn tidy_copies(path: &Path, max_age: std::time::Duration) {
     let Some(entries) = path.parent().and_then(|dir| std::fs::read_dir(dir).ok()) else { return };
     for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let copy =
-            name.strip_prefix("library-v").and_then(|n| n.strip_suffix(".sqlite")).and_then(|v| v.parse::<i32>().ok());
         let old =
             entry.metadata().and_then(|m| m.modified()).is_ok_and(|made| made.elapsed().is_ok_and(|age| age > max_age));
-        if copy.is_some() && old {
+        if is_copy(&entry.file_name().to_string_lossy()) && old {
             let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
-/// Moves the library at `path` out of the way (with its WAL and shared
-/// memory files), to `library-broken-<date>.sqlite` beside it (`-2`… if
-/// taken), so a new one is made in its place: never deleted, for recovering
-/// or sending with a bug report. Returns where it went.
-pub fn set_aside(path: &Path) -> Result<PathBuf> {
-    let dir = path.parent().context("the library has no folder")?;
+/// Moves the library that `paths` lays out out of the way, so a new one is
+/// made in its place: into a folder `library-broken-<date>` (`-2`… if
+/// taken) beside it, in the same layout, never deleted, for recovering or
+/// sending with a bug report. Its file goes, with its WAL and shared memory
+/// files and its copies from before upgrades (`keep_before_upgrade`), and
+/// so do its own folders and files (`Paths::library_files`): its videos,
+/// clips and the rest, as a new library's ids start again at 1. Left in
+/// place, the next start's tidies would delete them as no VOD's (and the
+/// copies as old), and its first VODs and clips would write over them.
+/// All or nothing: if one can't be moved, what was goes back, and the
+/// error names a file another app has open (`in_use`), the one reason
+/// Windows refuses, or, if something couldn't go back, what's left set
+/// aside. Returns the folder its file went to.
+pub fn set_aside(paths: &crate::Paths) -> Result<PathBuf> {
+    set_aside_with(paths, &|from, to| std::fs::rename(from, to), &in_use)
+}
+
+/// `set_aside`, moving each file or folder with `rename` and asking
+/// `in_use` which file another app has open when a move fails.
+fn set_aside_with(
+    paths: &crate::Paths,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+    in_use: &dyn Fn(&Path) -> Option<PathBuf>,
+) -> Result<PathBuf> {
     let date = date_of(now());
-    let mut n = 1;
-    let aside = loop {
-        let name =
-            if n == 1 { format!("library-broken-{date}.sqlite") } else { format!("library-broken-{date}-{n}.sqlite") };
-        let aside = dir.join(name);
-        if !aside.exists() {
-            break aside;
-        }
-        n += 1;
+    let name = (1..)
+        .map(|n| if n == 1 { format!("library-broken-{date}") } else { format!("library-broken-{date}-{n}") })
+        .find(|name| {
+            let aside = paths.aside(name);
+            !aside.root.exists() && !aside.local.exists()
+        })
+        .context("no free name")?;
+    let aside = paths.aside(&name);
+    // Built from the path as the system has it: a name made from a lossy
+    // copy (`display`) of a path that isn't UTF-8 isn't the file's.
+    let side = |db: &Path, suffix: &str| {
+        let mut name = db.as_os_str().to_owned();
+        name.push(suffix);
+        PathBuf::from(name)
     };
-    std::fs::rename(path, &aside).with_context(|| format!("move the library to {}", crate::tools::shown(&aside)))?;
-    for suffix in ["-wal", "-shm"] {
-        let side = PathBuf::from(format!("{}{suffix}", path.display()));
-        if side.exists() {
-            let _ = std::fs::rename(&side, format!("{}{suffix}", aside.display()));
+    let mut moves = vec![(paths.db(), aside.db())];
+    moves.extend(["-wal", "-shm"].map(|suffix| (side(&paths.db(), suffix), side(&aside.db(), suffix))));
+    let copies = paths.db().parent().and_then(|dir| std::fs::read_dir(dir).ok());
+    for entry in copies.into_iter().flatten().flatten() {
+        if is_copy(&entry.file_name().to_string_lossy()) {
+            moves.push((entry.path(), aside.db().with_file_name(entry.file_name())));
         }
     }
-    Ok(aside)
+    moves.extend(paths.library_files().into_iter().zip(aside.library_files()));
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    // The file another app has open, if that's what stopped a move.
+    let mut open = None;
+    let moving = (|| {
+        std::fs::create_dir_all(&aside.root)?;
+        std::fs::create_dir_all(&aside.local)?;
+        for (from, to) in moves {
+            // Only the library's file must be there.
+            if from != paths.db() && std::fs::symlink_metadata(&from).is_err() {
+                continue;
+            }
+            if let Err(e) = rename(&from, &to) {
+                open = in_use(&from);
+                return Err(e)
+                    .with_context(|| format!("move {} to {}", crate::tools::shown(&from), crate::tools::shown(&to)));
+            }
+            moved.push((from, to));
+        }
+        anyhow::Ok(())
+    })();
+    let Err(e) = moving else { return Ok(aside.root) };
+    let stuck: Vec<String> = moved
+        .iter()
+        .rev()
+        .filter(|(from, to)| rename(to, from).is_err())
+        .map(|(_, to)| crate::tools::shown(to))
+        .collect();
+    if stuck.is_empty() {
+        let _ = std::fs::remove_dir(&aside.local);
+        let _ = std::fs::remove_dir(&aside.root);
+        return Err(match open {
+            Some(open) => anyhow::anyhow!(
+                "{} is open in another app. Close that app, then start a new library again.",
+                crate::tools::shown(&open)
+            ),
+            None => e,
+        });
+    }
+    // Part of the library is set aside: a new start would begin without
+    // it, so it's named, to be moved back by hand first. The paths are
+    // whole, as the split layout sets aside into two folders; the cause is
+    // only what went wrong, as the in-use sentence's own advice (start
+    // again) is the opposite of this one's.
+    let cause = match open {
+        Some(open) => format!("{} is open in another app", crate::tools::shown(&open)),
+        None => format!("{e:#}"),
+    };
+    Err(anyhow::anyhow!(
+        "The library is partly set aside: {} couldn't be moved back after this failed: {cause}. \
+         Move them back where they were before trying again.",
+        stuck.join(", ")
+    ))
+}
+
+/// The first file at or under `path` that another app has open, on
+/// Windows, where a folder holding one can't be moved: opened sharing
+/// nothing, it's refused. Elsewhere an open file doesn't stop a move.
+fn in_use(path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let mut left = vec![path.to_path_buf()];
+        while let Some(path) = left.pop() {
+            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+            if meta.is_dir() {
+                left.extend(std::fs::read_dir(&path).into_iter().flatten().flatten().map(|e| e.path()));
+            } else if std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&path)
+                .is_err_and(|e| e.raw_os_error() == Some(ERROR_SHARING_VIOLATION))
+            {
+                return Some(path);
+            }
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 /// `secs` since 1970 as a UTC date, YYYY-MM-DD (Howard Hinnant's civil_from_days).
@@ -1262,14 +1400,20 @@ pub(crate) fn ext_of(ext: Option<String>) -> Option<String> {
 }
 
 /// Clip `id`'s file as its render row has it: built from its extension
-/// (`file_ext`). A row `library::settle` left as 0.7.1 wrote it, with only
+/// (`file_ext`) and which make it is (`make`, `Paths::clip_make`). A row `library::settle` left as 0.7.1 wrote it, with only
 /// the full path (`file_path`): the file in 0.7.1's clip folder
 /// (`Paths::old_clips`) where it couldn't be linked in, else where its
 /// extension would build it, so a file gone reads as gone (and the clip
 /// comes off its bar, `forget_gone_clips`) rather than as none at all.
-pub(crate) fn clip_file_of(files: &crate::Paths, id: i64, ext: Option<String>, old: Option<String>) -> Option<String> {
+pub(crate) fn clip_file_of(
+    files: &crate::Paths,
+    id: i64,
+    ext: Option<String>,
+    make: Option<i64>,
+    old: Option<String>,
+) -> Option<String> {
     if let Some(ext) = ext_of(ext) {
-        return Some(shown(&files.clip_file(id, &ext)));
+        return Some(shown(&files.clip_make(id, make.unwrap_or(0), &ext)));
     }
     let old = old?;
     if files.old_clips.as_deref().is_some_and(|dir| crate::library::named_inside(Path::new(&old), dir)) {
@@ -1277,6 +1421,17 @@ pub(crate) fn clip_file_of(files: &crate::Paths, id: i64, ext: Option<String>, o
     }
     let ext = ext_of(Path::new(&old).extension().and_then(|e| e.to_str()).map(str::to_owned))?;
     Some(shown(&files.clip_file(id, &ext)))
+}
+
+/// The extension of clip (or edit) `id`'s file `file`, and which make it is:
+/// it must be where `Paths::clip_make` builds one, as `built_ext` asks.
+pub(crate) fn built_make(files: &crate::Paths, id: i64, file: &str) -> Result<(String, i64)> {
+    let stem = Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let make = match stem.strip_prefix(&format!("{id}-")) {
+        Some(n) => n.parse().with_context(|| format!("{file} isn't a make of clip {id}"))?,
+        None => 0,
+    };
+    Ok((built_ext(file, |ext| files.clip_make(id, make, ext))?, make))
 }
 
 /// The extension of `file`, which must be `built(ext)`: where the library
@@ -1395,6 +1550,8 @@ impl Db {
             MIGRATE_BUILT_PATHS,
             MIGRATE_V40,
             MIGRATE_V41,
+            MIGRATE_V42,
+            MIGRATE_V43,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1581,11 +1738,42 @@ impl Db {
         })
     }
 
+    /// Takes clip `id` off the clip bar, kept with its file (a cut held for a
+    /// paste): like one only dragged out, it's forgotten at the next start
+    /// (`forget_hidden_clips`) unless something puts it back first.
+    pub fn hide_clip(&self, id: i64) -> Result<()> {
+        let bar: Option<i64> =
+            self.conn.query_row("SELECT bar_of FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
+        let Some(bar) = bar else { return Ok(()) };
+        self.change(bar, None, |db| {
+            db.conn.execute("UPDATE clips SET shown = 0 WHERE id = ?1", [id])?;
+            Ok(())
+        })
+    }
+
     /// Notes that clip `id`'s file was dragged out of the app: it's someone
     /// else's now, so it stays when the clip goes.
     pub fn hand_out_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
+        // (2, `hand_out_clip_file`, says more, and stays.)
+        self.conn.execute("UPDATE renders SET handed_out = max(handed_out, 1) WHERE clip_id = ?1", [id])?;
         Ok(())
+    }
+
+    /// Notes that clip `id`'s own file itself (or edit `id`'s video) went to
+    /// another app, as none could be made under a second name (a disk that
+    /// takes no hard links, such as exFAT): from now the app never deletes
+    /// it (`clip_file_handed_out`). It's handed out too (`clip_handed_out`).
+    pub fn hand_out_clip_file(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE renders SET handed_out = 2 WHERE clip_id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Whether clip `id`'s own file itself went to another app
+    /// (`hand_out_clip_file`).
+    pub fn clip_file_handed_out(&self, id: i64) -> Result<bool> {
+        let out: Option<i64> =
+            self.conn.query_row("SELECT handed_out FROM renders WHERE clip_id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(out == Some(2))
     }
 
     /// Clip `id`'s file is a new one, the app's own (the one handed out stays where it went).
@@ -1603,13 +1791,15 @@ impl Db {
 
     /// Forgets the clips not in the clip bar (made only to be dragged out);
     /// gives each one's id, its file and whether that was handed out to
-    /// another app, for the caller to delete what's the app's.
+    /// another app, for the caller to delete what's the app's: no file for
+    /// one whose own file itself went (`hand_out_clip_file`), as it stays.
     pub fn forget_hidden_clips(&self) -> Result<Vec<(i64, Option<String>, bool)>> {
         let mut stmt = self.conn.prepare("SELECT id FROM clips WHERE bar_of IS NOT NULL AND shown = 0")?;
         let ids: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         let mut gone = Vec::new();
         for id in ids {
-            let file = self.clip(id)?.and_then(|c| c.file_path);
+            let given = self.clip_file_handed_out(id)?;
+            let file = self.clip(id)?.and_then(|c| c.file_path).filter(|_| !given);
             gone.push((id, file, self.clip_handed_out(id)?));
         }
         self.conn.execute("DELETE FROM clips WHERE bar_of IS NOT NULL AND shown = 0", [])?;
@@ -1634,15 +1824,29 @@ impl Db {
         file: Option<&str>,
         error: Option<&str>,
     ) -> Result<bool> {
-        let ext = file.map(|f| built_ext(f, |ext| self.files.clip_file(id, ext))).transpose()?;
+        let (ext, make) = file.map(|f| built_make(&self.files, id, f)).transpose()?.unzip();
         let n = self.conn.execute(
-            "UPDATE renders SET status = ?4, file_ext = coalesce(?5, file_ext), file_path = coalesce(?7, file_path), error = ?6
+            "UPDATE renders SET status = ?4, file_ext = coalesce(?5, file_ext), file_path = coalesce(?7, file_path), error = ?6,
+                 make = CASE WHEN ?5 IS NULL THEN make ELSE ?8 END
              WHERE clip_id = ?1 AND EXISTS (
                  SELECT 1 FROM items WHERE clip_id = ?1 AND parent IS NULL AND start = ?2 AND end = ?3
                  ORDER BY position, id LIMIT 1)",
-            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), ext, error, file],
+            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), ext, error, file, make],
         )?;
         Ok(n > 0)
+    }
+
+    /// Where clip (or edit) `id`'s next make goes, as `ext`: a file of its
+    /// own, after the one it has (`Paths::clip_make`). Recorded once it's
+    /// made (`set_clip_file`, `set_edit_render`); one not recorded (it failed,
+    /// or its range moved) leaves the next make the same path.
+    pub fn next_clip_file(&self, id: i64, ext: &str) -> Result<PathBuf> {
+        let make: Option<i64> = self
+            .conn
+            .query_row("SELECT make FROM renders WHERE clip_id = ?1", [id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        Ok(self.files.clip_make(id, make.unwrap_or(0) + 1, ext))
     }
 
     /// What clip `id`'s file (or edit `id`'s video) was made with, if that's
@@ -2733,22 +2937,175 @@ mod tests {
     #[test]
     fn a_broken_library_is_set_aside_not_deleted() {
         let dir = crate::TempDir::new("set-aside");
-        let path = dir.join("library.sqlite");
+        let paths = crate::Paths::new(dir.join("data"));
+        paths.ensure().unwrap();
+        let path = paths.db();
         std::fs::write(&path, b"not a database").unwrap();
         assert!(Db::open(&path).is_err());
-        std::fs::write(dir.join("library.sqlite-wal"), b"wal").unwrap();
-        let aside = set_aside(&path).unwrap();
+        std::fs::write(dir.join("data/library.sqlite-wal"), b"wal").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        let aside = set_aside(&paths).unwrap();
         let name = aside.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.starts_with("library-broken-") && name.ends_with(".sqlite"), "{name}");
-        assert_eq!(std::fs::read(&aside).unwrap(), b"not a database");
-        assert!(dir.join(format!("{name}-wal")).exists(), "its WAL goes with it");
-        assert!(!path.exists());
+        assert!(name.starts_with("library-broken-"), "{name}");
+        // Laid out as a library, so moving its contents back restores it.
+        let old = crate::Paths::new(&aside);
+        assert_eq!(std::fs::read(old.db()).unwrap(), b"not a database");
+        assert!(aside.join("library.sqlite-wal").exists(), "its WAL goes with it");
+        assert_eq!(std::fs::read(old.source_video(1, "mp4")).unwrap(), b"video", "its kept video goes with it");
+        assert!(!path.exists() && !paths.media().exists());
         // A new library opens in its place; a second one set aside the same day gets -2.
         drop(Db::open(&path).unwrap());
-        let again = set_aside(&path).unwrap();
-        assert!(again.to_string_lossy().ends_with("-2.sqlite"), "{}", again.display());
+        let again = set_aside(&paths).unwrap();
+        assert!(again.to_string_lossy().ends_with(&format!("{name}-2")), "{}", again.display());
         assert_eq!(date_of(0), "1970-01-01");
         assert_eq!(date_of(1790632794), "2026-09-28");
+    }
+
+    /// A move that fails and then can't all go back says what's left in the
+    /// set-aside folder, instead of asking to try again.
+    #[test]
+    fn a_library_partly_set_aside_says_what_is_left() {
+        let dir = crate::TempDir::new("set-aside-stuck");
+        let paths = crate::Paths::new(dir.join("data"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        // The thumbnails move, the downloads under way (the last) don't, and
+        // the thumbnails can't go back.
+        let (work, thumbs) = (paths.work(), paths.thumbs());
+        let rename = |from: &Path, to: &Path| {
+            if from == work || to == thumbs {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        assert!(failed.contains("couldn't be moved back") && failed.contains("thumbs"), "{failed}");
+        assert!(!failed.contains("start a new library again"), "{failed}");
+        let aside = dir.join("data").join(format!("library-broken-{}", date_of(now())));
+        assert!(aside.join("thumbs").is_dir(), "the thumbnails are in the set-aside folder, as it says");
+        assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "the rest is back");
+        assert!(paths.source_video(1, "mp4").exists());
+    }
+
+    /// Split (Windows: Roaming and Local), what's stuck is in Local's
+    /// set-aside folder: the message names it by its whole path, not the
+    /// Roaming one, and doesn't send it "beside the library" (the database).
+    #[test]
+    fn a_library_partly_set_aside_in_two_folders_names_each_path() {
+        let dir = crate::TempDir::new("set-aside-split-stuck");
+        let paths = crate::Paths::split(dir.join("roaming"), dir.join("local"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        let (work, thumbs) = (paths.work(), paths.thumbs());
+        let rename = |from: &Path, to: &Path| {
+            if from == work || to == thumbs {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        let name = format!("library-broken-{}", date_of(now()));
+        let stuck = dir.join("local").join(&name).join("thumbs");
+        assert!(stuck.is_dir());
+        assert!(failed.contains(&crate::tools::shown(&stuck)), "{failed}");
+        let roaming = crate::tools::shown(dir.join("roaming").join(&name));
+        assert!(!failed.contains(&format!("{roaming} ")), "names the Roaming folder: {failed}");
+        assert!(failed.ends_with("Move them back where they were before trying again."), "{failed}");
+    }
+
+    /// A file another app has open stops the move, and something can't go
+    /// back: the message names the file as the cause, without the in-use
+    /// message's own advice to start again.
+    #[test]
+    fn a_library_partly_set_aside_by_an_open_file_says_only_which() {
+        let dir = crate::TempDir::new("set-aside-open-stuck");
+        let paths = crate::Paths::new(dir.join("data"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        let (work, thumbs) = (paths.work(), paths.thumbs());
+        let open = work.join("1.mp4");
+        let rename = |from: &Path, to: &Path| {
+            if from == work || to == thumbs {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let in_use = |from: &Path| (from == work).then(|| open.clone());
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        let shown = crate::tools::shown(&open);
+        assert!(
+            failed.contains(&format!(
+                "after this failed: {shown} is open in another app. Move them back where they were before trying again."
+            )),
+            "{failed}"
+        );
+        assert!(!failed.contains("..") && !failed.contains("start a new library again"), "{failed}");
+        // With everything back, the in-use message is the whole answer.
+        std::fs::rename(dir.join("data").join(format!("library-broken-{}", date_of(now()))).join("thumbs"), &thumbs)
+            .unwrap();
+        let rename = |from: &Path, to: &Path| {
+            if from == work {
+                return Err(std::io::Error::other("refused"));
+            }
+            std::fs::rename(from, to)
+        };
+        let failed = format!("{:#}", set_aside_with(&paths, &rename, &in_use).unwrap_err());
+        assert_eq!(failed, format!("{shown} is open in another app. Close that app, then start a new library again."));
+    }
+
+    /// A library whose folders can't all be moved is left as it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_library_that_cannot_be_set_aside_stays_whole() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::TempDir::new("set-aside-fails");
+        let paths = crate::Paths::split(dir.join("roaming"), dir.join("local"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        // Moving a folder elsewhere writes its "..": refused without write permission.
+        let mode = |p: &Path, m| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+        mode(&paths.media(), 0o500);
+        let failed = set_aside(&paths);
+        mode(&paths.media(), 0o700);
+        assert!(failed.is_err(), "{failed:?}");
+        assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "its file is back");
+        assert!(paths.source_video(1, "mp4").exists() && paths.thumbs().is_dir());
+        let left = |d: &Path| {
+            std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("library-broken-"))
+        };
+        assert!(!left(&dir.join("roaming")) && !left(&dir.join("local")), "a folder left");
+    }
+
+    /// On Windows a clip another app has open stops the move: nothing moves,
+    /// and the error names the file, for the recovery screen to show.
+    #[cfg(windows)]
+    #[test]
+    fn a_library_with_a_clip_open_elsewhere_stays_whole_and_says_which() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = crate::TempDir::new("set-aside-open");
+        let paths = crate::Paths::split(dir.join("roaming"), dir.join("local"));
+        paths.ensure().unwrap();
+        std::fs::write(paths.db(), b"not a database").unwrap();
+        std::fs::create_dir_all(paths.media()).unwrap();
+        std::fs::write(paths.source_video(1, "mp4"), b"video").unwrap();
+        let clip = paths.clip_file(1, "mp4");
+        std::fs::create_dir_all(paths.clips()).unwrap();
+        std::fs::write(&clip, b"clip").unwrap();
+        // Shared for reading only, as a player or an editor opens it.
+        let open = std::fs::OpenOptions::new().read(true).share_mode(1).open(&clip).unwrap();
+        let failed = set_aside(&paths).unwrap_err().to_string();
+        drop(open);
+        assert!(failed.contains("1.mp4") && failed.contains("open in another app"), "{failed}");
+        assert_eq!(std::fs::read(paths.db()).unwrap(), b"not a database", "its file is back");
+        assert!(paths.source_video(1, "mp4").exists() && clip.exists());
     }
 
     #[test]
@@ -3082,7 +3439,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -3122,12 +3479,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -3154,12 +3511,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -3183,12 +3540,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -3206,12 +3563,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -3235,11 +3592,11 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }
@@ -3260,11 +3617,11 @@ mod tests {
         // Back to version 36: the column 37 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 36;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
         let info = VodInfo {
             platform: "twitch".into(),
@@ -3297,11 +3654,11 @@ mod tests {
         // Back to version 39: the column 40 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; PRAGMA user_version = 39;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 39;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 43);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
         let page = "https://www.dailymotion.com/quill";
         let info = VodInfo {
@@ -3436,6 +3793,67 @@ mod tests {
         let older = db.conn.last_insert_rowid();
         db.delete_vod(older).unwrap();
         assert!(db.add_vod(&info("d2")).unwrap().0.id > older);
+    }
+
+    /// A deleted clip's id is never given to a new one, as a VOD's isn't
+    /// (`ids_are_never_reused`), or what still holds it (an undo step, the
+    /// clipboard, the page, its picture) reaches the new clip. Edits and
+    /// pasted clips are clips too. A library from before upgrades with all
+    /// it had, as it had it.
+    #[test]
+    fn clip_ids_are_never_reused() {
+        use crate::clipboard::Paste;
+        use crate::edits::Put;
+        let dir = crate::TempDir::new("clip-ids");
+        let path = dir.join("library.sqlite");
+        // Every row of the tables that hold clips and what's theirs.
+        let rows = |conn: &Connection| -> Vec<Vec<rusqlite::types::Value>> {
+            let mut all = Vec::new();
+            for table in ["clips", "items", "renders", "marks"] {
+                let mut stmt = conn.prepare(&format!("SELECT * FROM {table} ORDER BY rowid")).unwrap();
+                let n = stmt.column_count();
+                let found = stmt.query_map([], |r| (0..n).map(|i| r.get(i)).collect()).unwrap();
+                all.extend(found.map(|row| row.unwrap()));
+            }
+            all
+        };
+        let (vod, before) = {
+            let db = Db::open(&path).unwrap();
+            let vod = db.add_vod(&info("a")).unwrap().0.id;
+            let edit = db.add_edit("e").unwrap().id;
+            db.add_piece(edit, vod, (0.0, 10.0), "a", None).unwrap();
+            db.add_clip(vod, 1.0, 2.0, "a", true).unwrap();
+            db.add_mark(vod, "cut", 1.5, None).unwrap();
+            let newest = db.add_clip(vod, 3.0, 4.0, "b", true).unwrap().id;
+            db.delete_clip(newest).unwrap();
+            (vod, rows(&db.conn))
+        };
+        // Back to version 41, before clips kept their ids.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 41;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        assert_eq!(rows(&db.conn), before, "upgraded, the same clips, pieces, files and marks");
+
+        let a = db.add_clip(vod, 5.0, 6.0, "c", true).unwrap().id;
+        db.delete_clip(a).unwrap();
+        let b = db.add_clip(vod, 5.0, 6.0, "c", true).unwrap().id;
+        assert!(b > a, "the deleted clip's id {a} isn't given out again");
+        let e = db.add_edit("f").unwrap().id;
+        assert!(db.delete_edit(e).unwrap());
+        let f = db.add_edit("f").unwrap().id;
+        assert!(f > e, "nor a deleted edit's");
+        let copied = db.copy_of(&Put::Clip { id: b }).unwrap();
+        assert!(db.delete_edit(f).unwrap());
+        let bar = db.vod_clip(vod).unwrap().unwrap();
+        let pasted = db.paste(Paste::Bar { bar, after: None }, &[copied]).unwrap().clips[0].0;
+        assert!(pasted > f, "nor to a clip pasted");
+        // Even after a clip added without taking an id (as an older version would).
+        db.conn.execute("INSERT INTO clips (title, created_at) VALUES ('older', 0)", []).unwrap();
+        let older = db.conn.last_insert_rowid();
+        db.delete_clip(older).unwrap();
+        assert!(db.add_clip(vod, 7.0, 8.0, "d", true).unwrap().id > older);
     }
 
     /// As a VOD removed from the library is pasted again while its erasure is

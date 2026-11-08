@@ -11,8 +11,8 @@
 // session's cache (streamers.ts `CardCache.fresh`), so one published since
 // shows. It runs beside a download or transcription of the VOD; a second
 // press while one runs does nothing, and a failure says so and changes nothing.
-// Asking the site takes seconds (yt-dlp), so the row says "Refreshing
-// details…" meanwhile (VodRow.svelte), under what it says of a download or
+// Asking the site takes up to a second (its own API), or seconds when yt-dlp
+// has to, so the row says "Refreshing details…" meanwhile (VodRow.svelte), under what it says of a download or
 // transcription, and what's said after names the VOD. The file host's answers aren't waited
 // for: an offer, or the card, comes when it's in.
 

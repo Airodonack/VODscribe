@@ -16,6 +16,7 @@ import { cueAt, elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { OwnStatus } from "./ownStatus";
 import { HeldMute } from "./heldMute";
+import { StartWatch } from "./startWatch";
 import { settling } from "./settle";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
@@ -54,6 +55,9 @@ export interface EmbeddedPlayer {
   volume?: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
   /** Its speed, where the app's controls set it (Twitch's API has none). */
   rate?: { get(): number; set(rate: number): void };
+  /** Whether it was asked to play and won't (Twitch's, for reasons of its
+   *  own: startWatch.ts): only a press on its own Play starts it. */
+  refused?(): boolean;
   /** Whether it draws the transcript's captions itself, over its picture
    *  (the app's own player, or its picture under a site's). Where it
    *  doesn't, the player's panel shows them in a strip under the player,
@@ -375,6 +379,8 @@ async function twitch(
           params.set("autoplay", String(playing));
           reloadPlain(frame, `${TWITCH}/?${params}`);
           resumeAt = at;
+          start.reloaded();
+          if (playing) start.play();
         },
         (at) => command(TWITCH_SEEK, at),
       )
@@ -394,6 +400,9 @@ async function twitch(
   const mute = new HeldMute();
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
   let resumeAt: number | null = null;
+  // Whether it refuses to start: opened to play (autoplay), that's the first ask.
+  const start = new StartWatch();
+  if (play) start.play();
   const command = (eventName: number, params: unknown = null) =>
     frame.contentWindow?.postMessage({ eventName, params, namespace: TWITCH_PROXY }, TWITCH);
 
@@ -408,6 +417,7 @@ async function twitch(
       };
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         const playback = data.params?.playback;
+        if (typeof playback === "string") start.heard(playback);
         if (typeof data.params?.volume === "number") sound.volume = data.params.volume;
         if (typeof data.params?.muted === "boolean") mute.heard(data.params.muted);
         // Reloaded plain (bridge), it now and then starts from the start
@@ -448,11 +458,18 @@ async function twitch(
             resumeAt = null;
             command(TWITCH_SEEK, seconds);
           },
-          play: () => command(TWITCH_PLAY),
-          pause: () => command(TWITCH_PAUSE),
+          play: () => {
+            start.play();
+            command(TWITCH_PLAY);
+          },
+          pause: () => {
+            start.pause();
+            command(TWITCH_PAUSE);
+          },
         },
         bridged,
       ),
+      refused: () => start.refused(),
       volume: {
         get: () => sound.volume,
         muted: () => mute.muted,

@@ -1,0 +1,3 @@
+# Test data whose bytes are checked (signed checksums, hashes): never
+# converted, so a Windows checkout reads them as they were signed.
+crates/core/tests/data/** -text

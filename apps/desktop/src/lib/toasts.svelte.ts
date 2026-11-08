@@ -2,7 +2,8 @@
 // done, with something to do about it ("Piece removed · Undo"). One at a time;
 // a new one replaces it, and it goes after a few seconds. What went wrong
 // (`error`: the marks', an edit's, a clip bar's) shows the same way wherever
-// the user is, and stays until it's dismissed, replaced, or put right.
+// the user is, and stays until it's dismissed, replaced, or put right; so
+// does what asks for something still to be done (`stay`: a site's Play).
 
 const SHOWN_FOR = 6000;
 
@@ -27,6 +28,15 @@ class Toasts {
     const seq = ++this.#seq;
     this.shown = { message, action, seq };
     this.#timer = setTimeout(() => this.shown?.seq === seq && (this.shown = null), SHOWN_FOR);
+    return seq;
+  }
+
+  /** As `show`, but until it's dismissed or replaced (or `drop`ped): it
+   *  asks for something still to be done. Its number, for `drop`. */
+  stay(message: string): number {
+    clearTimeout(this.#timer);
+    const seq = ++this.#seq;
+    this.shown = { message, seq };
     return seq;
   }
 

@@ -1,7 +1,9 @@
-//! Twitch clips. A clip is a stretch of a broadcast, kept as a video of its
-//! own: its id is its slug (`CoweringRudeDiamond…`), where a VOD's is a number.
-//! Its chat is the broadcast's over that stretch, while Twitch still has the
-//! broadcast; its video needs a token Twitch signs for each viewing.
+//! Twitch clips, and a VOD's channel. A clip is a stretch of a broadcast,
+//! kept as a video of its own: its id is its slug (`CoweringRudeDiamond…`),
+//! where a VOD's is a number. Its chat is the broadcast's over that stretch,
+//! while Twitch still has the broadcast; its video needs a token Twitch
+//! signs for each viewing. A VOD's channel comes from the same API in a
+//! fraction of the time yt-dlp takes (`vod_channel`).
 
 use std::sync::atomic::AtomicBool;
 
@@ -50,6 +52,27 @@ fn parse_clip(c: &Value) -> Clip {
         duration: c.get("durationSeconds").and_then(Value::as_f64).unwrap_or(0.0),
         broadcaster: c.pointer("/broadcaster/id").and_then(Value::as_str).map(str::to_string),
     }
+}
+
+/// VOD `id`'s channel's login (yt-dlp's `uploader_id`), as Twitch's GraphQL
+/// API names it. `id` is the VOD's number, with or without yt-dlp's "v". An
+/// error when Twitch doesn't know the VOD or names no channel, or answers
+/// for another VOD.
+pub fn vod_channel(id: &str, cancel: &AtomicBool) -> Result<String> {
+    let number = id.strip_prefix('v').unwrap_or(id);
+    anyhow::ensure!(!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()), "not a Twitch VOD's id");
+    let body = json!({
+        "query": "query($id: ID!) { video(id: $id) { id owner { login } } }",
+        "variables": { "id": number },
+    });
+    parse_vod_channel(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel)?, number)
+}
+
+fn parse_vod_channel(json: &Value, number: &str) -> Result<String> {
+    let video = json.pointer("/data/video").filter(|v| !v.is_null()).context("Twitch doesn't know this VOD.")?;
+    anyhow::ensure!(video.get("id").and_then(Value::as_str) == Some(number), "Twitch answered for another VOD.");
+    let login = video.pointer("/owner/login").and_then(Value::as_str).filter(|l| !l.is_empty());
+    Ok(login.context("Twitch named no channel for this VOD.")?.to_string())
 }
 
 /// A URL that plays clip `slug`'s video (720p at most when offered, plenty for
@@ -109,6 +132,29 @@ mod tests {
         // The broadcast is gone: no chat.
         let gone = json!({ "durationSeconds": 34, "videoOffsetSeconds": null, "video": null });
         assert_eq!(parse_clip(&gone).source, None);
+    }
+
+    #[test]
+    fn reads_a_vods_channel() {
+        let answer = |video: Value| json!({ "data": { "video": video } });
+        let vod = answer(json!({ "id": "2901646294", "owner": { "login": "quill" } }));
+        assert_eq!(parse_vod_channel(&vod, "2901646294").unwrap(), "quill");
+        // Another VOD's, none, or no channel named: not taken.
+        assert!(parse_vod_channel(&vod, "2901646295").is_err());
+        assert!(parse_vod_channel(&answer(Value::Null), "2901646294").is_err());
+        assert!(parse_vod_channel(&answer(json!({ "id": "2901646294", "owner": null })), "2901646294").is_err());
+        assert!(
+            vod_channel("CoweringRudeDiamond", &AtomicBool::new(false)).is_err(),
+            "a clip's slug isn't asked about"
+        );
+    }
+
+    /// Asks Twitch for real: `cargo test -p vodscribe-core -- --ignored twitch_vod_channel_live`.
+    #[test]
+    #[ignore = "network"]
+    fn twitch_vod_channel_live() {
+        let id = std::env::var("VOD").unwrap_or_else(|_| "2901646294".into());
+        eprintln!("{}", vod_channel(&id, &AtomicBool::new(false)).unwrap());
     }
 
     /// Asks Twitch for real: `cargo test -p vodscribe-core -- --ignored twitch_clip`.

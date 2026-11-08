@@ -4,6 +4,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 
 - `main.rs`: starts the app.
 - `lib.rs`: the app's state and startup, and the list of commands.
+- `system.rs`: what the commands ask of the desktop: showing and opening files.
 - `vods.rs`: the library's commands: adding, ordering and controlling VODs, refreshing a site's VOD's details, and reading transcripts.
 - `setup.rs`: first-run setup, settings, the GPU add-on and storage.
 - `recovery.rs`: the recovery screen's commands, when the library won't open.
@@ -20,9 +21,9 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `thumbnails.rs`: VOD thumbnails for the page.
 - `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - `history.rs`: undo and redo, per document.
-- `clipboard.rs`: Ctrl+C and Ctrl+V.
+- `clipboard.rs`: Ctrl+C, Ctrl+X and Ctrl+V: what was copied, and the clips a cut holds.
 - `choices.rs`: the page's small choices, read at start and written as they change.
-- `files.rs`: deleting made files, later where Windows still has them open.
+- `files.rs`: deleting made files, later where Windows still has them open, or at the next start.
 - `player.rs`: the app's own player, driven by the page.
 - `screen.rs`: the native surface the player draws on.
 - `embed.rs`, `embed_shim.js`: a site's video drawn in the app's player under the site's; the `embed-takeover` feature only.
@@ -34,5 +35,9 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `webview.rs`: the window's WebKitGTK view on Linux.
 - `receive.rs`: files dropped with no path, written into the library.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.
+- `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes, with a fake drag out of the window, started again after a quit.
+- [`testkit`](testkit): the app kit's own tests.
+- [`clips`](clips): clips' tests.
+- [`recovery`](recovery): setting a library aside, and the next start.
 - [`drag_source`](drag_source): dragging clips out before they're made.
 - [`drop_target`](drop_target): taking drops on Windows, macOS and Linux, virtual files and file promises included.

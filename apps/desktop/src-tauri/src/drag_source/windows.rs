@@ -18,7 +18,7 @@ use super::{Event, Item, ReleasedEarly};
 /// is over on screen; `on` hears how it went, perhaps later, on another
 /// thread (once Explorer's copies are written).
 pub(crate) fn start(
-    window: &tauri::WebviewWindow,
+    window: &crate::WebviewWindow,
     items: Vec<Box<dyn Item>>,
     image: &[u8],
     on: impl Fn(Event) + Send + Sync + 'static,

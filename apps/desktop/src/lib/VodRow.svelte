@@ -195,8 +195,10 @@
   // (its text is erased, not just dropped); the row says so meanwhile, and
   // goes when it's done (removal.svelte.ts).
   const removing = $derived(removals.has(vod.id));
-  // Refresh details asks its site, which takes seconds (refresh.svelte.ts).
+  // Refresh details asks its site, which can take seconds (refresh.svelte.ts).
   const refreshingDetails = $derived(refreshing.has(vod.id));
+  // Its menu's "Check for a VODscription" asks the file host, which can take seconds too (offers.svelte.ts).
+  const checkingOffer = $derived(offers.checking.has(vod.id));
   // Removing it asks as removing several picked does (actions.ts): a VOD that
   // edits use, whether its video goes too, the stretches they use kept first.
   async function remove() {
@@ -234,7 +236,7 @@
       Removing…
     </span>
   </div>
-{:else if refreshingDetails || vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
+{:else if refreshingDetails || checkingOffer || vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
     {#if untouched}
       <span class="status muted">
@@ -267,11 +269,17 @@
     {:else if vod.note}
       <span class="note muted" title={vod.note}>{vod.note}</span>
     {/if}
-    <!-- Asking its site takes seconds, beside whatever else it's doing: said under that, which stays. -->
+    <!-- Asking its site, or the file host, can take seconds, beside whatever else it's doing: said under that, which stays. -->
     {#if refreshingDetails}
       <span class="status">
         <Spinner label="Refreshing details" />
         Refreshing details…
+      </span>
+    {/if}
+    {#if checkingOffer}
+      <span class="status">
+        <Spinner label="Checking for a VODscription" />
+        Checking for a VODscription…
       </span>
     {/if}
   </div>

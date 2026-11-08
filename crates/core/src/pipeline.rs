@@ -289,9 +289,10 @@ pub fn fill_channels(db: &Db, paths: &Paths, vods: &[Vod]) {
 }
 
 /// A site's VOD's "Refresh details" (its row's menu): asks VOD `vod_id`'s
-/// site about it again, one look-up (`fetch::probe`; for Kick, Kick's own
-/// answer, `kick::resolve`), and keeps what the site now names of its
-/// channel, its login and page (`Db::refresh_channel`).
+/// site about it again and keeps what the site now names of its channel,
+/// its login and page (`Db::refresh_channel`). The site's own API answers
+/// first (`channel_by_api`), in under a second; failing that, or for a site
+/// with none, yt-dlp does (`fetch::probe`), which takes seconds.
 /// Nothing else changes: not its title, length or anything the library has
 /// of it besides. The look-up's info JSON goes to a file of its own
 /// (`Paths::temp_probe`), removed after, so a download or transcription
@@ -313,27 +314,67 @@ pub fn refresh_details(
     if vod.source_path.is_some() || vod.info.platform == crate::local::PLATFORM {
         bail!("A file on this computer has no site to ask.");
     }
-    let info = if crate::kick::parse_vod_url(&vod.info.url).is_some() {
-        // yt-dlp can't read Kick's VOD links yet, so `fetch::probe` asks it,
-        // fails, then asks Kick and has yt-dlp read the stream: seconds of
-        // work for a channel that Kick's answer names already.
-        crate::kick::resolve(&vod.info.url)?.0
-    } else {
-        fs::create_dir_all(paths.work())?;
-        let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
-        let probe = paths.temp_probe(nanos);
-        let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
-        let _ = fs::remove_file(&probe);
-        probed?
+    let channel = match channel_by_api(&vod.info, cancel) {
+        Some(Ok(channel)) => channel,
+        // yt-dlp can't read Kick's VOD links yet: `fetch::probe` would ask
+        // it, fail, then ask Kick again.
+        Some(Err(e)) if vod.info.platform == "kick" => return Err(e),
+        // The site's answer is the same either way, slower: the video gone
+        // says so in yt-dlp's words.
+        fast => {
+            if let Some(Err(e)) = fast
+                && cfg!(debug_assertions)
+            {
+                eprintln!("refresh {} {} by its API: {e:#}", vod.info.platform, vod.info.platform_id);
+            }
+            fs::create_dir_all(paths.work())?;
+            let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos();
+            let probe = paths.temp_probe(nanos);
+            let probed = fetch::probe(yt_dlp, &vod.info.url, &probe, cancel);
+            let _ = fs::remove_file(&probe);
+            let info = probed?;
+            if (info.platform.as_str(), info.platform_id.as_str())
+                != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
+            {
+                bail!("The site answered with another video, so nothing changed.");
+            }
+            (info.channel_login, info.channel_url)
+        }
     };
-    if (info.platform.as_str(), info.platform_id.as_str())
-        != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
-    {
-        bail!("The site answered with another video, so nothing changed.");
-    }
     let db = db.lock().unwrap();
-    db.refresh_channel(vod_id, info.channel_login.as_deref(), info.channel_url.as_deref())?;
+    db.refresh_channel(vod_id, channel.0.as_deref(), channel.1.as_deref())?;
     db.vod(vod_id)?.ok_or_else(gone)
+}
+
+/// VOD `vod`'s channel, its login and page, from its site's own API, which
+/// answers in under a second where yt-dlp takes seconds; each checks it
+/// answered for this video. None for a site or a video it can't be asked
+/// about, so yt-dlp is. Each gives what yt-dlp would of the channel, or
+/// fails, so a refresh keeps the same either way:
+/// - Kick (`kick::resolve`): the login, its slug, and no page. Its failure
+///   is the refresh's: yt-dlp can't read Kick's VOD links yet.
+/// - Twitch, a VOD (`twitch::vod_channel`): the login, and no page, as
+///   yt-dlp names none for a Twitch VOD. Not a clip: yt-dlp names whoever
+///   clipped it, which isn't kept.
+/// - YouTube (`youtube::channel`, oEmbed): the handle and its page. A
+///   channel with no plain handle fails, and yt-dlp is asked.
+fn channel_by_api(vod: &fetch::VodInfo, cancel: &AtomicBool) -> Option<Result<(Option<String>, Option<String>)>> {
+    let id = vod.platform_id.as_str();
+    match vod.platform.as_str() {
+        "kick" if crate::kick::parse_vod_url(&vod.url).is_some() => {
+            Some(crate::kick::resolve(&vod.url).and_then(|(info, _)| {
+                anyhow::ensure!(info.platform_id == id, "The site answered with another video, so nothing changed.");
+                Ok((info.channel_login, info.channel_url))
+            }))
+        }
+        "twitch" if !crate::twitch::is_clip(id) => {
+            Some(crate::twitch::vod_channel(id, cancel).map(|login| (Some(login), None)))
+        }
+        "youtube" if crate::youtube::is_video_id(id) => {
+            Some(crate::youtube::channel(id, cancel).map(|(handle, page)| (Some(handle), Some(page))))
+        }
+        _ => None,
+    }
 }
 
 /// Removes VOD `vod_id`'s kept video, and any part of one, from `Paths::media`.
@@ -515,13 +556,9 @@ fn run_worker(
             spec.lib_dirs.iter().cloned().chain(std::env::split_paths(&existing)).filter(|p| !p.as_os_str().is_empty());
         cmd.env(var, std::env::join_paths(paths)?);
     }
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("start {}", tools::shown(&spec.program)))?;
-    let _tracked = tools::track(&child);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = tools::spawn(&mut cmd).with_context(|| format!("start {}", tools::shown(&spec.program)))?;
+    let _tracked = child.track();
     // Never written to: the worker stops when it closes, which it does
     // however this process ends, even where quitting's `stop_tracked` never
     // runs (a crash, a kill) or runs before the worker is tracked.
@@ -571,7 +608,7 @@ fn run_worker(
         }
     })();
     if result.is_err() {
-        tools::kill_tree(&mut child);
+        child.kill_tree();
         // On a stop, the words held back are written too (the lines they
         // replace already went), so it ends, or resumes, where the audio
         // was transcribed to. Failing to (the app quitting) loses nothing:
@@ -1216,14 +1253,15 @@ mod tests {
         // One batch to 16 s, a line and two words held back; then it's stopped.
         let first = batch(16.0, &[("New", 9.0), ("first", 9.3), ("line.", 9.6), ("And", 14.0), ("more", 14.5)]);
         let spec = fake_worker(&dir, &[first], 30);
-        let cancel = Arc::new(AtomicBool::new(false));
-        let flag = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            flag.store(true, Ordering::Relaxed);
-        });
+        // Stopped once that batch is in, not after a fixed wait: a script just
+        // written may take most of a second to start on macOS.
+        let cancel = AtomicBool::new(false);
         let audio = Audio { path: "audio".into(), offset: 0.0 };
-        let stopped = run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &cancel, &mut |_, _| {});
+        let stopped = run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &cancel, &mut |_, done| {
+            if done > 0.0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        });
         assert!(stopped.is_err());
         let args = fs::read_to_string(dir.join("args")).unwrap();
         assert!(args.contains("--exit-on-stdin-close"), "{args}");

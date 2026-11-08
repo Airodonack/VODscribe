@@ -33,6 +33,9 @@ mod resolve;
 mod screen;
 mod setup;
 mod storyboards;
+mod system;
+#[cfg(test)]
+mod testkit;
 mod thumbnails;
 mod videos;
 mod vods;
@@ -42,11 +45,21 @@ mod worker;
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::db::Db;
 use vodscribe_core::{Paths, model};
 
 use worker::Worker;
+
+/// The runtime the app runs on: Tauri's own, or in the tests Tauri's mock
+/// (`tauri::test`), so the commands run with the app's real state and no
+/// window (`testkit`).
+#[cfg(not(test))]
+type Rt = tauri::Wry;
+#[cfg(test)]
+type Rt = tauri::test::MockRuntime;
+type AppHandle = tauri::AppHandle<Rt>;
+type WebviewWindow = tauri::WebviewWindow<Rt>;
 
 struct AppState {
     paths: Paths,
@@ -159,7 +172,7 @@ fn webview_args(extra: &str) -> String {
 /// the image server the end-to-end tests name, on this computer
 /// (`annotations::AVATAR_ENV`): the policy built in lets them come only from
 /// the real one and the sites' own picture hosts.
-fn context() -> tauri::Context {
+fn context() -> tauri::Context<Rt> {
     let mut context = tauri::generate_context!();
     if let Some(base) = vodscribe_core::annotations::avatar_base() {
         allow_images_from(&mut context.config_mut().app.security.csp, &base);
@@ -190,7 +203,33 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 
 /// Everything that runs on the library: the state the commands use, the
 /// queues and the background jobs.
-fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
+fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Result<()> {
+    let chat_rx = open_library(app.handle(), paths, db)?;
+    let handle = app.handle().clone();
+    std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
+    let handle = app.handle().clone();
+    std::thread::spawn(move || storyboards::sweep(&handle));
+    let handle = app.handle().clone();
+    std::thread::spawn(move || chats::run(handle, chat_rx));
+    annotations::check_library_at_start(app.handle());
+    Ok(())
+}
+
+/// The library `db` opened for the app, as each start does before the
+/// background jobs: what's left from before tidied, the state the commands
+/// use, then the queues, which begin with what was left unfinished. Returns
+/// what the chat queue's runner reads (`chats::run`). The tests' app starts
+/// on it too (testkit.rs), so it starts as the app does.
+fn open_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::sync::mpsc::Receiver<i64>> {
+    tidy_at_start(&paths, &db);
+    let chat_rx = manage_library(app, paths, db)?;
+    start_queues(app)?;
+    Ok(chat_rx)
+}
+
+/// What's left from before this start that nothing uses: tidied before
+/// anything runs on the library.
+fn tidy_at_start(paths: &Paths, db: &Db) {
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
     let _ = std::fs::remove_dir_all(paths.temp_preview());
@@ -207,17 +246,22 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     // Kept videos' leftovers from VODs no longer in the library.
     if let Ok(vods) = vods {
         let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
-        vodscribe_core::pipeline::tidy_media(&paths, &library);
+        vodscribe_core::pipeline::tidy_media(paths, &library);
         // What VODs added before the library kept their channel's login and
         // page lack, from their info where it's still kept.
-        vodscribe_core::pipeline::fill_channels(&db, &paths, &vods);
+        vodscribe_core::pipeline::fill_channels(db, paths, &vods);
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);
     }
+}
+
+/// The state the commands use (`AppState`), on the library `db` that
+/// `paths` lays out; returns what the chat queue's runner reads (`chats::run`).
+fn manage_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::sync::mpsc::Receiver<i64>> {
     let db = Mutex::new(db);
     let reads = Mutex::new(Db::open_reader(&paths)?);
     let searches = vodscribe_core::searcher::Searcher::new(Db::open_reader(&paths)?);
-    let worker = Worker::start(app.handle().clone(), paths.clone())?;
-    let handle = app.handle().clone();
+    let worker = Worker::start(app.clone(), paths.clone())?;
+    let handle = app.clone();
     let media = media::MediaServer::start(move |asked| match asked {
         media::Served::Vod(id) => media::playable_file(&handle.state::<AppState>().db.lock().unwrap(), id),
         media::Served::Footage(name) => crate::footage::section_file(&handle, &name).map(|p| p.display().to_string()),
@@ -247,28 +291,26 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         adding: Mutex::default(),
         refreshing: Mutex::default(),
     });
+    Ok(chat_rx)
+}
+
+/// Starts the queues that work on the library (`manage_library`'s state).
+fn start_queues(app: &AppHandle) -> anyhow::Result<()> {
     // First, so the queues' first news (what's left from last time) is heard.
-    app.state::<AppState>().job_list.run(app.handle().clone())?;
+    app.state::<AppState>().job_list.run(app.clone())?;
     app.state::<AppState>().worker.run();
-    app.state::<AppState>().clips.run(app.handle().clone())?;
+    app.state::<AppState>().clips.run(app.clone())?;
     // What was left to erase of the VODs nothing uses any more (stopped, or the app quit first).
-    app.state::<AppState>().sweeper.run(app.handle().clone())?;
-    app.state::<AppState>().videos.run(app.handle().clone())?;
-    app.state::<AppState>().footage.run(app.handle().clone())?;
-    app.state::<AppState>().storyboards.run(app.handle().clone())?;
-    let handle = app.handle().clone();
-    std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
-    let handle = app.handle().clone();
-    std::thread::spawn(move || storyboards::sweep(&handle));
-    let handle = app.handle().clone();
-    std::thread::spawn(move || chats::run(handle, chat_rx));
-    annotations::check_library_at_start(app.handle());
+    app.state::<AppState>().sweeper.run(app.clone())?;
+    app.state::<AppState>().videos.run(app.clone())?;
+    app.state::<AppState>().footage.run(app.clone())?;
+    app.state::<AppState>().storyboards.run(app.clone())?;
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    tauri::Builder::<Rt>::new()
         // One copy at a time: two would share the library and the queue, and on Linux
         // a second copy's window stays blank. Launching again focuses the open window.
         // (First, so a second copy exits before setting anything up.)
@@ -314,7 +356,7 @@ pub fn run() {
                 }
                 Err(e) => {
                     eprintln!("The library couldn't be opened: {e:#}");
-                    app.manage(recovery::Problem::new(format!("{e:#}"), db_path));
+                    app.manage(recovery::Problem::new(format!("{e:#}"), paths));
                 }
             }
             // The window is created here rather than from the config, so release builds
@@ -404,175 +446,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            recovery::library_problem,
-            recovery::set_library_aside,
-            recovery::show_library,
-            setup::setup_status,
-            setup::self_updatable,
-            setup::data_dir,
-            setup::open_data_dir,
-            setup::run_setup,
-            setup::cancel_setup,
-            vods::add_vod,
-            annotations::import_annotations_file,
-            annotations::check_annotations,
-            annotations::check_library_annotations,
-            annotations::annotations_offer,
-            annotations::fetch_annotations,
-            annotations::vod_annotations,
-            annotations::avatar_base,
-            annotations::streamer_card,
-            annotations::streamer_index,
-            vods::cancel_add,
-            vods::refresh_details,
-            vods::list_vods,
-            vods::add_files,
-            vods::media_extensions,
-            vods::show_file,
-            vods::open_file,
-            media::media_url,
-            media::peaks,
-            media::frame_rate,
-            media::frame,
-            vods::captions,
-            clips::list_clips,
-            clips::add_clip,
-            clips::add_clips,
-            clips::set_clip_range,
-            clips::rename_clip,
-            clips::keep_clip,
-            clips::delete_clip,
-            clips::delete_clips,
-            clips::forget_gone_clips,
-            clips::show_clip,
-            clips::drag_clip,
-            clips::drag_before_made,
-            clips::save_clip,
-            clips::list_marks,
-            clips::add_mark,
-            clips::move_mark,
-            clips::set_mark_text,
-            edits::list_edits,
-            edits::create_edit,
-            edits::get_edit,
-            edits::edit_captions,
-            edits::edit_lines,
-            clips::edit_marks,
-            clips::add_edit_mark,
-            clips::edit_clips,
-            clips::add_edit_clip,
-            clips::add_edit_clips,
-            chats::edit_chat_overview,
-            chats::edit_chat_windows,
-            edits::remove_stretch,
-            edits::rename_edit,
-            edits::delete_edit,
-            edits::add_to_edit,
-            edits::add_range_to_edit,
-            edits::put_in_edit,
-            clipboard::copy_items,
-            clipboard::copied_text,
-            clipboard::paste_items,
-            edits::edit_thumb,
-            storyboards::storyboard_frame,
-            footage::vod_frame,
-            footage::footage_bytes,
-            footage::clear_footage,
-            history::set_view,
-            history::undo,
-            history::redo,
-            screen::set_screen,
-            screen::set_screen_overlay,
-            player::player_available,
-            player::player_open,
-            player::player_open_edit,
-            player::player_plan,
-            player::player_close,
-            embed::embed_takeover,
-            embed::embed_open,
-            embed::embed_append,
-            embed::embed_close,
-            player::player_still,
-            player::player_frame,
-            player::player_preview,
-            #[cfg(feature = "e2e")]
-            e2e::player_decoders_started,
-            #[cfg(feature = "e2e")]
-            e2e::e2e_player_state,
-            #[cfg(feature = "e2e")]
-            e2e::e2e_set_inner_size,
-            #[cfg(feature = "e2e")]
-            e2e::e2e_work_busy,
-            screen::screen_under,
-            player::player_play,
-            player::player_pause,
-            player::player_seek,
-            player::player_step,
-            player::player_set_speed,
-            player::player_set_volume,
-            edits::move_piece,
-            edits::trim_piece,
-            edits::remove_piece,
-            edits::remove_from_edit,
-            edits::split_piece,
-            edits::render_edit_now,
-            edits::stop_render,
-            job_list::list_jobs,
-            job_list::reorder_jobs,
-            job_list::cancel_job,
-            edits::show_edit,
-            edits::drag_edit,
-            clips::delete_mark,
-            clips::cancel_mark,
-            videos::keep_video,
-            videos::stop_video,
-            videos::video_downloads,
-            videos::delete_all_videos,
-            videos::open_videos_dir,
-            thumbnails::thumbnail,
-            vods::library_order,
-            vods::reorder_library,
-            vods::delete_vod,
-            vods::retry_vod,
-            vods::pause_vod,
-            vods::retranscribe_vod,
-            vods::resume_vod,
-            vods::cancel_vod,
-            vods::cancel_stretch,
-            vods::search,
-            vods::author_suggestions,
-            vods::transcript,
-            vods::transcript_stretches,
-            vods::transcribe_stretch,
-            chats::chat_overview,
-            chats::chat_windows,
-            chats::chat_emotes,
-            chats::chat_word_emotes,
-            chats::retry_chat,
-            chats::emote,
-            chats::get_timeline,
-            chats::set_timeline,
-            chats::chat_matches,
-            setup::update_yt_dlp,
-            vods::kick_stream,
-            vods::twitch_clip_video,
-            setup::get_settings,
-            choices::kept_choices,
-            choices::keep_choice,
-            setup::set_settings,
-            setup::reset_settings,
-            setup::gpu_status,
-            setup::install_gpu_pack,
-            setup::cancel_gpu_install,
-            setup::remove_gpu_pack,
-            setup::cache_size,
-            setup::media_size,
-            setup::set_playable,
-            vods::delete_video,
-            setup::clear_cache,
-            quit_app,
-        ])
+        .invoke_handler(commands())
         .build(context())
         .expect("error while building tauri application")
         .run(|app, event| match event {
@@ -588,6 +462,182 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+/// The commands the page calls, by name.
+fn commands() -> impl Fn(tauri::ipc::Invoke<Rt>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        recovery::library_problem,
+        recovery::set_library_aside,
+        recovery::show_library,
+        setup::setup_status,
+        setup::self_updatable,
+        setup::data_dir,
+        setup::open_data_dir,
+        setup::run_setup,
+        setup::cancel_setup,
+        vods::add_vod,
+        annotations::import_annotations_file,
+        annotations::check_annotations,
+        annotations::check_library_annotations,
+        annotations::annotations_offer,
+        annotations::fetch_annotations,
+        annotations::vod_annotations,
+        annotations::avatar_base,
+        annotations::streamer_card,
+        annotations::streamer_index,
+        vods::cancel_add,
+        vods::refresh_details,
+        vods::list_vods,
+        vods::add_files,
+        vods::media_extensions,
+        vods::show_file,
+        vods::open_file,
+        media::media_url,
+        media::peaks,
+        media::frame_rate,
+        media::frame,
+        vods::captions,
+        clips::list_clips,
+        clips::add_clip,
+        clips::add_piece_clip,
+        clips::add_piece_clips,
+        clips::add_clips,
+        clips::set_clip_range,
+        clips::rename_clip,
+        clips::keep_clip,
+        clips::delete_clip,
+        clips::delete_clips,
+        clips::cut_clips,
+        clips::forget_gone_clips,
+        clips::show_clip,
+        clips::drag_clip,
+        clips::drag_before_made,
+        clips::list_marks,
+        clips::add_mark,
+        clips::move_mark,
+        clips::set_mark_text,
+        edits::list_edits,
+        edits::create_edit,
+        edits::get_edit,
+        edits::edit_captions,
+        edits::edit_lines,
+        clips::edit_marks,
+        clips::add_edit_mark,
+        clips::edit_clips,
+        clips::add_edit_clip,
+        clips::add_edit_clips,
+        chats::edit_chat_overview,
+        chats::edit_chat_windows,
+        edits::remove_stretch,
+        edits::rename_edit,
+        edits::delete_edit,
+        edits::add_to_edit,
+        edits::add_range_to_edit,
+        edits::put_in_edit,
+        clipboard::copy_items,
+        clipboard::copied_text,
+        clipboard::paste_items,
+        edits::edit_thumb,
+        storyboards::storyboard_frame,
+        footage::vod_frame,
+        footage::footage_bytes,
+        footage::clear_footage,
+        history::set_view,
+        history::undo,
+        history::redo,
+        screen::set_screen,
+        screen::set_screen_overlay,
+        player::player_available,
+        player::player_open,
+        player::player_open_edit,
+        player::player_plan,
+        player::player_close,
+        embed::embed_takeover,
+        embed::embed_open,
+        embed::embed_append,
+        embed::embed_close,
+        player::player_still,
+        player::player_frame,
+        player::player_preview,
+        #[cfg(feature = "e2e")]
+        e2e::player_decoders_started,
+        #[cfg(feature = "e2e")]
+        e2e::e2e_player_state,
+        #[cfg(feature = "e2e")]
+        e2e::e2e_set_inner_size,
+        #[cfg(feature = "e2e")]
+        e2e::e2e_work_busy,
+        screen::screen_under,
+        player::player_play,
+        player::player_pause,
+        player::player_seek,
+        player::player_step,
+        player::player_set_speed,
+        player::player_set_volume,
+        edits::move_piece,
+        edits::trim_piece,
+        edits::remove_piece,
+        edits::remove_from_edit,
+        edits::split_piece,
+        edits::render_edit_now,
+        edits::stop_render,
+        job_list::list_jobs,
+        job_list::reorder_jobs,
+        job_list::cancel_job,
+        edits::show_edit,
+        edits::drag_edit,
+        clips::delete_mark,
+        clips::cancel_mark,
+        videos::keep_video,
+        videos::stop_video,
+        videos::video_downloads,
+        videos::delete_all_videos,
+        videos::open_videos_dir,
+        thumbnails::thumbnail,
+        vods::library_order,
+        vods::reorder_library,
+        vods::delete_vod,
+        vods::retry_vod,
+        vods::pause_vod,
+        vods::retranscribe_vod,
+        vods::resume_vod,
+        vods::cancel_vod,
+        vods::cancel_stretch,
+        vods::search,
+        vods::author_suggestions,
+        vods::transcript,
+        vods::transcript_stretches,
+        vods::transcribe_stretch,
+        chats::chat_overview,
+        chats::chat_windows,
+        chats::chat_emotes,
+        chats::chat_word_emotes,
+        chats::retry_chat,
+        chats::emote,
+        chats::get_timeline,
+        chats::set_timeline,
+        chats::chat_matches,
+        setup::update_yt_dlp,
+        vods::kick_stream,
+        vods::twitch_clip_video,
+        setup::get_settings,
+        choices::kept_choices,
+        choices::keep_choice,
+        setup::set_settings,
+        setup::missing_clip_codecs,
+        setup::reset_settings,
+        setup::gpu_status,
+        setup::install_gpu_pack,
+        setup::cancel_gpu_install,
+        setup::remove_gpu_pack,
+        setup::cache_size,
+        setup::media_size,
+        setup::set_playable,
+        vods::delete_video,
+        setup::clear_cache,
+        quit_app,
+    ]
 }
 
 /// As the app quits: what it started (downloads, transcription, encodes,
@@ -609,7 +659,7 @@ fn quit(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
         trace_exit("library's lock taken");
-        let _ = db.stop_writes();
+        quit_library(app, &db);
         trace_exit("library's writes stopped");
         // Held till the process ends.
         std::mem::forget(db);
@@ -618,6 +668,14 @@ fn quit(app: &AppHandle) {
     trace_exit("started processes stopped");
     files::delete_leftovers();
     trace_exit("leftover files deleted");
+}
+
+/// `quit`'s work in the library (`db`, its lock taken): a cut not pasted
+/// goes with the copy (`clipboard::quit`), then nothing more is written.
+pub(crate) fn quit_library(app: &AppHandle, db: &vodscribe_core::db::Db) {
+    clipboard::quit(app, db);
+    trace_exit("clips cut and not pasted deleted");
+    let _ = db.stop_writes();
 }
 
 /// Quits, as closing the window does (Ctrl+Q, ⌘Q): the event loop ends and

@@ -911,8 +911,10 @@ export default {
     await app.invoke("delete_mark", { id: later.id });
     await until("current again with the chapter gone", async () => (await app.invoke("list_edits"))[0].current, 10_000);
 
-    // Renamed and rendered again: a new file in its place (its path is built
-    // from its id, `Paths::clip_file`; its title is the name it's handed out by).
+    // Renamed and rendered again: a new file, the one before gone (its path is
+    // built from its id and which render it is, `Paths::clip_make`: every make
+    // writes a file of its own, plans/clips-pilot.md "Decided" 4b; its title is
+    // the name it's handed out by).
     const renderedIno = statSync(rendered.file_path).ino;
     await app.invoke("rename_edit", { id: made.id, title: `${NAME} 2` });
     await until("the rename", async () => (await app.invoke("list_edits"))[0]?.title === `${NAME} 2`, 10_000);
@@ -926,11 +928,13 @@ export default {
       },
       2 * MINUTE,
     );
-    if (again.file_path !== rendered.file_path)
-      throw new Error(`the render moved from ${rendered.file_path} to ${again.file_path}`);
+    if (again.file_path === rendered.file_path || existsSync(rendered.file_path))
+      throw new Error(
+        `rendered again as ${again.file_path}, and ${rendered.file_path} is ${existsSync(rendered.file_path) ? "still there" : "gone"}`,
+      );
     await app.invoke("rename_edit", { id: made.id, title: NAME });
     await until("the name back", async () => (await app.invoke("list_edits"))[0]?.title === NAME, 10_000);
-    ctx.log(`renamed and rendered again: ${again.file_path}, a new file in its place`);
+    ctx.log(`renamed and rendered again: ${again.file_path}, a new file, the one before gone`);
 
     // A name being typed stays while the edit changes under it (a render's news).
     await app.js(`document.querySelector(arguments[0]).focus()`, title);

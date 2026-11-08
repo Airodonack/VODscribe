@@ -35,12 +35,15 @@ pub mod searcher;
 pub mod settings;
 pub mod sources;
 pub mod stretches;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 pub mod thumbs;
 pub mod time;
 pub mod tools;
 pub mod transcript;
 pub mod twitch;
 pub mod word_emotes;
+pub mod youtube;
 
 use std::path::{Path, PathBuf};
 
@@ -302,10 +305,24 @@ impl Paths {
         self.local.join("clips")
     }
 
-    /// Clip `clip_id`'s file, cut or rendered (`Db::set_clip_file`). Edits are
-    /// clips (the listed ones), so an edit's render is here too.
+    /// Clip `clip_id`'s file as made before 0.7.3, when each make got a file
+    /// of its own (`clip_make`): a clip made before then keeps it until it's
+    /// made again.
+    /// Edits are clips (the listed ones), so an edit's render is here too.
     pub fn clip_file(&self, clip_id: i64, ext: &str) -> PathBuf {
         with_ext(self.clips().join(clip_id.to_string()), ext)
+    }
+
+    /// Clip `clip_id`'s file of its `make`th make (`Db::next_clip_file`), cut
+    /// or rendered: every make writes a file of its own, so none rewrites the
+    /// one before, which another app may have been given (`Db::hand_out_clip_file`)
+    /// or something may be reading. Make 0 is the one file a clip had before
+    /// (`clip_file`).
+    pub fn clip_make(&self, clip_id: i64, make: i64, ext: &str) -> PathBuf {
+        if make == 0 {
+            return self.clip_file(clip_id, ext);
+        }
+        with_ext(self.clips().join(format!("{clip_id}-{make}")), ext)
     }
 
     /// Where clip `clip_id`'s file is handed out under the names it's known
@@ -313,6 +330,13 @@ impl Paths {
     /// own, and gone with it.
     pub fn clip_names(&self, clip_id: i64) -> PathBuf {
         self.clips().join(clip_id.to_string())
+    }
+
+    /// The files the app couldn't delete as it last ran (Windows had them
+    /// open), to try again at the next start: beside the clips folder they're
+    /// in, on this computer.
+    pub fn leftovers(&self) -> PathBuf {
+        self.local.join("leftovers.json")
     }
 
     /// Clips' first frames (`clip_thumb`).
@@ -398,6 +422,30 @@ impl Paths {
         [self.models(), self.bin(), gpu::staging_dir(&gpu), gpu, self.emotes(), self.work()]
     }
 
+    /// The library's own folders and files besides its database, named for
+    /// its rows' ids or listing its files: a new library, whose ids start
+    /// again at 1, starts without them (`db::set_aside`). Not emote images,
+    /// which no row names.
+    pub fn library_files(&self) -> [PathBuf; 9] {
+        [
+            self.media(),
+            self.thumbs(),
+            self.peaks(),
+            self.storyboards(),
+            self.source_footage(),
+            self.clips(),
+            self.leftovers(),
+            self.clip_thumbs(),
+            self.work(),
+        ]
+    }
+
+    /// The layout of this library set aside as `name` (`db::set_aside`): a
+    /// folder of that name in each of its folders, laid out as a library.
+    pub fn aside(&self, name: &str) -> Paths {
+        Paths::split(self.root.join(name), self.local.join(name))
+    }
+
     /// Bytes used by `cache_dirs`.
     pub fn cache_size(&self) -> u64 {
         self.cache_dirs().iter().map(|d| size_on_disk(d)).sum()
@@ -447,46 +495,10 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
-/// A fresh folder for a test, removed when it's dropped, even when the test
-/// fails. Use it as the `Path` it derefs to.
+/// The tests' temporary folders (`testkit::TempDir`), as the tests here
+/// name them.
 #[cfg(test)]
-pub(crate) struct TempDir(PathBuf);
-
-#[cfg(test)]
-impl TempDir {
-    /// `vodscribe-<name>-…` in the system's temporary folder, unique to this
-    /// process and call, so tests running at once don't share one.
-    pub(crate) fn new(name: &str) -> Self {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("vodscribe-{name}-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        TempDir(dir)
-    }
-}
-
-#[cfg(test)]
-impl std::ops::Deref for TempDir {
-    type Target = std::path::Path;
-    fn deref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-#[cfg(test)]
-impl AsRef<std::path::Path> for TempDir {
-    fn as_ref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-#[cfg(test)]
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+pub(crate) use testkit::TempDir;
 
 #[cfg(test)]
 mod tests {
@@ -577,11 +589,15 @@ mod tests {
                     dirs.push(path);
                     continue;
                 }
-                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("crates/core/src/lib.rs") {
+                // Tests make folders of their own as they like, in files of
+                // their own (`clips/tests.rs`, or `clips/tests/*.rs` for one
+                // in parts) or a module's `mod tests`.
+                let tests = path.file_name().is_some_and(|n| n == "tests.rs")
+                    || path.parent().is_some_and(|dir| dir.ends_with("tests"));
+                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("crates/core/src/lib.rs") || tests {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
-                // Tests make folders of their own as they like.
                 let code = text.split("\nmod tests {").next().unwrap_or_default();
                 for (n, line) in code.lines().enumerate() {
                     if by_hand(line) {

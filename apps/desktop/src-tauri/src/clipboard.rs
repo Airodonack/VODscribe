@@ -8,18 +8,29 @@
 //! A clip copied whose file was made keeps where that file is: pasted, as
 //! it was, its copy gets a copy of the file rather than being made again
 //! (`Cutter::copy_file`), the same frames at once.
+//!
+//! Ctrl+X is a cut, meant to be pasted: the clips it takes off their bar
+//! are held (`cut_clips`), still in the library with their files but in no
+//! clip bar, so every paste of the cut gets their frames. They go as Delete
+//! takes a clip once the copy is over: at the next copy or cut, or as the
+//! app quits (and at the next start, for one it didn't quit cleanly:
+//! `Db::forget_hidden_clips`). Undo of the cut puts the held clip itself
+//! back on its bar (`unhold`); an undo or redo that takes a clip off while
+//! the last copy has its file holds it rather than deleting it
+//! (`hold_again`), so a redone cut is held again.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::clipboard::{Copied, CopiedKind, Paste};
 use vodscribe_core::db::{Clip, ClipStatus, Db};
-use vodscribe_core::edits::{self, ItemState, Put};
+use vodscribe_core::edits::{self, EditState, ItemState, Put};
 use vodscribe_core::settings::ClipEncoding;
 
+use crate::AppHandle;
 use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err};
 
@@ -28,6 +39,9 @@ pub(crate) struct Clipboard {
     items: Vec<Held>,
     /// What the page wrote to the system's clipboard for it.
     text: String,
+    /// The clips a cut of this copy took off their bar, kept for its
+    /// pastes: held while they're off it.
+    cut: Vec<i64>,
 }
 
 #[derive(Clone)]
@@ -91,8 +105,99 @@ pub(crate) async fn copy_items(app: AppHandle, items: Vec<Put>) -> CmdResult<Vec
         Ok((held, said))
     })
     .await?;
-    *app.state::<AppState>().clipboard.lock().unwrap() = Some(Clipboard { items: held, text: String::new() });
+    let new = Clipboard { items: held, text: String::new(), cut: Vec::new() };
+    let old = app.state::<AppState>().clipboard.lock().unwrap().replace(new);
+    // The copy before is over: what its cut held goes.
+    if let Some(old) = old {
+        let state = app.state::<AppState>();
+        let_go(&app, &state.db.lock().unwrap(), old);
+    }
     Ok(said)
+}
+
+/// The files of the clips copied last, as they were copied: a cut holds
+/// only a clip whose file its copy has.
+pub(crate) fn copied_files(app: &AppHandle) -> Vec<PathBuf> {
+    let state = app.state::<AppState>();
+    let clipboard = state.clipboard.lock().unwrap();
+    clipboard.iter().flat_map(|c| &c.items).filter_map(|h| Some(h.file.as_ref()?.path.clone())).collect()
+}
+
+/// Clips `ids`, taken off their bar by a cut of what was copied last, held
+/// for its pastes.
+pub(crate) fn hold(app: &AppHandle, ids: &[i64]) {
+    if let Some(clipboard) = app.state::<AppState>().clipboard.lock().unwrap().as_mut() {
+        for &id in ids {
+            if !clipboard.cut.contains(&id) {
+                clipboard.cut.push(id);
+            }
+        }
+    }
+}
+
+/// Whether clip `id` is one the cut of what was copied last took.
+fn is_cut(app: &AppHandle, id: i64) -> bool {
+    app.state::<AppState>().clipboard.lock().unwrap().as_ref().is_some_and(|c| c.cut.contains(&id))
+}
+
+/// Clip `id` is gone from the library: not held any more, so a cut lets go
+/// of only the clips still in it.
+pub(crate) fn forget(app: &AppHandle, id: i64) {
+    if let Some(clipboard) = app.state::<AppState>().clipboard.lock().unwrap().as_mut() {
+        clipboard.cut.retain(|&c| c != id);
+    }
+}
+
+/// Puts clip `id` back on `doc`'s bar if the cut holds it and it's the clip
+/// an undo of the cut wants, on that bar and made of `made`: the clip
+/// itself, with its file. False otherwise, for the undo to make the clip
+/// anew. The check is only a guard, now that a deleted clip's id is never
+/// given to another (`MIGRATE_V42` in core db.rs).
+pub(crate) fn unhold(app: &AppHandle, db: &Db, doc: Doc, id: i64, made: &EditState) -> Result<bool> {
+    let Some(clip) = db.clip(id)?.filter(|c| !c.shown) else { return Ok(false) };
+    let wanted = crate::clips::bar_doc(&clip) == doc
+        && db.edit_state(id)?.is_some_and(|s| s.items == made.items && s.marks == made.marks);
+    if !is_cut(app, id) || !wanted {
+        return Ok(false);
+    }
+    db.show_clip(id)?;
+    crate::clips::emit(app, db, id);
+    Ok(true)
+}
+
+/// Holds clip `id` again, off its bar, rather than letting a redo of its
+/// cut delete it, while what was copied last has its file (`clips::held_by`:
+/// the cut's own copy, or a copy of the clip made since): false if not, for
+/// the redo to delete it.
+pub(crate) fn hold_again(app: &AppHandle, db: &Db, id: i64) -> Result<bool> {
+    let Some(clip) = db.clip(id)?.filter(|c| c.shown) else { return Ok(false) };
+    if !crate::clips::held_by(&clip, &copied_files(app)) {
+        return Ok(false);
+    }
+    db.hide_clip(id)?;
+    hold(app, &[id]);
+    crate::clips::emit(app, db, id);
+    Ok(true)
+}
+
+/// The clips `old`'s cut holds, deleted as Delete takes a clip: those back
+/// on a bar (undone, or made again there) stay.
+fn let_go(app: &AppHandle, db: &Db, old: Clipboard) {
+    for id in old.cut {
+        if db.clip(id).ok().flatten().is_some_and(|c| !c.shown)
+            && let Err(e) = crate::clips::remove(app, db, id)
+        {
+            eprintln!("clip {id}, cut and not pasted: {e:#}");
+        }
+    }
+}
+
+/// As the app quits (`db` held): the copy is over, and what its cut holds goes.
+pub(crate) fn quit(app: &AppHandle, db: &Db) {
+    let old = app.state::<AppState>().clipboard.lock().unwrap().take();
+    if let Some(old) = old {
+        let_go(app, db, old);
+    }
 }
 
 /// What the page wrote to the system's clipboard for the last copy.
@@ -228,7 +333,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         return Ok(false);
     }
     let state = app.state::<AppState>();
-    let (out, whole, clip) = {
+    let (out, whole, clip, made_of, version) = {
         let db = state.db.lock().unwrap();
         let Some(clip) = db.clip(id)? else { return Ok(true) };
         if clip.status == ClipStatus::Ready {
@@ -240,7 +345,11 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         }
         let ext = file.path.extension().and_then(|e| e.to_str()).context("a clip's file has an extension")?;
         let whole = edits::cut_whole(&db.edit_pieces(id)?);
-        (state.paths.clip_file(id, ext), whole, clip)
+        // What it's made of, and its revision, as the copy begins: recorded
+        // with the file, so a change in the editor while it's copied leaves
+        // it not current, and the remake queued with that change makes it
+        // again (`edits::render_edit`).
+        (db.next_clip_file(id, ext)?, whole, clip, db.made_of_now(id)?, db.revision(id)?)
     };
     crate::files::writing(&out);
     if let Err(e) = std::fs::copy(&file.path, &out) {
@@ -248,14 +357,25 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         crate::files::delete_file(&out);
         return Ok(false);
     }
+    // (A test holds it here, as a large clip on a slow disk takes a while.)
+    #[cfg(test)]
+    crate::testkit::copied(&out);
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
+    // A snippet changed in the editor meanwhile keeps the file but waits for
+    // its remake, so nothing hands this one out as if it were made
+    // (`clips::status_once_made`). A listed edit renders only when asked,
+    // so it's left made, and not current, as a render of it would be.
+    let status = match db.is_snippet(id)? {
+        Some(true) => crate::clips::status_once_made(app, &db, id, &made_of)?,
+        _ => ClipStatus::Ready,
+    };
     let recorded = if db.clip(id)?.is_none() {
         false
     } else if whole {
-        db.set_clip_file(id, clip.start, clip.end, ClipStatus::Ready, Some(&path), None)?
+        db.set_clip_file(id, clip.start, clip.end, status, Some(&path), None)?
     } else {
-        db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, db.revision(id)?)?;
+        db.set_edit_render(id, status, Some(&path), None, version)?;
         true
     };
     if !recorded {
@@ -263,7 +383,7 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
         crate::files::delete_file(&out);
         return Ok(db.clip(id)?.is_none());
     }
-    db.set_made_now(id)?;
+    db.set_made_of(id, &made_of)?;
     db.set_made_as(id, file.encoding)?;
     if let Some(thumb) = &file.thumb
         && let Err(e) = std::fs::copy(thumb, crate::clips::thumb_path(app, id))

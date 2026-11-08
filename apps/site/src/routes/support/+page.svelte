@@ -9,6 +9,14 @@
     SUPPORT_EMAIL,
   } from "#lib/links.js";
 
+  let hash = $state("");
+  $effect(() => {
+    const read = () => (hash = location.hash);
+    read();
+    addEventListener("hashchange", read);
+    return () => removeEventListener("hashchange", read);
+  });
+
   /** Answers for problems people hit; plain text with code in <code>. */
   const FAQ = [
     {
@@ -20,6 +28,7 @@
       a: "<p>Resolve on Linux can't open MP4, the format VODscribe makes clips in by default. Drop one on Resolve and VODscribe offers to switch to MOV; or pick MOV DNxHR in Settings › Encoding. Then drag the clip again.</p>",
     },
     {
+      id: "search",
       q: "How do I search?",
       a: '<p>Type what was said. The search box also takes:</p><div class="table"><table><tbody><tr><td><code>big win</code></td><td>those words in order, close together</td></tr><tr><td><code>&quot;big win&quot;</code></td><td>exactly that phrase, whole words only</td></tr><tr><td><code>-word</code> or <code>-&quot;a phrase&quot;</code></td><td>leaves out matches with it nearby</td></tr><tr><td><code>a OR b</code></td><td>either one</td></tr><tr><td><code>a AND b</code></td><td>both; AND binds tighter than OR</td></tr><tr><td><code>(a OR b) c</code></td><td>brackets group</td></tr><tr><td><code>from:name</code></td><td>said or written by them; from:a,b for either</td></tr><tr><td><code>in:chat</code> or <code>in:audio</code></td><td>only chat, or only what&#39;s said</td></tr><tr><td><code>within:20s</code></td><td>how close a match&#39;s words must be: 2m, 1h; at most an hour</td></tr><tr><td><code>after:1:20:00</code> or <code>before:2h</code></td><td>only that part of the VOD</td></tr></tbody></table></div><p>Filters apply to the whole search: <code>from:x "a" OR "b"</code> is a or b, both from x. Who, where and how close can also be picked beside the search box.</p>',
     },
@@ -43,7 +52,8 @@
 
   <h2>Questions</h2>
   {#each FAQ as item (item.q)}
-    <details>
+    <!-- A link to #search (the app's search panel) opens its answer. -->
+    <details id={item.id} open={item.id !== undefined && hash === `#${item.id}`}>
       <summary>{item.q}</summary>
       <div class="muted answer">{@html item.a}</div>
     </details>

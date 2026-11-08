@@ -6,10 +6,12 @@
 //! clips use it, so a clip made a little longer, or put in an edit, needs no
 //! new download.
 //!
-//! Clip files go in the computer's Videos folder, under VODscribe: they're for
-//! taking elsewhere. Each is named for its range, so a clip whose range
-//! changes is a new file; the one before goes, unless it was dragged out to
-//! another app (`handed_out`), which may link to it where it is.
+//! Clip files live in the library, each named by its clip's id and which
+//! make it is (`Paths::clip_make`): a clip whose range or encoding changes
+//! is made again as a new file, and the one before goes unless another app
+//! was given it. The name a clip goes by elsewhere (`drag_name`) is given when it
+//! is dragged out, copied or shown: a second name for the file, in a folder
+//! beside it (`handed_out`, `Paths::clip_names`), which goes with the clip.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,11 +22,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
-use vodscribe_core::settings::Settings;
+use vodscribe_core::settings::{ClipEncoding, ClipQuality, Settings};
 use vodscribe_core::{clips, tools};
 
+use crate::AppHandle;
 use crate::drag_source::{Ending, ReleasedEarly};
 use crate::files::{delete_file, delete_leftovers, writing};
 use crate::history::{self, Doc};
@@ -53,6 +56,16 @@ pub(crate) struct Cutter {
     /// many such drags it's in: the same clip can be dragged out again while
     /// the first still hands it over.
     out: Mutex<HashMap<i64, usize>>,
+    /// Clips (and edits) a drag out of the window is handing out, each with
+    /// how many such drags: the names it gives may yet be taken by the app
+    /// it's let go on (`DragOut::taken`), so a remake leaves them (`giving`).
+    giving: Arc<Mutex<HashMap<i64, usize>>>,
+    /// Pictures of clips to make again (`picture_again`), a listing's at a
+    /// time: each clip's id and its file.
+    pictures: Jobs<Vec<(i64, String)>>,
+    /// The clips' files whose picture has been tried again since the app
+    /// started (`picture_again`): one that failed isn't tried at each listing.
+    pictured: Mutex<HashSet<String>>,
 }
 
 impl Cutter {
@@ -63,6 +76,9 @@ impl Cutter {
             canceled: Arc::default(),
             copies: Arc::default(),
             out: Mutex::default(),
+            giving: Arc::default(),
+            pictures: Jobs::new(),
+            pictured: Mutex::default(),
         }
     }
 
@@ -88,6 +104,22 @@ impl Cutter {
         self.out.lock().unwrap().contains_key(&id)
     }
 
+    /// Clips (or an edit) `ids` are being handed out by a drag out of the
+    /// window, until the guard is dropped, as its drag ends.
+    pub(crate) fn giving(&self, ids: &[i64]) -> Giving {
+        let mut giving = self.giving.lock().unwrap();
+        for &id in ids {
+            *giving.entry(id).or_default() += 1;
+        }
+        Giving { giving: self.giving.clone(), ids: ids.to_vec() }
+    }
+
+    /// Whether a drag out of the window is handing out clip (or edit) `id`'s
+    /// file (`giving`).
+    pub(crate) fn is_giving(&self, id: i64) -> bool {
+        self.giving.lock().unwrap().contains_key(&id)
+    }
+
     /// Starts cutting, once the app's state is in place, beginning with the
     /// clips left unfinished when the app last stopped.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
@@ -99,11 +131,7 @@ impl Cutter {
         let unfinished = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
-            // Clips made only to be dragged out: forgotten, the names they
-            // were handed out by kept for whoever took them (`let_go_files`).
-            for (id, file, handed_out) in db.forget_hidden_clips()? {
-                let_go_files(&state.paths, id, file.as_deref(), handed_out);
-            }
+            tidy_at_start(&state.paths, &db)?;
             // Edits left rendering when the app stopped wait to be asked again.
             db.reset_renders()?;
             db.unfinished_clips()?
@@ -121,6 +149,8 @@ impl Cutter {
                 }
             }
         }
+        let picturing = app.clone();
+        self.pictures.run("clip pictures", move |clips, stop| make_pictures(&picturing, clips, stop))?;
         let settling = app.clone();
         self.jobs.run_ended(
             "clips",
@@ -156,6 +186,19 @@ impl Cutter {
 
     pub(crate) fn queue(&self, id: i64) {
         self.jobs.push(id);
+    }
+
+    /// Whether no picture is being made again, or waits to be (`picture_again`).
+    #[cfg(test)]
+    pub(crate) fn pictures_idle(&self) -> bool {
+        self.pictures.snapshot() == (None, Vec::new())
+    }
+
+    /// Ends the queues for good (`Jobs::close`).
+    #[cfg(test)]
+    pub(crate) fn close(&self) {
+        self.jobs.close();
+        self.pictures.close();
     }
 
     /// Clip `id`, just pasted, is to be given a copy of `file` when its turn
@@ -259,16 +302,32 @@ impl Cutter {
     }
 }
 
+/// A drag out of the window handing out clips' (or an edit's) files, as
+/// `Cutter::giving` counts them, till it's dropped.
+pub(crate) struct Giving {
+    giving: Arc<Mutex<HashMap<i64, usize>>>,
+    ids: Vec<i64>,
+}
+
+impl Drop for Giving {
+    fn drop(&mut self) {
+        let mut giving = self.giving.lock().unwrap_or_else(|e| e.into_inner());
+        for id in &self.ids {
+            if let Some(drags) = giving.get_mut(id) {
+                *drags -= 1;
+                if *drags == 0 {
+                    giving.remove(id);
+                }
+            }
+        }
+    }
+}
+
 /// What the clips' queue does with clip or edit `id`: a snippet of one
 /// piece as it came is cut; one changed in the editor (more pieces, lines
 /// struck, groups), or a listed edit, is rendered as an edit is.
 fn make(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) {
-    let snippet = {
-        let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
-        db.is_snippet(id)
-            .map(|s| s.map(|s| s && db.edit_pieces(id).is_ok_and(|p| vodscribe_core::edits::cut_whole(&p))))
-    };
+    let snippet = is_cut(&app.state::<AppState>().db.lock().unwrap(), id);
     match snippet {
         Ok(Some(false)) => {
             if let Err(e) = crate::edits::render_edit(app, id, stop) {
@@ -284,6 +343,12 @@ fn make(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i6
         eprintln!("clip {id}: {e:#}");
         fail(app, id, &e);
     }
+}
+
+/// Whether clip or edit `id` is a snippet of one piece as it came, which is
+/// cut (`cut`), not rendered; None if it's gone.
+fn is_cut(db: &Db, id: i64) -> Result<Option<bool>> {
+    db.is_snippet(id).map(|s| s.map(|s| s && db.edit_pieces(id).is_ok_and(|p| vodscribe_core::edits::cut_whole(&p))))
 }
 
 /// What a clip or edit canceled from the list of jobs shows, unless it was
@@ -327,7 +392,9 @@ pub(crate) fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
 /// handed out before under that name is given again while it's still this
 /// file; once the clip is made again (a new file) or retitled, the old name
 /// stays as it was, for the editor whose project uses it, and the next hand
-/// out gets a name of its own. The clip's own file if none can be made.
+/// out gets a name of its own. The clip's own file if none can be made: the
+/// caller notes which went (`hand_out`), as the clip's own file is then the
+/// other app's, never deleted.
 pub(crate) fn handed_out(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str) -> PathBuf {
     named(paths, id, file, name, true).unwrap_or_else(|e| {
         eprintln!("clip {id}: handing out its file as {name}: {e}");
@@ -358,7 +425,7 @@ fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str, may_co
             continue;
         }
         std::fs::create_dir_all(&dir)?;
-        if let Err(e) = std::fs::hard_link(file, &at) {
+        if let Err(e) = hard_link(file, &at) {
             if !may_copy {
                 // (The folder only if it's empty: made for this name alone.)
                 let _ = std::fs::remove_dir(&dir);
@@ -378,10 +445,39 @@ fn named(paths: &vodscribe_core::Paths, id: i64, file: &Path, name: &str, may_co
     unreachable!("names never run out")
 }
 
+/// A hard link from `from` at `to`; in a test, none where its library's disk
+/// takes none (`TestApp::takes_no_hard_links`), as on exFAT.
+fn hard_link(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if crate::testkit::refuses_links(to) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "this disk takes no hard links"));
+    }
+    std::fs::hard_link(from, to)
+}
+
+/// Notes that clip (or edit) `id`'s file went to another app as `given`
+/// (`handed_out`): under a name of its own, which stays when the clip goes;
+/// or, where none could be made, the clip's own file itself, which the app
+/// then never deletes (`file_to_let_go`).
+pub(crate) fn hand_out(db: &Db, paths: &vodscribe_core::Paths, id: i64, given: &Path) -> Result<()> {
+    if given.starts_with(paths.clip_names(id)) { db.hand_out_clip(id) } else { db.hand_out_clip_file(id) }
+}
+
+/// Clip (or edit) `id`'s file `file` as its deletion lets go of it
+/// (`let_go_files`): none if that file itself went to another app
+/// (`hand_out`), so it's neither deleted nor left to delete later
+/// (`files::delete_file`), as the other app's project uses it.
+pub(crate) fn file_to_let_go(db: &Db, id: i64, file: Option<String>) -> Result<Option<String>> {
+    Ok(if db.clip_file_handed_out(id)? { None } else { file })
+}
+
 /// Whether `a` and `b` are the same file, or copies of it as it is: the
-/// same length and time changed (a link shares both).
+/// same length and time changed (a hard link shares both). Both must be
+/// files themselves, not symbolic links, which are never followed: a
+/// library from elsewhere may hold one to a file outside it.
 fn same_file(a: &Path, b: &Path) -> bool {
-    let stat = |p: &Path| std::fs::metadata(p).ok().map(|m| (m.len(), m.modified().ok()));
+    let stat =
+        |p: &Path| std::fs::symlink_metadata(p).ok().filter(|m| m.is_file()).map(|m| (m.len(), m.modified().ok()));
     stat(a).is_some_and(|a| Some(a) == stat(b))
 }
 
@@ -392,6 +488,22 @@ pub(crate) fn own_file(paths: &vodscribe_core::Paths, file: &str) -> bool {
     Path::new(file).starts_with(paths.clips())
 }
 
+/// What the clips' files need at start, before any is made: the clips made
+/// only to be dragged out, and those a cut held when the app last stopped,
+/// forgotten, the names they were handed out by kept for whoever took them
+/// (`let_go_files`); then the files the app couldn't delete when it last
+/// ran tried again, kept in the library's folder from now
+/// (`files::keep_leftovers_in`). Nothing else in the clips folder is
+/// touched: a file no clip here has may be a library's that 0.7.2 set
+/// aside, leaving its clips here.
+pub(crate) fn tidy_at_start(paths: &vodscribe_core::Paths, db: &Db) -> Result<()> {
+    for (id, file, handed_out) in db.forget_hidden_clips()? {
+        let_go_files(paths, id, file.as_deref(), handed_out);
+    }
+    crate::files::keep_leftovers_in(paths);
+    Ok(())
+}
+
 /// What's left of clip `id`'s files once it's gone: its own file (`file`)
 /// deleted; the names it was handed out by kept if another app took them
 /// (`handed_out`), as its project may use them, else deleted with it.
@@ -399,17 +511,48 @@ pub(crate) fn let_go_files(paths: &vodscribe_core::Paths, id: i64, file: Option<
     let dir = paths.clip_names(id);
     if let Some(file) = file.filter(|f| own_file(paths, f)) {
         if !handed_out {
-            // Only those that are this clip's file: a clip before it with its
-            // id (ids are given again) may have left names another app took.
-            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-                if same_file(&entry.path(), Path::new(file)) {
-                    delete_file(entry.path());
-                }
-            }
+            delete_names(paths, id, Path::new(file));
         }
         delete_file(file);
     }
     let _ = std::fs::remove_dir(&dir);
+}
+
+/// Deletes the names clip (or edit) `id` handed out its file `file` by
+/// (`handed_out`), which no other app took: the caller's to know. Only those
+/// that are this file: a library from before 0.7.3 may give its last deleted
+/// clip's id once more, and that clip may have left names another app took;
+/// and a make before this one may have. And only in a real folder: one
+/// that's a link (a library from elsewhere may hold one) would lead out of
+/// the clips folder.
+fn delete_names(paths: &vodscribe_core::Paths, id: i64, file: &Path) {
+    let dir = paths.clip_names(id);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            if same_file(&entry.path(), file) {
+                delete_file(entry.path());
+            }
+        }
+    }
+}
+
+/// Clip (or edit) `id`'s make `old`, its file before the one just made
+/// (`cut`, `edits::render_edit`), deleted, with the names it was handed out
+/// by unless another app may have one: one took a name of the clip
+/// (`Db::clip_handed_out`: which make's isn't known, so all stay), or a drag
+/// is handing them out now (`Cutter::is_giving`), whose drop may yet take
+/// one. Those left were handed out only to an app that took a copy
+/// (Finder, Explorer), or to none: deleted with the clip they'd stay for
+/// good, as it deletes only its current make's (`let_go_files`). Under the
+/// library's lock, as the drags name them (`hand_out_made`).
+pub(crate) fn let_go_make(app: &AppHandle, db: &Db, id: i64, old: &str) -> Result<()> {
+    let state = app.state::<AppState>();
+    if !db.clip_handed_out(id)? && !state.clips.is_giving(id) {
+        delete_names(&state.paths, id, Path::new(old));
+    }
+    delete_file(old);
+    let _ = std::fs::remove_dir(state.paths.clip_names(id));
+    Ok(())
 }
 
 #[derive(Serialize, Clone)]
@@ -437,24 +580,68 @@ fn fail(app: &AppHandle, id: i64, e: &anyhow::Error) {
     }
 }
 
+/// `encoding`, refused with the app's sentence when `ffmpeg` can't make it
+/// with a picture (`video`) or sound alone (`clips::can_make`).
+fn makeable(app: &AppHandle, ffmpeg: &Path, encoding: ClipEncoding, video: bool) -> Result<ClipEncoding> {
+    clips::can_make(ffmpeg, &app.state::<AppState>().paths.bin(), encoding, video)?;
+    Ok(encoding)
+}
+
+/// The encoding clips and edits are made in (Settings › Encoding), refused
+/// when `ffmpeg` can't make it (`makeable`).
+pub(crate) fn encoding_to_make(app: &AppHandle, ffmpeg: &Path, video: bool) -> Result<ClipEncoding> {
+    let encoding = Settings::load(&app.state::<AppState>().paths.settings()).clip_encoding();
+    makeable(app, ffmpeg, encoding, video)
+}
+
+/// The encoding a stretch an edit keeps of a VOD whose video is deleted is
+/// made in (`vods::realize`). It replaces the VOD's footage, so it's made as
+/// it always was, H.264 at CRF 18, whatever quality clips are made in; only
+/// an ffmpeg without that makes it in the codec Settings › Encoding names,
+/// at High quality, and refuses if it can't make that either.
+pub(crate) fn encoding_to_keep(app: &AppHandle, ffmpeg: &Path, video: bool) -> Result<ClipEncoding> {
+    makeable(app, ffmpeg, ClipEncoding::default(), video).or_else(|_| {
+        let chosen = Settings::load(&app.state::<AppState>().paths.settings()).clip_encoding();
+        makeable(app, ffmpeg, ClipEncoding { quality: ClipQuality::High, ..chosen }, video)
+    })
+}
+
+/// What clip `id`, a snippet, is once a file of it made of `made_of` (taken
+/// as its make began) is recorded: made, unless a change since has moved what
+/// it's made of (`Db::made_of_now`), when it's waiting for the remake that
+/// change queued. Queued again here too, once, so it never waits for nothing.
+pub(crate) fn status_once_made(app: &AppHandle, db: &Db, id: i64, made_of: &str) -> Result<ClipStatus> {
+    if db.made_of_now(id)? == made_of {
+        return Ok(ClipStatus::Ready);
+    }
+    app.state::<AppState>().clips.queue_once(id);
+    Ok(ClipStatus::Waiting)
+}
+
 /// Makes clip `id`'s file, if it's waiting and its VOD plays from a file here
 /// (and isn't being removed: `removing`).
 fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) -> Result<()> {
     let state = app.state::<AppState>();
-    let (clip, vod, source) = {
+    let (clip, vod, source, made_of) = {
         let db = state.db.lock().unwrap();
         let removed = |c: &Clip| removing.lock().unwrap().contains(&c.vod_id);
         let Some(clip) = db.clip(id)?.filter(|c| c.status != ClipStatus::Ready && !removed(c)) else { return Ok(()) };
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(()) };
         let source = crate::footage::find(app, &db, vod.id, clip.start, clip.end);
-        (clip, vod, source)
+        // What it's made of as it's cut, recorded with its file: a change in
+        // the editor as the cut ends (a piece added, which leaves the range
+        // guarded below as it was) then leaves it not current, and the remake
+        // queued with that change makes it again (`edits::render_edit`).
+        (clip, vod, source, db.made_of_now(id)?)
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
-    let encoding = Settings::load(&state.paths.settings()).clip_encoding();
-    // Made again in place (a new file under its name: those it was handed
-    // out by keep the one they had).
-    let out = state.paths.clip_file(id, clips::extension(vod.audio_only, encoding.format()));
+    // Before its footage is fetched; failed here, it's shown by `fail`.
+    let encoding = encoding_to_make(app, &ffmpeg, !vod.audio_only)?;
+    // A file of its own for each make (`Db::next_clip_file`): the one before,
+    // which another app may have been given, is never written over.
+    let ext = clips::extension(vod.audio_only, encoding.format());
+    let out = state.db.lock().unwrap().next_clip_file(id, ext)?;
     writing(&out);
     {
         let db = state.db.lock().unwrap();
@@ -492,12 +679,16 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     let path = out.to_string_lossy();
     let recorded = match &result {
         Ok(()) => {
-            let recorded = db.set_clip_file(id, range.0, range.1, ClipStatus::Ready, Some(&path), None)?;
+            // Changed in the editor meanwhile (as ffmpeg ended): its file is
+            // kept, but it's still waiting for its remake, so nothing hands
+            // out this one as if it were made (`made_in`).
+            let status = status_once_made(app, &db, id, &made_of)?;
+            let recorded = db.set_clip_file(id, range.0, range.1, status, Some(&path), None)?;
             // What it's made of, so a change that leaves that as it was (a
             // chapter, which a cut file hasn't) doesn't make it again; and
             // what with, so a change of codec or quality does (dragout.ts).
             if recorded {
-                db.set_made_now(id)?;
+                db.set_made_of(id, &made_of)?;
                 db.set_made_as(id, Some(encoding))?;
             }
             recorded
@@ -506,19 +697,30 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         Err(e) if vodscribe_core::is_canceled(e) => false,
         Err(e) => db.set_clip_file(id, range.0, range.1, ClipStatus::Error, None, Some(&format!("{e:#}")))?,
     };
-    if result.is_ok() && db.clip(id)?.is_none() {
-        // Deleted while it was being cut.
+    if result.is_ok() && !recorded {
+        // Deleted while it was being cut, or moved as ffmpeg ended (it's
+        // queued again): this make is nobody's, and none will record it.
         delete_file(&out);
     }
-    // Its file in the format before goes (those it was handed out by stay).
+    // Its file in the format before goes (those it was handed out by stay,
+    // and so does that file itself if it was what went: the new one is the
+    // app's own).
     let old = clip.file_path.as_deref().filter(|p| own_file(&state.paths, p));
     if let Some(old) = old.filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
-        delete_file(old);
+        if db.clip_file_handed_out(id)? {
+            db.take_back_clip(id)?;
+        } else {
+            let_go_make(app, &db, id, old)?;
+        }
     }
     if recorded && result.is_ok() && !vod.audio_only {
         drop(db);
         if let Err(e) = clips::thumbnail(&ffmpeg, &out, &thumb_path(app, id)) {
             eprintln!("clip {id}: its picture: {e:#}");
+            // None rather than one of what it was before: its drag shows the
+            // app's icon, and its picture is tried again when it's next
+            // shown (`picture_again`).
+            let _ = std::fs::remove_file(thumb_path(app, id));
         }
         emit(app, &state.db.lock().unwrap(), id);
     } else if recorded {
@@ -538,7 +740,7 @@ fn on_bar_of(db: &Db, id: i64, vod_id: i64) -> bool {
 
 /// The history a change to `clip` goes in: that of the VOD or edit whose
 /// clip bar it's on.
-fn bar_doc(clip: &Clip) -> Doc {
+pub(crate) fn bar_doc(clip: &Clip) -> Doc {
     match clip.bar {
         Some(ClipBar::Edit { id }) => Doc::Edit(id),
         Some(ClipBar::Vod { id }) => Doc::Vod(id),
@@ -549,7 +751,7 @@ fn bar_doc(clip: &Clip) -> Doc {
 /// The clips on edit `id`'s clip bar, in their order.
 #[tauri::command]
 pub(crate) async fn edit_clips(app: AppHandle, id: i64) -> CmdResult<Vec<Clip>> {
-    crate::with_reads(app, move |db| db.bar_clips(id)).await
+    listed(app, move |db| db.bar_clips(id)).await
 }
 
 /// Makes `from`..`to` seconds of edit `edit_id`'s timeline a clip, titled
@@ -578,13 +780,15 @@ pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f6
 /// What `add_edit_clip` and `add_edit_clips` do: a clip of each range, each
 /// titled with what's said at its start, as one change (all of them, or none
 /// if one can't be made); then each is queued to be made. A range with a
-/// clip already (C pressed twice) gives that one, made again only if it failed.
+/// clip already (C pressed twice) gives that one, made again only if it
+/// failed or was made otherwise than clips are made now (`again`).
 fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
+    let now = Settings::load(&state.paths.settings()).clip_encoding();
     let (made, queued) = {
         let db = state.db.lock().unwrap();
         let doc = Doc::Edit(edit_id);
-        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown).map_err(err)?;
+        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown, now).map_err(err)?;
         history::changed(app, &db, doc);
         made
     };
@@ -600,6 +804,7 @@ fn make_edit_clips_in(
     edit_id: i64,
     ranges: Vec<(f64, f64)>,
     shown: bool,
+    now: ClipEncoding,
 ) -> Result<(Vec<Clip>, Vec<i64>)> {
     let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
     history.change(db, Doc::Edit(edit_id), label, |db| {
@@ -610,8 +815,7 @@ fn make_edit_clips_in(
             let mut clip = db.add_edit_clip(edit_id, from, to, &title, shown)?;
             match had {
                 None => queued.push(clip.id),
-                Some(had) if had.status == ClipStatus::Error => {
-                    db.set_edit_render(clip.id, ClipStatus::Waiting, None, None, None)?;
+                Some(had) if again(db, &had, now)? => {
                     clip = db.clip(clip.id)?.context("That clip is gone.")?;
                     queued.push(clip.id);
                 }
@@ -623,9 +827,117 @@ fn make_edit_clips_in(
     })
 }
 
+/// Whether clip `had`, asked for again (C on its stretch), is made again:
+/// if it failed, or if it was made otherwise than clips are made now (`now`,
+/// `clips::made_as`); it's then waiting to be. One waiting or being made, or
+/// made as wanted, is given as it is.
+fn again(db: &Db, had: &Clip, now: ClipEncoding) -> Result<bool> {
+    let older = |file: &str| !clips::made_as(Path::new(file), had.encoding, now);
+    let again = match had.status {
+        ClipStatus::Error => true,
+        ClipStatus::Ready => had.file_path.as_deref().is_some_and(older),
+        ClipStatus::Waiting | ClipStatus::Cutting => false,
+    };
+    if again {
+        db.set_edit_render(had.id, ClipStatus::Waiting, None, None, None)?;
+    }
+    Ok(again)
+}
+
+/// VOD `vod_id`'s clips, on its clip bar or only dragged out, in their order.
 #[tauri::command]
 pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Clip>> {
-    crate::with_reads(app, move |db| db.clips(vod_id)).await
+    listed(app, move |db| db.clips(vod_id)).await
+}
+
+/// A clip bar's clips, as `list` gives them, for the page to show: those
+/// whose picture couldn't be made when they were have it tried again
+/// (`picture_again`).
+async fn listed(app: AppHandle, list: impl FnOnce(&Db) -> Result<Vec<Clip>> + Send + 'static) -> CmdResult<Vec<Clip>> {
+    let paths = app.state::<AppState>().paths.clone();
+    let handle = app.clone();
+    let (clips, unpictured) = crate::with_reads(app.clone(), move |db| {
+        let clips = list(db)?;
+        let tried = handle.state::<AppState>().clips.pictured.lock().unwrap().clone();
+        let unpictured = clips.iter().filter(|c| lacks_picture(db, &paths, &tried, c)).filter_map(made_file).collect();
+        Ok((clips, unpictured))
+    })
+    .await?;
+    picture_again(&app, unpictured);
+    Ok(clips)
+}
+
+/// Clip `clip`'s id and file, if it's made.
+fn made_file(clip: &Clip) -> Option<(i64, String)> {
+    Some((clip.id, clip.file_path.clone().filter(|_| clip.status == ClipStatus::Ready)?))
+}
+
+/// Whether clip `clip` is made, and cut (`cut` makes a picture of a cut
+/// clip's first frame), with a picture in its file, but has no picture, and
+/// its file isn't one of those `tried` again already (`picture_again`).
+fn lacks_picture(db: &Db, paths: &vodscribe_core::Paths, tried: &HashSet<String>, clip: &Clip) -> bool {
+    let sound_alone = |file: &str| {
+        let ext = Path::new(file).extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+        matches!(ext.as_deref(), Some("m4a" | "wav"))
+    };
+    // The library asked last: of a long clip bar, few lack one.
+    made_file(clip).is_some_and(|(_, file)| !sound_alone(&file) && !tried.contains(&file))
+        && !paths.clip_thumb(clip.id).exists()
+        && is_cut(db, clip.id).is_ok_and(|cut| cut == Some(true))
+}
+
+/// Queues the pictures of `clips` (each id and its file), which couldn't
+/// be made when they were, to be made again (`make_pictures`): each file
+/// once while the app runs, so one that fails for good (a file ffmpeg can't
+/// read) isn't tried at each listing; the page lists a VOD's clips every
+/// tenth of a second while a drag waits on one (clips.svelte.ts `ready`).
+/// A clip made again has a new file, which `cut` gives its own picture.
+fn picture_again(app: &AppHandle, clips: Vec<(i64, String)>) {
+    let cutter = &app.state::<AppState>().clips;
+    let clips: Vec<_> = {
+        let mut pictured = cutter.pictured.lock().unwrap();
+        clips.into_iter().filter(|(_, file)| pictured.insert(file.clone())).collect()
+    };
+    if !clips.is_empty() {
+        cutter.pictures.push(clips);
+    }
+}
+
+/// Makes the pictures of `clips` (each id and its file) again, as
+/// `picture_again` queued them, till `stop`: each kept only if its clip's
+/// file is still that one (`cut` makes a picture for a new one).
+fn make_pictures(app: &AppHandle, clips: Vec<(i64, String)>, stop: &AtomicBool) {
+    let state = app.state::<AppState>();
+    let Some(ffmpeg) = tools::find_ffmpeg(&state.paths.bin()) else {
+        eprintln!("clips' pictures: {}", crate::worker::NO_FFMPEG);
+        return;
+    };
+    for (id, file) in clips {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let thumb = thumb_path(app, id);
+        let part = thumb.with_extension("again.png");
+        let made = clips::thumbnail(&ffmpeg, Path::new(&file), &part);
+        // Under the library's lock, as `cut` records a new file under it
+        // before it makes that one's picture.
+        let db = state.db.lock().unwrap();
+        let same = db.clip(id).ok().flatten().is_some_and(|c| made_file(&c).is_some_and(|(_, f)| f == file));
+        match made {
+            Ok(()) if same => {
+                if let Err(e) = std::fs::rename(&part, &thumb) {
+                    eprintln!("clip {id}: its picture: {e}");
+                }
+            }
+            Ok(()) => {
+                let _ = std::fs::remove_file(&part);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                eprintln!("clip {id}: its picture again: {e:#}");
+            }
+        }
+    }
 }
 
 /// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled
@@ -639,7 +951,27 @@ pub(crate) async fn add_clip(
     end: f64,
     shown: Option<bool>,
 ) -> CmdResult<Clip> {
-    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true))?;
+    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true), Same::Listed)?;
+    Ok(made.into_iter().next().expect("a clip for its one range"))
+}
+
+/// Makes a clip of a stretch dragged from a VOD (dragout.ts `carry`): a
+/// stretch of the VOD shown, or a piece of an edit, `start`..`end` seconds
+/// of VOD `vod_id`, in that VOD's clip bar unless `shown` is false. As
+/// `add_clip`, but the clip made already that it gives is one that plays
+/// just that stretch (`Same::Plays`): a drag from a VOD is its footage, and
+/// a clip listed at the stretch may have been changed in the editor. Its own
+/// command, not a flag of `add_clip`'s, as C and a drag mean different
+/// things by the same stretch.
+#[tauri::command]
+pub(crate) async fn add_piece_clip(
+    app: AppHandle,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    shown: Option<bool>,
+) -> CmdResult<Clip> {
+    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true), Same::Plays)?;
     Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
@@ -648,40 +980,89 @@ pub(crate) async fn add_clip(
 /// stretches selected, clipped at once).
 #[tauri::command]
 pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
-    make_clips(&app, vod_id, ranges, true)
+    make_clips(&app, vod_id, ranges, true, Same::Listed)
+}
+
+/// Makes each of `ranges` of VOD `vod_id` a clip in its clip bar, as
+/// `add_clips` does, of stretches dragged from the VOD and dropped on its
+/// clip bar (several picked): each gives a clip made already only if it
+/// plays just that stretch, as `add_piece_clip`.
+#[tauri::command]
+pub(crate) async fn add_piece_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    make_clips(&app, vod_id, ranges, true, Same::Plays)
+}
+
+/// Which clip made already a stretch asked for again gives (`make_clips`).
+#[derive(Clone, Copy)]
+enum Same {
+    /// The one its clip bar lists at that stretch, as the page finds it:
+    /// C (`Db::vod_clip_of`).
+    Listed,
+    /// One that plays just that stretch: a stretch dragged from a VOD, the
+    /// one shown or a piece of an edit (`Db::vod_clip_playing`).
+    Plays,
 }
 
 /// What `add_clip` and `add_clips` do: a clip of each range (its end kept
 /// within the VOD), each titled with what's said in it, as one change (all of
-/// them, or none if one can't be made); then each is queued to be made.
-fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
+/// them, or none if one can't be made); then each is queued to be made. A
+/// range with a clip already (C pressed twice) gives that one, as for an
+/// edit (`make_edit_clips`), put in the clip bar if `shown`.
+fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool, same: Same) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
-    let made = make_clips_in(&state.db.lock().unwrap(), &state.history, vod_id, ranges, shown).map_err(err)?;
-    state.clips.queue_made(&made.iter().map(|c| c.id).collect::<Vec<_>>(), shown);
+    let now = Settings::load(&state.paths.settings()).clip_encoding();
+    let db = state.db.lock().unwrap();
+    let (made, queued) = make_clips_in(&db, &state.history, vod_id, ranges, shown, now, same).map_err(err)?;
+    drop(db);
+    state.clips.queue_made(&queued, shown);
     Ok(made)
 }
 
-/// What `make_clips` does in the library, recorded in `history`.
+/// What `make_clips` does in the library, recorded in `history`: the clips,
+/// and those of them to be made.
 fn make_clips_in(
     db: &Db,
     history: &history::History,
     vod_id: i64,
     ranges: Vec<(f64, f64)>,
     shown: bool,
-) -> Result<Vec<Clip>> {
+    now: ClipEncoding,
+    same: Same,
+) -> Result<(Vec<Clip>, Vec<i64>)> {
     db.vod(vod_id)?.context("That VOD is gone.")?;
     let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
     history.change(db, Doc::Vod(vod_id), label, |db| {
-        let mut made = Vec::new();
+        let (mut made, mut queued) = (Vec::new(), Vec::new());
         for (start, end) in ranges {
-            let words = db.words_between(vod_id, start, end)?;
-            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), shown)?);
+            let had = match same {
+                Same::Listed => db.vod_clip_of(vod_id, start, end)?,
+                Same::Plays => db.vod_clip_playing(vod_id, start, end)?,
+            };
+            let clip = match had {
+                Some(had) => {
+                    if shown && !had.shown {
+                        db.show_clip(had.id)?;
+                    }
+                    if again(db, &had, now)? {
+                        queued.push(had.id);
+                    }
+                    db.clip(had.id)?.context("That clip is gone.")?
+                }
+                None => {
+                    let words = db.words_between(vod_id, start, end)?;
+                    let clip = db.add_clip(vod_id, start, end, &clips::title(&words, start), shown)?;
+                    queued.push(clip.id);
+                    clip
+                }
+            };
+            made.push(clip);
         }
-        Ok(made)
+        Ok((made, queued))
     })
 }
 
-/// Moves clip `id` to `start`..`end`; its file is made again, named for the new range.
+/// Moves clip `id` to `start`..`end`; its file is made again, as a new file
+/// (`Db::next_clip_file`). The name it's handed out by follows the new range.
 #[tauri::command]
 pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
@@ -692,8 +1073,10 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
             .map_err(err)?;
         db.clip(id).map_err(err)?.ok_or("That clip is gone.")?
     };
+    // Made once, at its new range: one waiting keeps its place, and isn't
+    // listed with the jobs as still waiting once made.
     state.clips.stop(id);
-    state.clips.queue(id);
+    state.clips.queue_once(id);
     Ok(clip)
 }
 
@@ -735,7 +1118,10 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
 #[tauri::command]
 pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    let gone = delete_clips_in(&db, &state.history, &ids, |id| state.clips.stop(id)).map_err(err)?;
+    let gone = delete_clips_in(&db, &state.history, &ids, |id| {
+        state.clips.cancel(id);
+    })
+    .map_err(err)?;
     // Their files once they're gone from the library, as `remove` does for one.
     for (clip, handed_out) in gone {
         after_delete(&app, clip.id, clip.file_path, handed_out);
@@ -743,17 +1129,79 @@ pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids
     Ok(())
 }
 
+/// Ctrl+X's taking off of clips `ids` (copied just before, `copy_items`),
+/// as one change in each clip bar's history, as `delete_clips` does: a clip
+/// whose file the copy has is held for the cut's pastes (`clipboard::hold`),
+/// off its bar with its file; one not made yet is deleted, as there's
+/// nothing to keep.
+#[tauri::command]
+pub(crate) async fn cut_clips(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
+    let files = crate::clipboard::copied_files(&app);
+    let db = state.db.lock().unwrap();
+    let holds = |clip: &Clip| held_by(clip, &files);
+    let take_out = |id| {
+        state.clips.cancel(id);
+    };
+    let (gone, held) = take_off_in(&db, &state.history, &ids, holds, CUT, take_out).map_err(err)?;
+    crate::clipboard::hold(&app, &held);
+    for id in held {
+        emit(&app, &db, id);
+    }
+    for (clip, handed_out) in gone {
+        after_delete(&app, clip.id, clip.file_path, handed_out);
+    }
+    Ok(())
+}
+
+/// What a cut is called in undo, of one clip or several.
+pub(crate) const CUT: (&str, &str) = ("Clip cut", "Clips cut");
+
+/// Whether a cut holds `clip`: made, with its file one of `files` (those the
+/// cut's copy has).
+pub(crate) fn held_by(clip: &Clip, files: &[PathBuf]) -> bool {
+    clip.status == ClipStatus::Ready && clip.file_path.as_ref().is_some_and(|f| files.iter().any(|c| c == Path::new(f)))
+}
+
 /// What `delete_clips` does in the library: clips `ids` deleted in one
 /// transaction, each clip bar's change recorded in `history`. One that's
 /// gone, or one that can't be deleted, leaves all of them as they were and
-/// records nothing. `stop` is given each one's id before it goes (its file
-/// being made is stopped). Returns those deleted, each with whether its file
-/// was dragged out of the app (not the app's to delete then).
-fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl Fn(i64)) -> Result<Vec<(Clip, bool)>> {
+/// records nothing. `take_out` is given each one's id once it's gone, to take
+/// it out of the queue, or stop its file being made, as `remove` does for one.
+/// Returns those deleted, each with whether its file
+/// was dragged out of the app (its names not the app's to delete then), and
+/// with no file where that itself went to another app (`file_to_let_go`).
+fn delete_clips_in(
+    db: &Db,
+    history: &history::History,
+    ids: &[i64],
+    take_out: impl Fn(i64),
+) -> Result<Vec<(Clip, bool)>> {
+    Ok(take_off_in(db, history, ids, |_| false, ("Clip deleted", "Clips deleted"), take_out)?.0)
+}
+
+/// A clip deleted, with whether its file was dragged out of the app.
+type Gone = (Clip, bool);
+
+/// `delete_clips_in`, but the clips `hold` says are held instead (a cut):
+/// off their bar, kept with their files and left in the queue (`take_out`
+/// is given those deleted, once they are). Each bar's change
+/// is recorded as `labels` says, for one clip or several. Those deleted, as
+/// `delete_clips_in` gives them, and the ids of those held.
+fn take_off_in(
+    db: &Db,
+    history: &history::History,
+    ids: &[i64],
+    hold: impl Fn(&Clip) -> bool,
+    labels: (&'static str, &'static str),
+    take_out: impl Fn(i64),
+) -> Result<(Vec<Gone>, Vec<i64>)> {
     let mut gone = Vec::new();
     for &id in ids {
-        let clip = db.clip(id)?.context("That clip is gone.")?;
+        let mut clip = db.clip(id)?.context("That clip is gone.")?;
         let handed_out = db.clip_handed_out(id)?;
+        if !hold(&clip) {
+            clip.file_path = file_to_let_go(db, id, clip.file_path)?;
+        }
         gone.push((clip, handed_out));
     }
     // Each clip bar as it was before any of them went.
@@ -764,16 +1212,23 @@ fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl 
             docs.push((doc, history::snapshot(db, doc).ok().flatten()));
         }
     }
+    let (held, gone): (Vec<_>, Vec<_>) = gone.into_iter().partition(|(clip, _)| hold(clip));
+    db.atomically(|db| {
+        gone.iter().try_for_each(|(clip, _)| db.delete_clip(clip.id))?;
+        held.iter().try_for_each(|(clip, _)| db.hide_clip(clip.id))
+    })?;
+    // Out of the queue once they're gone, so a delete that fails leaves them
+    // queued. The library is held, so one whose turn has just come finds
+    // itself gone.
     for (clip, _) in &gone {
-        stop(clip.id);
+        take_out(clip.id);
     }
-    db.atomically(|db| gone.iter().try_for_each(|(clip, _)| db.delete_clip(clip.id)))?;
     for (doc, before) in docs {
-        let label =
-            if gone.iter().filter(|(c, _)| bar_doc(c) == doc).count() == 1 { "Clip deleted" } else { "Clips deleted" };
+        let of_doc = |list: &[Gone]| list.iter().filter(|(c, _)| bar_doc(c) == doc).count();
+        let label = if of_doc(&gone) + of_doc(&held) == 1 { labels.0 } else { labels.1 };
         history.record(db, doc, label, before);
     }
-    Ok(gone)
+    Ok((gone, held.into_iter().map(|(clip, _)| clip.id).collect()))
 }
 
 /// Takes off a clip bar (VOD `vod_id`'s, or edit `edit_id`'s) the clips
@@ -838,14 +1293,16 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
     state.clips.cancel(id);
     let clip = db.clip(id)?;
     let handed_out = db.clip_handed_out(id)?;
+    let file = file_to_let_go(db, id, clip.and_then(|c| c.file_path))?;
     db.delete_clip(id)?;
-    after_delete(app, id, clip.and_then(|c| c.file_path), handed_out);
+    after_delete(app, id, file, handed_out);
     Ok(())
 }
 
 /// What's left of clip `id` once it's gone from the library: its files
 /// (`let_go_files`) and its thumbnail deleted, and the page told.
 pub(crate) fn after_delete(app: &AppHandle, id: i64, file: Option<String>, handed_out: bool) {
+    crate::clipboard::forget(app, id);
     let_go_files(&app.state::<AppState>().paths, id, file.as_deref(), handed_out);
     let _ = std::fs::remove_file(thumb_path(app, id));
     crate::page::emit(app, "clip-removed", id);
@@ -855,7 +1312,6 @@ pub(crate) fn after_delete(app: &AppHandle, id: i64, file: Option<String>, hande
 /// handed out by (`handed_out`): from there it's the user's to take.
 #[tauri::command]
 pub(crate) async fn show_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    use tauri_plugin_opener::OpenerExt;
     let path = {
         let db = state.db.lock().unwrap();
         let clip = db.clip(id).map_err(err)?;
@@ -863,10 +1319,10 @@ pub(crate) async fn show_clip(app: AppHandle, state: State<'_, AppState>, id: i6
         let path = PathBuf::from(path.ok_or("That clip's file isn't made yet.")?);
         let format = Settings::load(&state.paths.settings()).clip_encoding().format();
         let shown = handed_out(&state.paths, id, &path, &drag_name(&db, format, id));
-        db.hand_out_clip(id).map_err(err)?;
+        hand_out(&db, &state.paths, id, &shown).map_err(err)?;
         shown
     };
-    app.opener().reveal_item_in_dir(path).map_err(err)
+    crate::system::reveal(&app, &path)
 }
 
 /// VOD `vod_id`'s marks on its timeline, in time order.
@@ -1019,16 +1475,6 @@ pub(crate) async fn cancel_mark(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Clip `id`'s file, if it's made.
-fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
-    let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;
-    clip.file_path
-        .filter(|_| clip.status == ClipStatus::Ready)
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .ok_or_else(|| "That clip's file isn't made yet.".into())
-}
-
 /// Shown while a clip with no picture (sound alone) is dragged.
 const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 
@@ -1037,7 +1483,9 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 /// once it's made (a file manager waits for it; an app that takes only files
 /// already made gets none, and the page says so: `DragEnded`). Linux, macOS
 /// and Windows; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the
-/// files at the window's edge before the drag begins (dragout.ts).
+/// files at the window's edge before the drag begins (dragout.ts). That
+/// switch is a developer's fallback, not a setting: no changelog, support
+/// page or dialog names it.
 pub(crate) fn drags_before_made() -> bool {
     cfg!(any(target_os = "linux", target_os = "macos", windows))
         && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
@@ -1087,11 +1535,23 @@ fn briefly(db: &Mutex<Db>) -> Option<std::sync::MutexGuard<'_, Db>> {
 /// under the library's lock: a delete lets go of the clip's names under it
 /// too (`remove`), so it comes wholly before or after. Between them, a name
 /// linked after the delete had looked for them stayed, a full-size file that
-/// no clip named and nothing removed.
+/// no clip named and nothing removed. Where no name can be made, the clip's
+/// own file is handed out and noted so at once (`Db::hand_out_clip_file`),
+/// not when the drop is over: a remake ending in between would delete it
+/// from under the app that has it. If the drop never comes, it's kept all
+/// the same.
 fn hand_out_made(db: &Mutex<Db>, paths: &vodscribe_core::Paths, id: i64, name: &str) -> Made {
     let Some(db) = briefly(db) else { return Made::Making };
     match made_in(&db, id) {
-        Made::Ready(file) => Made::Ready(linked_out(paths, id, &file, name)),
+        Made::Ready(file) => {
+            let given = linked_out(paths, id, &file, name);
+            if !given.starts_with(paths.clip_names(id))
+                && let Err(e) = db.hand_out_clip_file(id)
+            {
+                eprintln!("clip {id}: noting its file handed out: {e:#}");
+            }
+            Made::Ready(given)
+        }
         other => other,
     }
 }
@@ -1123,7 +1583,7 @@ fn made_in(db: &Db, id: i64) -> Made {
 #[tauri::command]
 pub(crate) async fn drag_clip(
     app: AppHandle,
-    window: tauri::WebviewWindow,
+    window: crate::WebviewWindow,
     request: tauri::ipc::Request<'_>,
 ) -> CmdResult<bool> {
     // The clips in a header, the picture as the request's bytes (a PNG is
@@ -1173,32 +1633,26 @@ pub(crate) async fn drag_clip(
         let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &named));
         (names, resolve)
     };
-    let asking = app.clone();
     let listed: Vec<(i64, String)> = names.iter().zip(&ids).map(|(o, &id)| (id, o.name.clone())).collect();
-    // Each under the name it goes by (`handed_out`), for an app that takes
-    // the file itself (Linux's addresses, Windows' CF_HDROP, macOS's file
-    // address); one that copies it names its copy so anyway.
-    let files = move || {
-        let paths = &asking.state::<AppState>().paths;
-        listed.iter().map(|(id, name)| hand_out_made(&asking.state::<AppState>().db, paths, *id, name)).collect()
+    let handing = Arc::new(DragOut::new(app.clone(), listed));
+    let files = {
+        let handing = handing.clone();
+        move || handing.files()
     };
-    // Another app's once one takes them (not when the drag begins: called
-    // off, or dropped on nothing, the files are still the app's to delete).
+    let ending = handing.clone();
+    let taken = move || handing.taken();
     let out = ids.clone();
     let cutter = app.clone();
-    let taken = move || {
-        let state = app.state::<AppState>();
-        let db = state.db.lock().unwrap();
-        for &id in &ids {
-            let _ = db.hand_out_clip(id);
-        }
-    };
     // Let go on another app: their making is listed with the jobs (Cancel
     // there refuses them), until the drag is over.
     // Counted once each way, and over only if it was let go there.
     let (asked, telling) = (out.clone(), cutter.clone());
     let let_go = AtomicBool::new(false);
     let dropped = move |out_now: bool| {
+        // Its end (after `taken`), however it ended.
+        if !out_now {
+            ending.over();
+        }
         if let_go.swap(out_now, std::sync::atomic::Ordering::SeqCst) == out_now {
             return;
         }
@@ -1217,6 +1671,51 @@ pub(crate) async fn drag_clip(
         }
     };
     drag_file(window, number, names, files, image, resolve, taken, dropped, waited).await
+}
+
+/// Clips' files as a drag out of the window hands them out (`drag_clip`).
+pub(crate) struct DragOut {
+    app: AppHandle,
+    /// Each clip's id, and the name it goes by.
+    clips: Vec<(i64, String)>,
+    /// Noted as being handed out (`Cutter::giving`) till the drag is over.
+    giving: Mutex<Option<Giving>>,
+}
+
+impl DragOut {
+    pub(crate) fn new(app: AppHandle, clips: Vec<(i64, String)>) -> Self {
+        let ids: Vec<i64> = clips.iter().map(|(id, _)| *id).collect();
+        let giving = Mutex::new(Some(app.state::<AppState>().clips.giving(&ids)));
+        DragOut { app, clips, giving }
+    }
+
+    /// The drag is over, taken or not: the names it gave are another app's
+    /// if `taken` noted so, else the app's again to delete with the make they
+    /// hold (`let_go_make`).
+    pub(crate) fn over(&self) {
+        self.giving.lock().unwrap().take();
+    }
+
+    /// Where each clip's file is, as the receiver asks: under the name it
+    /// goes by (`linked_out`), for an app that takes the file itself (Linux's
+    /// addresses, Windows' CF_HDROP, macOS's file address); one that copies
+    /// it names its copy so anyway. A clip's own file, where no name could
+    /// be made, is noted as handed out as it's given (`hand_out_made`).
+    pub(crate) fn files(&self) -> Vec<Made> {
+        let state = self.app.state::<AppState>();
+        self.clips.iter().map(|(id, name)| hand_out_made(&state.db, &state.paths, *id, name)).collect()
+    }
+
+    /// Another app has them (not when the drag begins: called off, or dropped
+    /// on nothing, the names are still the app's to delete): noted
+    /// (`Db::hand_out_clip`).
+    pub(crate) fn taken(&self) {
+        let state = self.app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        for &(id, _) in &self.clips {
+            let _ = db.hand_out_clip(id);
+        }
+    }
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
@@ -1258,7 +1757,7 @@ pub(crate) struct Outgoing {
 
 /// The name clip `id`'s file goes by where it's handed out: an edit's (or a
 /// snippet changed in the editor) its title, a clip its VOD's date, title
-/// and range (`clips::file_path`). With its file's extension if it's made,
+/// and range (`clips::file_name`). With its file's extension if it's made,
 /// else the one it will have, made in `format`.
 pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> String {
     let named = || -> Result<Option<String>> {
@@ -1273,8 +1772,7 @@ pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, i
             return Ok(Some(format!("{}.{ext}", clips::safe_name(&title))));
         }
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(None) };
-        let (_, name) = clips::file_path(
-            vod.info.channel.as_deref(),
+        let name = clips::file_name(
             vod.info.published.as_deref(),
             &vod.info.title,
             (clip.start, clip.end),
@@ -1302,7 +1800,7 @@ pub(crate) fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, i
 /// if none began, the button up before it could (`ReleasedEarly`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn drag_file(
-    window: tauri::WebviewWindow,
+    window: crate::WebviewWindow,
     number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
@@ -1374,7 +1872,7 @@ fn drag_outcome(
 /// did (resolve.rs).
 #[allow(clippy::too_many_arguments)]
 fn start_drag(
-    window: &tauri::WebviewWindow,
+    window: &crate::WebviewWindow,
     number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
@@ -1493,348 +1991,5 @@ impl crate::drag_source::Item for DragFile {
     }
 }
 
-/// Saves a copy of clip `id`'s file where the person picks, in the system's
-/// save dialog (opened here, so the interface can't name a place to write).
-/// False if they canceled.
-#[tauri::command]
-pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
-    use tauri_plugin_dialog::DialogExt;
-    let from = ready_file(&app, id)?;
-    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = from.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
-    tauri::async_runtime::spawn_blocking(move || {
-        let picked = app
-            .dialog()
-            .file()
-            .set_parent(&window)
-            .set_file_name(&name)
-            .add_filter(if matches!(ext.as_str(), "m4a" | "wav") { "Audio" } else { "Video" }, &[ext.as_str()])
-            .blocking_save_file();
-        let Some(to) = picked else { return Ok(false) };
-        let to = to.into_path().map_err(err)?;
-        if to != from {
-            std::fs::copy(&from, &to).map_err(|e| format!("Couldn't save the clip there: {e}"))?;
-        }
-        Ok(true)
-    })
-    .await
-    .map_err(err)?
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A clip whose file is read from 0.7.1's clip folder (it couldn't be
-    /// linked in) leaves that file there when it goes; its own goes.
-    #[test]
-    fn a_clip_going_leaves_files_outside_the_library() {
-        let root = std::env::temp_dir().join(format!("vodscribe-let-go-{}", std::process::id()));
-        let paths = vodscribe_core::Paths::new(root.join("lib"));
-        let old = root.join("Videos/VODscribe/A talk.mp4");
-        let own = paths.clip_file(4, "mp4");
-        for file in [&old, &own] {
-            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-            std::fs::write(file, b"clip").unwrap();
-        }
-        let_go_files(&paths, 3, Some(&old.to_string_lossy()), false);
-        assert!(old.is_file(), "0.7.1's file deleted");
-        let_go_files(&paths, 4, Some(&own.to_string_lossy()), false);
-        assert!(!own.exists());
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// A clip made only to be dragged out was queued last, behind every clip
-    /// and edit render waiting, and the drag waited for all of them.
-    #[test]
-    fn a_clip_made_for_a_drag_out_is_made_next() {
-        let cutter = Cutter::new();
-        let (began, order) = mpsc::channel();
-        let (go, wait) = mpsc::channel::<()>();
-        let wait = Mutex::new(wait);
-        cutter
-            .jobs
-            .run("cutter-test", move |id, _| {
-                began.send(id).unwrap();
-                if id == 1 {
-                    wait.lock().unwrap().recv().unwrap();
-                }
-            })
-            .unwrap();
-        cutter.queue_made(&[1], true);
-        assert_eq!(order.recv_timeout(Duration::from_secs(5)), Ok(1));
-        // While 1 is being made: two for the clip bar, then two for a drag.
-        cutter.queue_made(&[2, 3], true);
-        cutter.queue_made(&[8, 9], false);
-        go.send(()).unwrap();
-        let next: Vec<_> = (0..4).map(|_| order.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
-        assert_eq!(next, [8, 9, 2, 3], "the drag's in the order picked, then the rest as they were");
-    }
-
-    /// What a drag out of the window comes to, by what was seen of it: let go
-    /// on an app that took nothing while the files were still being made, it
-    /// takes finished files only (named, where the system says); one that
-    /// failed is said only once it's let go on another app; called off or
-    /// dropped on the app's own window, nothing.
-    #[test]
-    fn a_drag_ends_as_its_receiver_took_it() {
-        use Ending::*;
-        let named = || Some("Kdenlive".to_string());
-        let blocked = || Some("blocked".to_string());
-        let ended = |delivered, failed: Option<&str>, finished_only, receiver: Option<&str>| DragEnded {
-            drag: None,
-            delivered,
-            failed: failed.map(String::from),
-            finished_only,
-            receiver: receiver.map(String::from),
-            resolve: None,
-        };
-        assert_eq!(drag_outcome(Elsewhere, true, None, true, named()), ended(true, None, false, None), "given");
-        assert_eq!(
-            drag_outcome(Elsewhere, false, None, false, named()),
-            ended(false, None, true, Some("Kdenlive")),
-            "let go before it was made, nothing taken"
-        );
-        assert_eq!(drag_outcome(Elsewhere, false, None, false, None), ended(false, None, true, None), "name unknown");
-        assert_eq!(drag_outcome(Elsewhere, false, None, true, named()), DragEnded::default(), "made, not taken");
-        assert_eq!(
-            drag_outcome(Elsewhere, false, blocked(), false, named()),
-            ended(false, Some("blocked"), false, None)
-        );
-        assert_eq!(drag_outcome(Nowhere, false, blocked(), false, None), ended(false, Some("blocked"), false, None));
-        assert_eq!(drag_outcome(Nowhere, false, None, false, None), DragEnded::default(), "dropped on nothing");
-        assert_eq!(drag_outcome(Elsewhere, false, Some(CANCELED.into()), false, named()), DragEnded::default());
-        for ending in [CalledOff, Back] {
-            for (given, failure) in [(true, None), (false, None), (false, blocked())] {
-                assert_eq!(drag_outcome(ending, given, failure, false, named()), DragEnded::default(), "{ending:?}");
-            }
-        }
-    }
-
-    /// A clip made only for a drag out of the window showed in the list of
-    /// jobs while the drag was still in the window, where nothing had been let
-    /// go yet: it's listed once it's let go on another app, until it's over.
-    #[test]
-    fn a_drag_clip_is_listed_with_the_jobs_only_once_let_go_elsewhere() {
-        let (db, vod) = library();
-        let hidden = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap().id;
-        let pill = db.add_clip(vod, 3.0, 4.0, "pill", true).unwrap().id;
-        let cutter = Cutter::new();
-        let listed = |id| crate::job_list::describe(&db, crate::job_list::Queue::Render, id, |id| cutter.is_out(id));
-        assert!(listed(hidden).is_none(), "listed while in the window's drag");
-        assert!(listed(pill).is_some(), "a pill's making");
-        cutter.dragged_out(&[hidden], true);
-        assert_eq!(listed(hidden).map(|(_, label)| label).as_deref(), Some("dragged"));
-        cutter.dragged_out(&[hidden], false);
-        assert!(listed(hidden).is_none(), "listed once the drag was over");
-    }
-
-    /// The same clip dragged out again while the first drag still hands it
-    /// over (let go on a file manager that copies it as it's made): the
-    /// first's end left the second's making out of the list of jobs.
-    #[test]
-    fn a_drag_clip_stays_listed_till_its_last_drag_out_is_over() {
-        let (db, vod) = library();
-        let hidden = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap().id;
-        let cutter = Cutter::new();
-        let listed = |id| crate::job_list::describe(&db, crate::job_list::Queue::Render, id, |id| cutter.is_out(id));
-        cutter.dragged_out(&[hidden], true);
-        cutter.dragged_out(&[hidden], true);
-        cutter.dragged_out(&[hidden], false);
-        assert!(listed(hidden).is_some(), "left out as the first drag ended, the second still handing it over");
-        cutter.dragged_out(&[hidden], false);
-        assert!(listed(hidden).is_none(), "listed once both were over");
-    }
-
-    /// Several clips made at once went in one at a time: one that failed
-    /// part-way left those before it in the library, waiting to be made, with
-    /// no step to undo them.
-    #[test]
-    fn making_several_clips_is_all_or_none() {
-        let (db, vod) = library();
-        let history = history::History::default();
-        assert!(make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (-1.0, 3.0)], true).is_err());
-        assert!(db.clips(vod).unwrap().is_empty(), "none made");
-        assert_eq!(history.steps(Doc::Vod(vod)), 0, "no step recorded");
-        let made = make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (3.0, 90.0)], true).unwrap();
-        assert_eq!(made.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>(), [(1.0, 2.0), (3.0, 60.0)]);
-        assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
-
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
-        let doc = Doc::Edit(edit);
-        let before = history.steps(doc);
-        assert!(make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (40.0, 50.0)], true).is_err());
-        assert!(db.bar_clips(edit).unwrap().is_empty(), "none made on the edit's bar");
-        assert_eq!(history.steps(doc), before, "no step recorded");
-        let (made, queued) = make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (3.0, 4.0)], true).unwrap();
-        assert_eq!(made.iter().map(|c| c.id).collect::<Vec<_>>(), queued);
-        assert_eq!(history.steps(doc), before + 1);
-    }
-
-    /// A drag's receiver asked for a clip's file (its name made beside it,
-    /// `handed_out`) as the clip was deleted: the name was linked after the
-    /// delete had looked for names to remove, and a full-size copy stayed in
-    /// the clips folder that nothing named or removed.
-    #[test]
-    fn a_clip_deleted_as_a_drag_hands_it_out_leaves_no_name_behind() {
-        use std::sync::atomic::AtomicU64;
-        static N: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "vodscribe-hand-out-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let paths = vodscribe_core::Paths::new(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let db = Db::open(&root.join("library.sqlite")).unwrap();
-        let vod = db.add_vod(&info()).unwrap().0.id;
-        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap();
-        let file = db.files().clip_file(clip.id, "mp4");
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, b"clip").unwrap();
-        db.set_clip_file(clip.id, 1.0, 2.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
-        let db = Arc::new(Mutex::new(db));
-        let asking = {
-            let (db, paths) = (db.clone(), paths.clone());
-            std::thread::spawn(move || hand_out_made(&db, &paths, clip.id, "c 0:01.mp4"))
-        };
-        // Deleted while the receiver's ask is under way, as `remove` does.
-        std::thread::sleep(Duration::from_millis(100));
-        {
-            let db = db.lock().unwrap();
-            let path = db.clip(clip.id).unwrap().and_then(|c| c.file_path);
-            db.delete_clip(clip.id).unwrap();
-            let_go_files(&paths, clip.id, path.as_deref(), false);
-        }
-        let given = asking.join().unwrap();
-        let left: Vec<_> = std::fs::read_dir(paths.clip_names(clip.id)).into_iter().flatten().flatten().collect();
-        assert!(left.is_empty(), "left in the clips folder: {left:?}");
-        assert!(!paths.clip_names(clip.id).exists(), "its names' folder is left");
-        // Given only if the ask came first; then it was deleted with the clip.
-        if let Made::Ready(path) = given {
-            assert!(!path.exists(), "handed out {path:?}, still there");
-        }
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    fn info() -> vodscribe_core::fetch::VodInfo {
-        vodscribe_core::fetch::VodInfo {
-            platform: "youtube".into(),
-            platform_id: "x".into(),
-            url: "https://youtu.be/x".into(),
-            title: "t".into(),
-            channel: None,
-            channel_login: None,
-            channel_url: None,
-            duration: Some(60.0),
-            thumbnail: None,
-            published: None,
-            started_at: None,
-        }
-    }
-
-    fn library() -> (Db, i64) {
-        let db = Db::open(Path::new(":memory:")).unwrap();
-        let info = vodscribe_core::fetch::VodInfo {
-            platform: "youtube".into(),
-            platform_id: "x".into(),
-            url: "https://youtu.be/x".into(),
-            title: "t".into(),
-            channel: None,
-            channel_login: None,
-            channel_url: None,
-            duration: Some(60.0),
-            thumbnail: None,
-            published: None,
-            started_at: None,
-        };
-        let vod = db.add_vod(&info).unwrap().0.id;
-        (db, vod)
-    }
-
-    /// A clip on an edit's clip bar of a VOD taken out of the library stays,
-    /// as the edit's pieces of it do: its cut went on stopped, and was never
-    /// queued again (only the VOD's own bar is), so it showed being cut until
-    /// the app next started.
-    #[test]
-    fn taking_a_vod_out_stops_only_the_clips_of_its_own_bar() {
-        let (db, vod) = library();
-        let of_vod = db.add_clip(vod, 1.0, 2.0, "v", true).unwrap().id;
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
-        let of_edit = db.add_edit_clip(edit, 1.0, 2.0, "e", true).unwrap().id;
-        assert!(on_bar_of(&db, of_vod, vod), "a clip of the VOD's bar");
-        assert!(!on_bar_of(&db, of_edit, vod), "a clip of the edit's bar");
-        assert!(!on_bar_of(&db, edit, vod), "the edit");
-    }
-
-    /// Deleting an edit took the clips on its clip bar out of the library
-    /// (the database's cascade) but left their files in the clips folder,
-    /// their cuts running and the page not told: they go as a VOD's do.
-    #[test]
-    fn deleting_an_edit_releases_its_bar_clips() {
-        let (db, vod) = library();
-        let of_vod = db.add_clip(vod, 1.0, 2.0, "v", true).unwrap().id;
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
-        let a = db.add_edit_clip(edit, 1.0, 2.0, "a", true).unwrap().id;
-        let b = db.add_edit_clip(edit, 3.0, 4.0, "b", true).unwrap();
-        let file = db.files().clip_file(b.id, "mp4").to_string_lossy().into_owned();
-        assert!(db.set_clip_file(b.id, b.start, b.end, ClipStatus::Ready, Some(&file), None).unwrap());
-        let b = b.id;
-        db.hand_out_clip(b).unwrap();
-        let stopped = std::cell::RefCell::new(Vec::new());
-        let stop = |id| stopped.borrow_mut().push(id);
-
-        // Not an edit (a VOD's own clip): nothing goes, none stopped.
-        assert!(crate::edits::delete_edit_in(&db, of_vod, stop).is_err());
-        assert_eq!(db.bar_clips(edit).unwrap().len(), 2);
-        assert!(stopped.borrow().is_empty());
-
-        let gone = crate::edits::delete_edit_in(&db, edit, stop).unwrap();
-        let clips: Vec<_> = gone.clips.iter().map(|(c, out)| (c.id, c.file_path.as_deref(), *out)).collect();
-        assert_eq!(clips, [(a, None, false), (b, Some(&*file), true)], "its clips, b dragged out");
-        assert_eq!(*stopped.borrow(), [a, b], "their cuts stopped");
-        assert!(db.revision(edit).unwrap().is_none() && db.clip(a).unwrap().is_none() && db.clip(b).unwrap().is_none());
-        assert_eq!(db.clips(vod).unwrap().len(), 1, "the VOD's own clip stays");
-    }
-
-    /// Several clips deleted at once went one by one, a clip that was gone
-    /// skipped: one that couldn't go, in the middle, left those before it
-    /// deleted with no step to undo them.
-    #[test]
-    fn deleting_several_clips_is_all_or_none() {
-        let (db, vod) = library();
-        let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;
-        let b = db.add_clip(vod, 3.0, 4.0, "b", true).unwrap().id;
-        let history = history::History::default();
-        let stopped = std::cell::RefCell::new(Vec::new());
-        let stop = |id| stopped.borrow_mut().push(id);
-        assert!(delete_clips_in(&db, &history, &[a, 9999, b], stop).is_err());
-        assert_eq!(db.clips(vod).unwrap().len(), 2, "every clip in place");
-        assert_eq!(history.steps(Doc::Vod(vod)), 0, "no step recorded");
-        assert!(stopped.borrow().is_empty(), "none stopped");
-
-        let gone = delete_clips_in(&db, &history, &[b, a], stop).unwrap();
-        assert_eq!(gone.iter().map(|(c, _)| c.id).collect::<Vec<_>>(), [b, a]);
-        assert!(db.clips(vod).unwrap().is_empty());
-        assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
-    }
-
-    /// The page told an early release from a refused drag by the word
-    /// "released" in its error: a reworded sentence would have shown an
-    /// ordinary release, too soon, as an error.
-    #[test]
-    fn a_drag_refused_for_an_early_release_is_none_begun_not_an_error() {
-        assert_eq!(began(Ok(())), Ok(true));
-        assert_eq!(began(Err(ReleasedEarly.into())), Ok(false));
-        assert_eq!(began(Err(anyhow::Error::new(ReleasedEarly).context("Not now."))), Ok(false), "said otherwise");
-        assert_eq!(began(Err(anyhow::anyhow!("no view"))), Err("no view".into()));
-        assert_eq!(
-            began(Err(anyhow::anyhow!("The button was released before the drag could begin."))),
-            Err("The button was released before the drag could begin.".into()),
-            "only the type tells",
-        );
-    }
-}
+mod tests;

@@ -20,10 +20,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::footage::Source;
 use vodscribe_player::timeline::{Sound, Stretch, Timeline};
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, err};
 
 /// The VOD whose embed feeds the player, if one does.

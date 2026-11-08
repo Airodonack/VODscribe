@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{ClipStatus, Db, MARK_DETAIL_COLUMNS, MarkDetail, mark_detail, now};
+use crate::db::{CLIP_COLUMNS, CLIP_JOIN, ClipStatus, Db, MARK_DETAIL_COLUMNS, MarkDetail, mark_detail, now};
 use crate::footage::Source;
 use crate::render::Piece;
 use crate::settings::ClipEncoding;
@@ -742,17 +742,24 @@ impl Db {
         Ok(id)
     }
 
-    /// A new, empty clip titled `title`, where `place` says; its id.
+    /// A new, empty clip titled `title`, where `place` says; its id, one
+    /// never given before (`db::MIGRATE_V42`). Every clip, edit and VOD's
+    /// own clip is made here.
     pub(crate) fn new_clip(&self, title: &str, place: Place) -> Result<i64> {
+        const ID: &str = "(SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM clips)) FROM clip_ids)";
         match place {
             Place::Listed => self.conn.execute(
-                "INSERT INTO clips (title, created_at, position)
-                 VALUES (?1, ?2, (SELECT coalesce(min(position), 0) - 1 FROM clips))",
+                &format!(
+                    "INSERT INTO clips (id, title, created_at, position)
+                     VALUES ({ID}, ?1, ?2, (SELECT coalesce(min(position), 0) - 1 FROM clips))"
+                ),
                 params![title, now()],
             )?,
             Place::Bar(bar_of) => self.conn.execute(
-                "INSERT INTO clips (title, created_at, bar_of, bar_position)
-                 VALUES (?1, ?2, ?3, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?3))",
+                &format!(
+                    "INSERT INTO clips (id, title, created_at, bar_of, bar_position)
+                     VALUES ({ID}, ?1, ?2, ?3, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?3))"
+                ),
                 params![title, now(), bar_of],
             )?,
         };
@@ -779,7 +786,7 @@ impl Db {
             .query_row(
                 "SELECT c.title, r.status, r.file_ext, r.error, c.revision, r.revision,
                         c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of, r.file_path,
-                        r.encoding
+                        r.encoding, r.make
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -794,14 +801,16 @@ impl Db {
                         r.get::<_, Option<String>>(8)?,
                         r.get::<_, Option<String>>(9)?,
                         r.get::<_, Option<String>>(10)?.and_then(|e| serde_json::from_str(&e).ok()),
+                        r.get::<_, Option<i64>>(11)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old, encoding)) = row else {
+        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old, encoding, make)) = row
+        else {
             return Ok(None);
         };
-        let file_path = crate::db::clip_file_of(&self.files, id, file_ext, old);
+        let file_path = crate::db::clip_file_of(&self.files, id, file_ext, make, old);
         let pieces = self.edit_pieces(id)?;
         // Of the edit as it is if made of what it's made of now (a file made
         // before that was recorded: of the revision it was made at), and as
@@ -867,11 +876,18 @@ impl Db {
         Ok(serde_json::to_string(&(title, plays, chapters))?)
     }
 
+    /// What a file of clip `id` made now would be made of (`made_of`): taken
+    /// as its make begins, and recorded with the file (`set_made_of`), so a
+    /// change made meanwhile leaves it not current, to be made again.
+    pub fn made_of_now(&self, id: i64) -> Result<String> {
+        let title: String = self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0))?;
+        self.made_of(id, &title, &self.edit_pieces(id)?)
+    }
+
     /// Records that clip `id`'s file, just made, is of what the clip holds
     /// now (`made_of`).
     pub fn set_made_now(&self, id: i64) -> Result<()> {
-        let title: String = self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0))?;
-        self.set_made_of(id, &self.made_of(id, &title, &self.edit_pieces(id)?)?)
+        self.set_made_of(id, &self.made_of_now(id)?)
     }
 
     /// Records that clip `id`'s file was made of `made_of` (`made_of`).
@@ -1182,6 +1198,42 @@ impl Db {
             return Ok(None);
         }
         self.bar_clip_of(edit, &parts)
+    }
+
+    /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) listed
+    /// at exactly `start`..`end` seconds of it, its end cut at the VOD's
+    /// (`vod_span`), if there's one: its first piece's stretch, whatever the
+    /// editor changed after it (a line struck, a piece added), as the page
+    /// finds it (clips.svelte.ts `find`). The app gives it (C on its
+    /// stretch), as `edit_clip_of` for an edit.
+    pub fn vod_clip_of(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
+        Ok(self.vod_clips_at(vod_id, start, end)?.into_iter().next())
+    }
+
+    /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) that
+    /// plays just `start`..`end` seconds of it, its end cut at the VOD's: one
+    /// piece as it came, nothing struck, as `add_clip` makes it (`Clip::plain`).
+    /// The app gives it for a stretch dragged from a VOD, the one shown or a
+    /// piece of an edit, whose file has to be just that stretch of its footage.
+    pub fn vod_clip_playing(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
+        Ok(self.vod_clips_at(vod_id, start, end)?.into_iter().find(|c| c.plain))
+    }
+
+    /// The clips on VOD `vod_id`'s clip bar listed at `start`..`end` seconds of
+    /// it (`vod_clip_of`), in the bar's order: one query.
+    fn vod_clips_at(&self, vod_id: i64, start: f64, end: f64) -> Result<Vec<crate::db::Clip>> {
+        let (start, end) = self.vod_span(vod_id, start, end)?;
+        let sql = format!(
+            "SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN}
+             WHERE c.bar_of = (SELECT id FROM clips WHERE whole_of = ?1)
+               AND abs(i.start - ?2) < ?4 AND abs(i.end - ?3) < ?4
+             ORDER BY c.bar_position, c.id"
+        );
+        let (start, end, near) =
+            (Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, Flicks::from_seconds(0.001).0);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let clips = stmt.query_map(params![vod_id, start, end, near], |r| crate::db::clip_from_row(r, &self.files))?;
+        Ok(clips.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The clip on edit `edit`'s clip bar that plays just what `parts` do.
@@ -1809,7 +1861,8 @@ impl Db {
 
     /// Edit `id`'s video was dragged out of the app, so another app may use it.
     pub fn hand_out_edit(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
+        // (2, its own file itself: `Db::hand_out_clip_file`, says more, and stays.)
+        self.conn.execute("UPDATE renders SET handed_out = max(handed_out, 1) WHERE clip_id = ?1", [id])?;
         Ok(())
     }
 
@@ -1834,12 +1887,12 @@ impl Db {
         error: Option<&str>,
         version: Option<i64>,
     ) -> Result<()> {
-        let ext = file.map(|f| crate::db::built_ext(f, |ext| self.files.clip_file(id, ext))).transpose()?;
+        let (ext, make) = file.map(|f| crate::db::built_make(&self.files, id, f)).transpose()?.unzip();
         self.conn.execute(
             "UPDATE renders SET status = ?2, file_ext = coalesce(?3, file_ext), file_path = coalesce(?6, file_path),
-               error = ?4, revision = coalesce(?5, revision)
+               error = ?4, revision = coalesce(?5, revision), make = CASE WHEN ?3 IS NULL THEN make ELSE ?7 END
              WHERE clip_id = ?1",
-            params![id, status.as_str(), ext, error, version, file],
+            params![id, status.as_str(), ext, error, version, file, make],
         )?;
         Ok(())
     }
@@ -2000,6 +2053,43 @@ pub(crate) mod tests {
         assert_eq!(db.rate(vod).unwrap(), Some(Rate::new(30000, 1001)));
         db.delete_vod(vod).unwrap();
         assert_eq!(db.vod_clip(vod).unwrap(), None, "goes with the VOD");
+    }
+
+    /// The clip of a VOD's stretch is the one its clip bar lists there (its
+    /// first piece's stretch), whatever the editor changed in it: a line
+    /// struck, or a piece added. The page finds it so (clips.svelte.ts
+    /// `find`), and the app gives it (plans/clips-pilot.md, Decided 1; the
+    /// clips-fixes review, M1).
+    #[test]
+    fn a_vod_s_clip_of_a_stretch_is_the_one_listed_there_struck_or_added_to() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let struck = db.add_clip(vod, 10.0, 20.0, "a", true).unwrap().id;
+        let piece = db.piece_rows(struck).unwrap()[0].id;
+        db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
+        let added = db.add_clip(vod, 30.0, 40.0, "b", true).unwrap().id;
+        db.add_piece(added, vod, (50.0, 52.0), "c", None).unwrap();
+        let of = |start, end| db.vod_clip_of(vod, start, end).unwrap().map(|c| c.id);
+        assert_eq!(of(10.0, 20.0), Some(struck), "a line struck");
+        assert_eq!(of(30.0, 40.0), Some(added), "a piece added");
+        assert_eq!(of(10.0, 19.0), None, "a stretch of its own");
+        assert_eq!(of(50.0, 52.0), None, "a piece after the first");
+        // What plays just the stretch: neither of those, but one as it came.
+        let playing = |start, end| db.vod_clip_playing(vod, start, end).unwrap().map(|c| c.id);
+        assert_eq!((playing(10.0, 20.0), playing(30.0, 40.0)), (None, None), "a changed clip");
+        let whole = db.add_clip(vod, 30.0, 40.0, "d", true).unwrap().id;
+        assert_eq!(playing(30.0, 40.0), Some(whole));
+        // The page tells them apart as listed (clips.svelte.ts `find`).
+        let plain: Vec<_> = db.clips(vod).unwrap().iter().map(|c| (c.id, c.plain)).collect();
+        assert_eq!(plain, [(struck, false), (added, false), (whole, true)]);
+        // A line struck and put back is just the stretch again; a group isn't.
+        db.set_piece_struck(piece, &[]).unwrap();
+        assert_eq!(playing(10.0, 20.0), Some(struck), "struck and put back");
+        let grouped = db.add_clip(vod, 60.0, 70.0, "e", true).unwrap().id;
+        let into = db.add_clip(vod, 80.0, 90.0, "f", true).unwrap().id;
+        db.add_group(into, grouped, Some(0)).unwrap();
+        db.remove_piece(db.piece_rows(into).unwrap().last().unwrap().id).unwrap();
+        assert_eq!(db.clip(into).unwrap().map(|c| (c.start, c.plain)), Some((60.0, false)), "in a group");
     }
 
     #[test]
