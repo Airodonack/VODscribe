@@ -7,6 +7,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Cut clips wait for a paste. Ctrl+X (⌘X) keeps the clip and its file until you paste it, copy or cut again, or quit, so Ctrl+V brings it back at once.
 - The search filter shows how to search. Its panel names what the search box takes and links to the full list.
 - Refresh details is quicker. On Twitch and YouTube it takes under a second instead of several, and Check for a VODscription shows in the row that it is asking.
+- A message when Twitch won't start. If Twitch's player doesn't start when you press Play, a message asks you to press Play in Twitch's own player.
 - Drop links from your browser. A VOD link dragged onto VODscribe from a browser or another app adds it on Windows and macOS too, as it already did on Linux.
 - Fixes:
   - Settings shows over an edit's picture. After a clip of the edit's clip bar was opened, the edit's picture drew over Settings and menus until you left the edit.

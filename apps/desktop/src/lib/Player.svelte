@@ -47,6 +47,7 @@
   import { snippets } from "./selection.svelte";
   import { gaps, transcribeChoices, transcribeRest, transcribeStretchOf } from "./stretches";
   import { shortMode } from "./shortMode.svelte";
+  import { toast } from "./toasts.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a jump (a search
   // result, a transcript line, a source link), a fresh object each time, so
@@ -290,6 +291,8 @@
   let drawsCaptions = $state(untrack(() => playsHere(vod)));
   drawsOwnCaptions(untrack(() => vod)).then((draws) => !player && !destroyed && (drawsCaptions = draws));
   let playerDuration = $state(0);
+  // Whether the player was asked to play and won't (`EmbeddedPlayer.refused`).
+  let refused = $state(false);
   drivePlayer(reading, () => ({ kind: "vod", id: vod.id }), {
     player: () => player,
     // Before there's a player, the sound and speed it'll start with.
@@ -297,7 +300,24 @@
     each(p) {
       playerDuration = p.duration?.() ?? 0;
       drawsCaptions = p.drawsCaptions?.() ?? false;
+      refused = p.refused?.() ?? false;
     },
+  });
+  // A site's player that won't start on the app's Play (Twitch's, for
+  // reasons of its own: startWatch.ts) starts only on its own Play: a toast
+  // asks for that till it plays, at the window's bottom, below the bar and
+  // never over their player. Gone with this VOD (onDestroy) or its player
+  // (a download switching it).
+  let refusedToast: number | null = null;
+  $effect(() => {
+    if (!player) refused = false;
+  });
+  $effect(() => {
+    if (refused) refusedToast = toast.stay(`Press Play in ${site}'s player to start it.`);
+    else if (refusedToast !== null) {
+      toast.drop(refusedToast);
+      refusedToast = null;
+    }
   });
   // The caption in the strip under a site's player (never over it); the
   // strip, empty, before the player opens. Kept from the first frame for a
@@ -546,6 +566,7 @@
     clearTimeout(copiedTimer);
     void changed.then((u) => u());
     player?.destroy();
+    if (refusedToast !== null) toast.drop(refusedToast);
     // The note asks about this VOD's clip.
     clips.answer(false);
   });

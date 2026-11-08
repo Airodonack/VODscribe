@@ -69,6 +69,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `setup.mjs`: first-run setup, then the library; always runs first when chosen.
 - `short-mode.mjs`: a short window shows the player alone.
 - `site-autoplay.mjs`: Twitch starts on Play where its frame ends on a fraction of a pixel; needs the network.
+- `site-refused.mjs`: Twitch's player too small to start on Play: a toast asks for its own Play, and goes once it plays at its size again; needs the network.
 - `site-embed.mjs`: a site's VOD with the app's picture under its player; needs the network and an `embed-takeover` build.
 - `site-frames.mjs`: the time by frame under a site's own player; needs the network.
 - `site-in-out.mjs`: I right after a timeline click, on a site's VOD; needs the network.

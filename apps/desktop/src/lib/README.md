@@ -59,6 +59,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `embed.ts`: drives YouTube's and Twitch's players over postMessage, and plays Kick's stream.
 - `settle.ts`: a site player's play or pause, passed on once it settles.
 - `heldMute.ts`: a mute set before Twitch's player takes one, held till it does.
+- `startWatch.ts`: whether Twitch's player refused to start on Play.
 - `drivePlayer.svelte.ts`: the loop that reads a player every frame.
 - `playerReading.svelte.ts`: what a player's controls show.
 - `playerClock.ts`: a player's position, run on between reports.
