@@ -1,5 +1,5 @@
 """Tests for release.py's changelog and version parsing, verify-release.py's
-signature checks, and ready-to-release.py's changelog, ledger, release branch
+signature checks, and ready-to-release.py's changelog, ledger, main branch
 and next version checks:
 python3 -I scripts/test_release.py"""
 
@@ -258,7 +258,7 @@ class Ledgers(unittest.TestCase):
         self.assertTrue(all("aren't there" in p for p in problems))
 
 
-class ReleaseBranch(unittest.TestCase):
+class OnMain(unittest.TestCase):
     """git_problems against a scratch repository with its own origin."""
 
     def git(self, cwd, *args):
@@ -275,7 +275,8 @@ class ReleaseBranch(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
-        origin, self.work = Path(folder.name) / "origin.git", Path(folder.name) / "work"
+        self.folder = Path(folder.name)
+        origin, self.work = self.folder / "origin.git", self.folder / "work"
         self.git(folder.name, "init", "--quiet", "--bare", "-b", "main", str(origin))
         self.git(folder.name, "clone", "--quiet", str(origin), str(self.work))
         self.git(self.work, "config", "user.name", "Test")
@@ -283,100 +284,36 @@ class ReleaseBranch(unittest.TestCase):
         self.commit("first")
         self.git(self.work, "push", "--quiet", "origin", "HEAD:main")
 
-    def cut(self, branch):
-        """A release branch cut from main, its version commit pushed."""
-        self.git(self.work, "switch", "--quiet", "-c", branch, "main")
+    def test_the_version_commit_pushed_on_main(self):
         self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", branch)
+        self.git(self.work, "push", "--quiet", "origin", "main")
+        self.assertEqual(ready.git_problems(self.work), [])
 
-    def test_a_pushed_branch_cut_from_main(self):
-        self.cut("release/0.7.2")
-        self.assertEqual(ready.git_problems(self.work, "0.7.2"), [])
-
-    def test_a_branch_after_a_fix(self):
-        self.cut("release/0.7.2-2")
-        self.assertEqual(ready.git_problems(self.work, "0.7.2"), [])
-
-    def test_the_wrong_version_in_the_name(self):
-        self.cut("release/0.7.3")
-        problems = ready.git_problems(self.work, "0.7.2")
+    def test_not_on_main(self):
+        self.git(self.work, "switch", "--quiet", "-c", "release/0.7.4")
+        self.commit("version")
+        self.git(self.work, "push", "--quiet", "origin", "release/0.7.4")
+        problems = ready.git_problems(self.work)
         self.assertEqual(len(problems), 1)
-        self.assertIn("named for 0.7.3", problems[0])
-
-    def test_not_a_release_branch(self):
-        self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", "HEAD:main")
-        problems = ready.git_problems(self.work, "0.7.2")
-        self.assertEqual(len(problems), 1)
-        self.assertIn("HEAD is on main, not release/0.7.2", problems[0])
-        self.git(self.work, "switch", "--quiet", "-c", "release/0.7.2-two")
-        self.assertIn("not release/0.7.2", ready.git_problems(self.work, "0.7.2")[0])
-
-    def test_main_ahead_of_the_branch(self):
-        self.cut("release/0.7.3")
-        self.git(self.work, "switch", "--quiet", "main")
-        self.commit("work for the next release")
-        self.git(self.work, "push", "--quiet", "origin", "main")
-        self.git(self.work, "switch", "--quiet", "release/0.7.3")
-        self.assertEqual(ready.git_problems(self.work, "0.7.3"), [])
-
-    def fix_on_the_branch(self):
-        """release/0.7.3 cut from main, a fix on it, main moved on."""
-        self.git(self.work, "switch", "--quiet", "-c", "release/0.7.3", "main")
-        self.commit("a fix")
-        self.git(self.work, "switch", "--quiet", "main")
-        self.commit("work for the next release")
-        self.git(self.work, "push", "--quiet", "origin", "main")
-        self.git(self.work, "switch", "--quiet", "release/0.7.3")
-
-    def test_a_fix_main_lacks(self):
-        self.fix_on_the_branch()
-        self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", "release/0.7.3")
-        problems = ready.git_problems(self.work, "0.7.3")
-        self.assertEqual(len(problems), 1)
-        self.assertIn("release/0.7.3 has 1 commit(s) main lacks: merge release/0.7.3 into main first", problems[0])
-        self.assertIn("a fix", problems[0])
-
-    def test_a_fix_merged_into_main(self):
-        self.fix_on_the_branch()
-        self.git(self.work, "switch", "--quiet", "main")
-        self.git(self.work, "merge", "--quiet", "--no-edit", "release/0.7.3")
-        self.git(self.work, "push", "--quiet", "origin", "main")
-        self.git(self.work, "switch", "--quiet", "release/0.7.3")
-        self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", "release/0.7.3")
-        self.assertEqual(ready.git_problems(self.work, "0.7.3"), [])
-
-    def test_a_fix_after_a_failed_tag(self):
-        # The old version commit is reverted before the fix, so merging the
-        # fix into main leaves main's development version as it was.
-        self.cut("release/0.7.3")
-        self.git(self.work, "revert", "--no-edit", "HEAD")
-        self.commit("a fix")
-        self.git(self.work, "switch", "--quiet", "main")
-        self.git(self.work, "merge", "--quiet", "--no-edit", "release/0.7.3")
-        self.assertFalse((self.work / "version").exists())
-        self.git(self.work, "push", "--quiet", "origin", "main")
-        self.git(self.work, "switch", "--quiet", "release/0.7.3")
-        self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", "release/0.7.3")
-        self.assertEqual(ready.git_problems(self.work, "0.7.3"), [])
-
-    def test_a_dirty_tree(self):
-        self.cut("release/0.7.2")
-        (self.work / "first").write_text("changed")
-        self.assertEqual(ready.git_problems(self.work, "0.7.2"), ["the working tree has uncommitted changes"])
+        self.assertIn("HEAD is on release/0.7.4, not main", problems[0])
+        self.git(self.work, "switch", "--quiet", "--detach")
+        self.assertIn("HEAD is on no branch, not main", ready.git_problems(self.work)[0])
 
     def test_not_pushed(self):
-        self.git(self.work, "switch", "--quiet", "-c", "release/0.7.2")
         self.commit("version")
-        self.assertEqual(ready.git_problems(self.work, "0.7.2"), ["release/0.7.2 isn't on origin: push it"])
-        self.git(self.work, "push", "--quiet", "origin", "release/0.7.2")
-        self.commit("after the push")
-        # The commit before it isn't on main either, which is said too.
-        problems = ready.git_problems(self.work, "0.7.2")
-        self.assertEqual(problems[0], "this commit isn't origin/release/0.7.2: push, or pull")
+        self.assertEqual(ready.git_problems(self.work), ["this commit isn't origin/main: push, or pull"])
+
+    def test_a_stale_checkout(self):
+        # Another clone pushed since: this one would tag an old commit.
+        other = self.folder / "other"
+        self.git(self.folder, "clone", "--quiet", str(self.folder / "origin.git"), str(other))
+        self.git(other, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "version")
+        self.git(other, "push", "--quiet", "origin", "main")
+        self.assertEqual(ready.git_problems(self.work), ["this commit isn't origin/main: push, or pull"])
+
+    def test_a_dirty_tree(self):
+        (self.work / "first").write_text("changed")
+        self.assertEqual(ready.git_problems(self.work), ["the working tree has uncommitted changes"])
 
 
 class NextDevelopmentVersion(unittest.TestCase):

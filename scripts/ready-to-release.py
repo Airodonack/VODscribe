@@ -1,20 +1,17 @@
-"""Checks a release branch is ready to tag, and prints the commands to do it.
+"""Checks main is ready to tag, and prints the commands to do it.
 
     python3 scripts/ready-to-release.py
 
-Run on `release/X.Y.Z` once its version commit is pushed. The branch is cut
-from main when the release round starts; its fixes land on it and are merged
-into main as they land, while main moves on. The version commit goes on the
-branch's tip, not on main, and a fix after it gets a fresh version commit on
-the same branch. (`release/X.Y.Z-2` and so on, a superseded cut's name, is
-accepted too.) The tag's run is the one full lane: it builds every system, runs every
-end-to-end shard and publishes. It doesn't tag anything: tagging publishes,
-so that stays a person's decision. Fails (listing every problem) unless:
+Run on main once its version commit is pushed. Main freezes when the release
+round starts: from then until the tag only fixes land on it, and features
+wait on their own branches. The version commit goes on main's tip, and a fix
+after it gets a fresh version commit there. The tag's run is the one full
+lane: it builds every system, runs every end-to-end shard and publishes. It
+doesn't tag anything: tagging publishes, so that stays a person's decision.
+Fails (listing every problem) unless:
 
-  git        the working tree is clean, on release/X.Y.Z or release/X.Y.Z-N
-             for Cargo's version, the same commit as that branch on origin,
-             and its fixes are all on main: everything before the version
-             commit is in origin/main (main may have moved on)
+  git        the working tree is clean, on main, and the same commit as
+             origin/main
   version    Cargo.toml's version is a release (not 0.4.1+dev: between releases
              main carries the next version with +dev; the app, its installers
              and the site all take theirs from it), has a dated CHANGELOG.md
@@ -36,9 +33,8 @@ written for people who use the app), less the ones about tests and CI, to
 read against it. Either way it names the scenarios tests/e2e/durations.json
 has no time for yet, for the pre-release round to refresh.
 
-Once the tag's run has published, the site branch moves to the tag, the
-release branch is merged into main, main goes on as the next version, and
-the release branches are deleted.
+Once the tag's run has published, the site branch moves to the tag, main
+goes on as the next version, and the features that waited land.
 """
 
 import json
@@ -72,9 +68,10 @@ NOT_FOR_USERS = re.compile(r"end-to-end|\be2e\b|\btests?\b|\bCI\b|workflow|dev b
 
 
 def since_release() -> list[str]:
-    """The summaries of the commits since the last release tag that may matter to people."""
+    """The summaries of the commits since the last release tag that may matter
+    to people (a merge is no change of its own)."""
     last = run("git", "describe", "--tags", "--abbrev=0", "--match", "v*")
-    lines = run("git", "log", "--format=%s", f"{last}..HEAD").splitlines()
+    lines = run("git", "log", "--no-merges", "--format=%s", f"{last}..HEAD").splitlines()
     return [line for line in lines if not NOT_FOR_USERS.search(line)]
 
 
@@ -133,7 +130,7 @@ def commit_problems(subject: str, message: str, version: str, entry: str) -> lis
     body carries the changelog entry (GitHub's view of the tag shows the
     commit, so the message is the release notes). v0.6.0 and v0.7.0 were
     tagged on e2e fixes pushed after the version commit; a fix after it
-    gets a fresh version commit on the same release branch."""
+    gets a fresh version commit on main."""
     problems = []
     if subject.strip() != f"Version {version}":
         problems.append(f'HEAD is "{subject.strip()}", not "Version {version}": the tag goes on the version commit, last before the tag')
@@ -174,15 +171,10 @@ def unmeasured(e2e: Path) -> list[str]:
     return sorted(scenarios(e2e) - set(json.loads((e2e / "durations.json").read_text())))
 
 
-# The branch a version commit goes on: release/0.7.3, or release/0.7.2-2
-# when an earlier branch for the version was superseded.
-RELEASE_BRANCH = re.compile(r"release/(\d+\.\d+\.\d+)(?:-\d+)?")
-
-
-def git_problems(root: Path, version: str) -> list[str]:
-    """What's wrong with the checkout at `root` as the release of `version`:
-    clean, on its release branch, pushed, and every fix on it merged into
-    main."""
+def git_problems(root: Path) -> list[str]:
+    """What's wrong with the checkout at `root` as the release: clean, on
+    main, and main's tip on origin (a stale checkout would tag an old
+    commit)."""
 
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(("git", *args), cwd=root, check=False, capture_output=True, text=True)
@@ -191,40 +183,17 @@ def git_problems(root: Path, version: str) -> list[str]:
     if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
         problems.append("the working tree has uncommitted changes")
     branch = git("branch", "--show-current").stdout.strip()
-    named = RELEASE_BRANCH.fullmatch(branch)
-    if not named:
-        problems.append(
-            f'HEAD is on {branch or "no branch"}, not release/{version}: the version commit goes on the release branch'
-        )
+    if branch != "main":
+        problems.append(f"HEAD is on {branch or 'no branch'}, not main: the version commit goes on main's tip")
         return problems
-    if named[1] != version:
-        problems.append(f"{branch} is named for {named[1]}, but Cargo.toml says {version}")
     git("fetch", "--quiet", "--tags", "origin", "main")
-    # Fails when the branch isn't on origin yet; the check below says so.
-    git("fetch", "--quiet", "origin", branch)
     head = git("rev-parse", "HEAD").stdout.strip()
-    pushed = git("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}").stdout.strip()
+    pushed = git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/main").stdout.strip()
     if not pushed:
-        problems.append(f"{branch} isn't on origin: push it")
+        problems.append("main isn't on origin: push it")
     elif pushed != head:
-        problems.append(f"this commit isn't origin/{branch}: push, or pull")
-    # Main may be ahead of the branch, but every fix on the branch is merged
-    # into main as it lands (merged, never rebased, so the commits themselves
-    # are on main): everything before the version commit is in origin/main.
-    unmerged = git("log", "--format=%h %s", "HEAD^", "--not", "origin/main")
-    if unmerged.returncode != 0:
-        problems.append(f"can't tell whether {branch}'s fixes are on main: {unmerged.stderr.strip()}")
-    elif unmerged.stdout.strip():
-        lines = unmerged.stdout.strip().splitlines()
-        problems.append(f"{branch} has {len(lines)} commit(s) main lacks: merge {branch} into main first\n    " + "\n    ".join(lines))
+        problems.append("this commit isn't origin/main: push, or pull")
     return problems
-
-
-def release_branches(version: str) -> list[str]:
-    """`version`'s release branches on origin: release/X.Y.Z and each
-    release/X.Y.Z-N that superseded it, the one being released among them."""
-    heads = run("git", "ls-remote", "--heads", "origin", f"release/{version}", f"release/{version}-*")
-    return sorted(line.split("refs/heads/", 1)[1] for line in heads.splitlines()) or [f"release/{version}"]
 
 
 def next_dev(version: str) -> str:
@@ -237,9 +206,8 @@ def main() -> None:
     problems: list[str] = []
     version = release.cargo_version((release.ROOT / "Cargo.toml").read_text())
 
-    problems += git_problems(release.ROOT, version.split("+")[0])
+    problems += git_problems(release.ROOT)
     sha = run("git", "rev-parse", "HEAD")
-    branch = run("git", "branch", "--show-current")
 
     if "+" in version:
         problems.append(f"{version} is a development version: bump it to the release's (drop the +dev)")
@@ -295,10 +263,9 @@ same key as commits; a bare `git tag` would make an unsigned one):
 The tag's run is the full lane: every build, every system's end-to-end
 shards, then the publish job, which checks the release once it's up
 (scripts/verify-release.py). A one-off failure: re-run the failed jobs. A
-failure that needs a commit: on {branch}, revert the version commit
-(git revert --no-edit HEAD, so merging the fix leaves main's development
-version alone), then the fix; merge {branch} into main; then a fresh
-version commit on {branch}. The owner deletes the unpublished tag
+failure that needs a commit: on main, still frozen, revert the version
+commit (git revert --no-edit HEAD), land the fix, then make a fresh version
+commit. The owner deletes the unpublished tag
 (git push origin :refs/tags/v{version}) and the new version commit is
 tagged v{version} again.
 
@@ -312,20 +279,12 @@ Once it's out:
       git fetch origin site && git switch --detach origin/site
       git merge --no-edit v{version} && git diff --stat v{version}
       git push origin HEAD:refs/heads/site
-  - the release branch, merged into main with a merge commit (never a
-    rebase: main is pushed and worktrees are built on it)
-      git fetch origin main {branch} && git switch --detach origin/main
-      git merge --no-ff --no-edit origin/{branch} && git push origin HEAD:main
   - main goes on as the next version, in development, in a commit of its
     own: Cargo.toml (and Cargo.lock, by cargo check) to {next_dev(version)}, and
-    a "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md, holding
-    any bullets main gained after the cut; python3 scripts/release.py --check
-    keeps the two in step
-  - the release branches go, local and on the remote: the one released (the
-    tag keeps its commit) and any superseded before it, once main has their
-    fixes
-      git push origin --delete {" ".join(release_branches(version))}
-      git branch -D {" ".join(release_branches(version))}""")
+    an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md;
+    python3 scripts/release.py --check keeps the two in step
+  - main's freeze ends: the features that waited land, each rebased onto
+    main""")
 
 
 if __name__ == "__main__":
