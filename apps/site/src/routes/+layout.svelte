@@ -14,9 +14,19 @@
   // The site's sections, each marked in the nav while open: VODscriptions (the
   // page for streamers, and everything under it), and VODscribe (the app's:
   // every other page). The account control is the third; until sign-in
-  // exists it leads to where sign-up will be, the VODscriptions page's
-  // "Coming soon".
+  // exists it opens a card saying so.
   const premium = $derived(page.url.pathname === PREMIUM || page.url.pathname.startsWith(`${PREMIUM}/`));
+
+  // The card opens under the account button, its right edge on the button's,
+  // kept inside the window's 16px gutter.
+  let account: HTMLButtonElement;
+  function place(event: ToggleEvent) {
+    if (event.newState !== "open") return;
+    const card = event.currentTarget as HTMLElement;
+    const box = account.getBoundingClientRect();
+    card.style.top = `${box.bottom + window.scrollY + 8}px`;
+    card.style.right = `${Math.max(16, document.documentElement.clientWidth - box.right)}px`;
+  }
 </script>
 
 <div class="shell" class:full>
@@ -59,11 +69,15 @@
       <a class="section" class:current={premium} href={PREMIUM} aria-current={premium ? "page" : undefined}
         >VODscriptions</a
       >
-      <!-- No account yet: the face and the words wait for the sign-in being built. -->
-      <span class="account" title="Coming soon. We're building sign-in and permissions.">
+      <!-- No account yet: the button opens a card saying sign-in is coming. -->
+      <button class="account" bind:this={account} popovertarget="signin-soon">
         <span class="face"><Icon name="user" size={15} /></span>
         <span class="words">Sign in</span>
-      </span>
+      </button>
+      <div id="signin-soon" class="soon" popover="auto" ontoggle={place}>
+        <p class="soon-title">Sign-in is coming soon</p>
+        <p class="muted">Accounts will let your channel share VODscriptions and give others access.</p>
+      </div>
     </nav>
   </header>
 
@@ -223,9 +237,25 @@
     display: flex;
     align-items: center;
     gap: 7px;
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: 999px;
     color: var(--muted);
+    font-size: 14px;
     white-space: nowrap;
-    cursor: default;
+  }
+
+  .account:hover,
+  .account:has(+ .soon:popover-open) {
+    background: none;
+    color: var(--text);
+  }
+
+  .account:hover .face,
+  .account:has(+ .soon:popover-open) .face {
+    border-color: var(--accent);
+    color: var(--text);
   }
 
   /* Signed out: an anonymous face where a signed-in visitor's picture will be. */
@@ -238,6 +268,34 @@
     border-radius: 50%;
     background: var(--surface-2);
     color: var(--muted);
+  }
+
+  /* The card: placed by place() on the page, so it scrolls with the header,
+     and closed by Escape or a click outside. */
+  .soon {
+    position: absolute;
+    inset: auto;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: min(300px, calc(100vw - 32px));
+    margin: 0;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    color: var(--text);
+    font-size: 14px;
+    white-space: normal;
+  }
+
+  .soon p {
+    margin: 0;
+  }
+
+  .soon .soon-title {
+    margin-bottom: 4px;
+    font-weight: 600;
   }
 
   footer {
