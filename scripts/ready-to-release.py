@@ -1,4 +1,4 @@
-"""Checks main is ready to tag, and prints the commands to do it.
+"""Checks main is ready to tag, and says what comes next.
 
     python3 scripts/ready-to-release.py
 
@@ -15,11 +15,13 @@ Fails (listing every problem) unless:
   version    Cargo.toml's version is a release (not 0.4.1+dev: between releases
              main carries the next version with +dev; the app, its installers
              and the site all take theirs from it), has a dated CHANGELOG.md
-             entry, Cargo.lock agrees, and its tag doesn't exist yet
+             entry, Cargo.lock agrees, and its tag doesn't exist yet, on
+             origin or here
   commit     HEAD is the "Version X.Y.Z" commit and its body carries the entry
              (the tag goes on it and nothing else)
   changelog  the entry's new behaviour comes first and its fixes last, as
-             sub-bullets under one closing "- Fixes:" bullet, and every
+             sub-bullets under one closing "- Fixes:" bullet with nothing
+             else in it (no heading, no other kind of bullet), and every
              bullet opens with a headline of eight words or fewer, with no
              colon or parenthesis (the releases page shows it plain)
   e2e        the end-to-end tests' ledgers (tests/e2e: durations.json,
@@ -34,7 +36,9 @@ read against it. Either way it names the scenarios tests/e2e/durations.json
 has no time for yet, for the pre-release round to refresh.
 
 Once the tag's run has published, the site branch moves to the tag, main
-goes on as the next version, and the features that waited land.
+goes on as the next version, and the features that waited land. The release
+tooling (hb release tag, then hb release done) does each of these; this
+script only says so.
 """
 
 import json
@@ -75,16 +79,48 @@ def since_release() -> list[str]:
     return [line for line in lines if not NOT_FOR_USERS.search(line)]
 
 
+# The "- Fixes:" bullet's lines. The same rule, in the same words, as the
+# freeze's check of which lines a fix may change (the release tooling's
+# changelog-lines.py, whose test checks the two agree): change both or
+# neither.
+SUB_BULLET = re.compile(r"  +- ")
+CONTINUATION = re.compile(r"   +[^\s*+#-]")
+
+
+def fixes_block(body: list[str]) -> tuple[set[int], int | None]:
+    """The lines of an entry's "- Fixes:" bullet, `body` being the entry's
+    lines below its heading: the bullet, its sub-bullets, their continuation
+    lines and the blank lines between them. Second, the index of the first
+    other line under the bullet, which ends it (None when only blank lines
+    follow). No "- Fixes:" line: an empty set and None."""
+    if "- Fixes:" not in body:
+        return set(), None
+    start = body.index("- Fixes:")
+    block, blanks = {start}, []
+    for k in range(start + 1, len(body)):
+        line = body[k]
+        if not line.strip():
+            blanks.append(k)
+        elif SUB_BULLET.match(line) or (CONTINUATION.match(line) and len(block) > 1):
+            block.update(blanks, {k})
+            blanks = []
+        else:
+            return block, k
+    return block, None
+
+
 def entry_problems(body: str) -> list[str]:
     """What's out of place in a changelog entry: the fixes go last, as
     sub-bullets under one "- Fixes:" bullet, after the new behaviour."""
-    top = [line for line in body.splitlines() if line.startswith("- ")]
+    lines = body.split("\n")
+    top = [line for line in lines if line.startswith("- ")]
     problems = []
     if top.count("- Fixes:") > 1:
         problems.append('it has more than one "- Fixes:" bullet')
     elif "- Fixes:" in top and top[-1] != "- Fixes:":
         problems.append('"- Fixes:" is not its last bullet: new behaviour goes above it')
-    lines = body.splitlines()
+    elif (stray := fixes_block(lines)[1]) is not None:
+        problems.append(f"\"- Fixes:\" holds a line that isn't a fix's sub-bullet: \"{lines[stray].strip()[:40]}\"")
     fixes = lines.index("- Fixes:") if "- Fixes:" in lines else len(lines)
     if any(line.startswith("  - ") for line in lines[:fixes]):
         problems.append('it has sub-bullets above "- Fixes:": a fix goes under it')
@@ -186,7 +222,9 @@ def git_problems(root: Path) -> list[str]:
     if branch != "main":
         problems.append(f"HEAD is on {branch or 'no branch'}, not main: the version commit goes on main's tip")
         return problems
-    git("fetch", "--quiet", "--tags", "origin", "main")
+    if (fetch := git("fetch", "--quiet", "origin", "main")).returncode != 0:
+        problems.append(f"fetching origin failed, so main can't be compared with it: {fetch.stderr.strip()[:100]}")
+        return problems
     head = git("rev-parse", "HEAD").stdout.strip()
     pushed = git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/main").stdout.strip()
     if not pushed:
@@ -196,10 +234,28 @@ def git_problems(root: Path) -> list[str]:
     return problems
 
 
-def next_dev(version: str) -> str:
-    """The version main carries after `version` is released: 0.4.0 -> 0.4.1+dev."""
-    major, minor, patch = (int(n) for n in version.split("+")[0].split(".")[:3])
-    return f"{major}.{minor}.{patch + 1}+dev"
+def tag_problems(root: Path, version: str) -> list[str]:
+    """Whether v`version` can be tagged: origin hasn't it (a published number
+    is never reused), nor has this checkout. A tag here that origin lacks
+    was deleted there because the tag's run needed a commit: the version
+    commit reverted, the fix, then a fresh version commit, tagged again."""
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(("git", *args), cwd=root, check=False, capture_output=True, text=True)
+
+    tag = f"v{version}"
+    remote = git("ls-remote", "origin", f"refs/tags/{tag}")
+    if remote.returncode != 0:
+        return [f"origin can't be asked whether {tag} exists: {remote.stderr.strip()[:100]}"]
+    if remote.stdout.strip():
+        return [
+            f"{tag} is on origin already: a published number is never reused. If its run needed a commit:"
+            " revert the version commit, land the fix, make a fresh version commit, and the owner deletes"
+            " the unpublished tag on origin before it is tagged again"
+        ]
+    if git("rev-parse", "--quiet", "--verify", f"refs/tags/{tag}").returncode == 0:
+        return [f"{tag} is tagged here but not on origin, which deleted it: git tag -d {tag} (the release tooling's tag step does so)"]
+    return []
 
 
 def main() -> None:
@@ -234,8 +290,7 @@ def main() -> None:
     stale = [n for n, v in re.findall(r'name = "(vodscribe[^"]*)"\nversion = "([^"]+)"', lock) if v != version]
     if stale:
         problems.append(f"Cargo.lock has another version for {', '.join(stale)}: run cargo check")
-    if run("git", "tag", "--list", f"v{version}"):
-        problems.append(f"v{version} is already tagged: bump the version")
+    problems += tag_problems(release.ROOT, version)
 
     # The installer builds and the end-to-end tests run on the tag: that run
     # is the release's one full lane, so none is asked for before it.
@@ -255,36 +310,18 @@ Before tagging, check what can't be:
     first; a change to something new in this release is part of it, not news):
 {chr(10).join("      " + line for line in since_release())}
 
-Then, to publish (a signed, annotated tag: the repo signs tags with the
-same key as commits; a bare `git tag` would make an unsigned one):
-  git tag -s v{version} -m "Version {version}" {sha[:12]} && git tag -v v{version} && git push origin v{version}
-(the tag names the version commit, so it lands there from any checkout)
+Then, on the owner's word, hb release tag: it runs this check again, then
+signs, verifies and pushes v{version} on {sha[:12]}. The tag's run is the
+full lane: every build, every system's end-to-end shards, then the publish
+job, which checks the release once it's up (scripts/verify-release.py). A
+one-off failure: re-run the failed jobs. A failure that needs a commit: on
+main, still frozen, revert the version commit, land the fix, then make a
+fresh version commit; the owner deletes the unpublished tag on origin, and
+hb release tag tags the new version commit v{version} again.
 
-The tag's run is the full lane: every build, every system's end-to-end
-shards, then the publish job, which checks the release once it's up
-(scripts/verify-release.py). A one-off failure: re-run the failed jobs. A
-failure that needs a commit: on main, still frozen, revert the version
-commit (git revert --no-edit HEAD), land the fix, then make a fresh version
-commit. The owner deletes the unpublished tag
-(git push origin :refs/tags/v{version}) and the new version commit is
-tagged v{version} again.
-
-Once it's out:
-  - the website, from the release: Cloudflare builds vodscribe.com from the
-    site branch, so its demo shows what people can download, not main
-      git push origin v{version}^{{commit}}:refs/heads/site
-    refused when site has commits of its own (fixes made there, often on
-    main too by now): merge the tag into it; the diff is empty when the
-    merge's tree is the release's, else site has a change the release lacks
-      git fetch origin site && git switch --detach origin/site
-      git merge --no-edit v{version} && git diff --stat v{version}
-      git push origin HEAD:refs/heads/site
-  - main goes on as the next version, in development, in a commit of its
-    own: Cargo.toml (and Cargo.lock, by cargo check) to {next_dev(version)}, and
-    an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md;
-    python3 scripts/release.py --check keeps the two in step
-  - main's freeze ends: the features that waited land, each rebased onto
-    main""")
+Once it has published, hb release done: the site branch to the release, main
+on to the next version, the freeze lifted and the features that waited
+landed.""")
 
 
 if __name__ == "__main__":

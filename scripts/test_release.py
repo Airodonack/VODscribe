@@ -1,6 +1,6 @@
 """Tests for release.py's changelog and version parsing, verify-release.py's
 signature checks, and ready-to-release.py's changelog, ledger, main branch
-and next version checks:
+and tag checks:
 python3 -I scripts/test_release.py"""
 
 import base64
@@ -141,6 +141,13 @@ class CargoVersion(unittest.TestCase):
         toml = '[package]\nversion = "9.9.9"\n\n[workspace.package]\nrust-version = "1.99.0"\nversion = "0.1.3"\n'
         self.assertEqual(release.cargo_version(toml), "0.1.3")
 
+    def test_at_a_commit(self):
+        root = Path(__file__).resolve().parent.parent
+        self.assertRegex(release.cargo_version(release.cargo_toml("HEAD")), r"^\d+\.\d+\.\d+")
+        self.assertEqual(release.cargo_toml(), (root / "Cargo.toml").read_text())
+        with self.assertRaises(SystemExit):
+            release.cargo_toml("no-such-commit")
+
     def test_the_real_files_agree(self):
         root = Path(__file__).resolve().parent.parent
         version = release.cargo_version((root / "Cargo.toml").read_text())
@@ -204,6 +211,25 @@ class EntryShape(unittest.TestCase):
 
     def test_a_fix_above_fixes(self):
         self.assertEqual(len(ready.entry_problems("- New.\n  - A fix out of place.\n- Fixes:\n  - A fix.")), 1)
+
+    def test_only_fixes_under_fixes(self):
+        # A heading or another kind of bullet under "- Fixes:" would read as
+        # a fix to the freeze's check; the entry is refused instead.
+        stray = ready.entry_problems("- New.\n- Fixes:\n  - A fix.\n### New\n* A whole new editor.")
+        self.assertEqual(len(stray), 1)
+        self.assertIn('"### New"', stray[0])
+        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - A fix.\n* A whole new editor.")), 1)
+        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - A fix.\nA line of prose.")), 1)
+        # A wrapped line of a fix, and a blank line between two, belong to it.
+        self.assertEqual(ready.entry_problems("- New.\n- Fixes:\n  - A fix.\n    Wrapped.\n\n  - Another."), [])
+
+    def test_the_fixes_block(self):
+        body = ["Prose.", "", "- New.", "- Fixes:", "  - A fix.", "    Wrapped.", "", "  - Two.", "", "### Stray"]
+        self.assertEqual(ready.fixes_block(body), ({3, 4, 5, 6, 7}, 9))
+        self.assertEqual(ready.fixes_block(body[:-1]), ({3, 4, 5, 6, 7}, None))
+        self.assertEqual(ready.fixes_block(["- New."]), (set(), None))
+        # A continuation needs a sub-bullet above it.
+        self.assertEqual(ready.fixes_block(["- Fixes:", "    Wrapped."]), ({0}, 1))
 
     def test_a_merge_conflicts_marker(self):
         body = "- New.\n- Fixes:\n  - A fix.\n    ||||||| parent of 0123abc (A fix)\n  - Another."
@@ -315,11 +341,40 @@ class OnMain(unittest.TestCase):
         (self.work / "first").write_text("changed")
         self.assertEqual(ready.git_problems(self.work), ["the working tree has uncommitted changes"])
 
+    def test_origin_unreachable(self):
+        # A failed fetch leaves origin/main stale: no comparison, a problem.
+        self.git(self.work, "remote", "set-url", "origin", str(self.folder / "gone.git"))
+        problems = ready.git_problems(self.work)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("fetching origin failed", problems[0])
 
-class NextDevelopmentVersion(unittest.TestCase):
-    def test_is_the_next_patch_in_development(self):
-        self.assertEqual(ready.next_dev("0.4.0"), "0.4.1+dev")
-        self.assertEqual(ready.next_dev("1.2.9"), "1.2.10+dev")
+    def tag(self, name):
+        self.git(self.work, "tag", name)
+
+    def test_no_tag(self):
+        self.assertEqual(ready.tag_problems(self.work, "0.1.0"), [])
+
+    def test_a_tag_on_origin(self):
+        self.tag("v0.1.0")
+        self.git(self.work, "push", "--quiet", "origin", "refs/tags/v0.1.0")
+        problems = ready.tag_problems(self.work, "0.1.0")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("never reused", problems[0])
+        self.assertIn("revert the version commit", problems[0])
+
+    def test_a_tag_origin_deleted(self):
+        # Step 7: the owner deleted the unpublished tag on origin; the local
+        # one is left from the first tagging.
+        self.tag("v0.1.0")
+        self.git(self.work, "push", "--quiet", "origin", "refs/tags/v0.1.0")
+        self.git(self.folder, "--git-dir", str(self.folder / "origin.git"), "tag", "-d", "v0.1.0")
+        problems = ready.tag_problems(self.work, "0.1.0")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("git tag -d v0.1.0", problems[0])
+
+    def test_origin_cant_be_asked(self):
+        self.git(self.work, "remote", "set-url", "origin", str(self.folder / "gone.git"))
+        self.assertIn("can't be asked", ready.tag_problems(self.work, "0.1.0")[0])
 
 if __name__ == "__main__":
     unittest.main()

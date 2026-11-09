@@ -25,6 +25,10 @@ or if CHANGELOG.md has no entry for the version, or one still marked unreleased.
     python3 scripts/release.py --check        the Cargo.toml version has an entry (CI;
                                               0.4.1+dev's is 0.4.1's)
     python3 scripts/release.py --notes <ver>  print that version's notes
+    python3 scripts/release.py --version [<commit>]
+                                              print the Cargo.toml version, the
+                                              tree's or at that commit (the
+                                              release tooling reads it so)
 """
 
 import datetime
@@ -32,6 +36,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -98,6 +103,16 @@ def cargo_version(cargo_toml: str) -> str:
     """The workspace version from the root Cargo.toml."""
     table = cargo_toml.split("[workspace.package]")[1]
     return re.search(r'^version = "([^"]+)"', table, re.M).group(1)
+
+
+def cargo_toml(commit: str | None = None) -> str:
+    """The root Cargo.toml, at `commit` or in the tree."""
+    if commit is None:
+        return (ROOT / "Cargo.toml").read_text()
+    done = subprocess.run(("git", "show", f"{commit}:Cargo.toml"), cwd=ROOT, capture_output=True, text=True)
+    if done.returncode != 0:
+        sys.exit(f"no Cargo.toml at {commit}: {done.stderr.strip()}")
+    return done.stdout
 
 
 def main(artifacts: Path, version: str, out: Path) -> None:
@@ -186,7 +201,9 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
         # For CI: the version being worked on has a changelog entry (unreleased or
         # dated); in development (0.4.1+dev), the one it will be released as.
-        changelog_entry(CHANGELOG.read_text(), cargo_version((ROOT / "Cargo.toml").read_text()).split("+")[0])
+        changelog_entry(CHANGELOG.read_text(), cargo_version(cargo_toml()).split("+")[0])
+    elif sys.argv[1:2] == ["--version"] and len(sys.argv) <= 3:
+        print(cargo_version(cargo_toml(sys.argv[2] if len(sys.argv) == 3 else None)))
     elif len(sys.argv) == 3 and sys.argv[1] == "--notes":
         print(notes(CHANGELOG.read_text(), sys.argv[2]))
     elif len(sys.argv) == 4:
