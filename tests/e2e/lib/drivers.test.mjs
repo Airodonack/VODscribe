@@ -15,7 +15,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { bridge, sessionGone, stopWebDriver, webdriver } from "./drivers.mjs";
+import { bridge, inspectorRefusal, sessionGone, stopWebDriver, webdriver } from "./drivers.mjs";
 
 test("a session WebKitWebDriver no longer has is gone", () => {
   // As CI's run got it, every poll after the app's web process died.
@@ -47,6 +47,18 @@ test("a command that failed in a live session is only that command", () => {
   assert.equal(sessionGone(undefined), null);
 });
 
+test("WebKitGTK's warning that the inspector server didn't start is read for its app and port", () => {
+  // As CI's run printed it (43070303802).
+  const line =
+    "** (vodscribe:23000): WARNING **: 17:58:32.295: Failed to start remote inspector server on 127.0.0.1:41295: Error binding to address 127.0.0.1:41295: Address already in use";
+  assert.deepEqual(inspectorRefusal(line), {
+    pid: 23000,
+    address: "127.0.0.1:41295",
+    why: "Error binding to address 127.0.0.1:41295: Address already in use",
+  });
+  assert.equal(inspectorRefusal("(vodscribe:23000): dbind-WARNING **: 17:58:32.195: AT-SPI: Error retrieving"), null);
+});
+
 // The session's start and end against a stand-in tauri-driver (Linux: the
 // app is found through /proc). The stand-in app is single-instance as the
 // real one is: a second copy, while the first holds its lock (a port), hands
@@ -55,8 +67,25 @@ test("a command that failed in a live session is only that command", () => {
 // moment, as the real one may after WebKitWebDriver's DELETE returns.
 const FAKE_DRIVER = `
 import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+// The app's inspector port, as WebKitWebDriver picks it: bound to port 0 and
+// closed; or the next of FAKE_INSPECTOR_FILE's ports, the test's to hold.
+const inspectorPort = () => {
+  const queued = readFileSync(process.env.FAKE_INSPECTOR_FILE, "utf8").split(" ").filter(Boolean);
+  if (queued.length) {
+    writeFileSync(process.env.FAKE_INSPECTOR_FILE, queued.slice(1).join(" "));
+    return Promise.resolve(Number(queued[0]));
+  }
+  return new Promise((resolve) => {
+    const s = createNetServer().listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+};
 const apps = new Map();
 let next = 1;
 const send = (res, code, value) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify({ value })); };
@@ -67,7 +96,8 @@ createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/session") {
     const exe = JSON.parse(body).capabilities.alwaysMatch["tauri:options"].application;
     const script = exe.endsWith("python") ? process.env.FAKE_APP_THREADS_SCRIPT : process.env.FAKE_APP_SCRIPT;
-    const app = spawn(exe, [script], { stdio: ["ignore", "pipe", "inherit"] });
+    const env = { ...process.env, WEBKIT_INSPECTOR_SERVER: "127.0.0.1:" + (await inspectorPort()) };
+    const app = spawn(exe, [script], { env, stdio: ["ignore", "pipe", "inherit"] });
     // An app that exits before its page answers leaves the request waiting.
     app.stdout.once("data", () => { const id = String(next++); apps.set(id, app); send(res, 200, { sessionId: id }); });
     return;
@@ -84,7 +114,19 @@ import { createServer } from "node:net";
 const linger = Number(readFileSync(process.env.FAKE_LINGER_FILE, "utf8"));
 const lock = createServer();
 lock.on("error", () => setTimeout(() => process.exit(0), linger));
-lock.listen(Number(process.env.FAKE_LOCK), "127.0.0.1", () => process.stdout.write("ready\\n"));
+const start = () => lock.listen(Number(process.env.FAKE_LOCK), "127.0.0.1", () => process.stdout.write("ready\\n"));
+// WebKit's inspector server, where the driver said: its port taken, the app
+// runs on with none, as WebKitGTK's does, saying so as GLib does.
+const inspector = process.env.WEBKIT_INSPECTOR_SERVER;
+const [host, at] = inspector.split(":");
+const server = createServer();
+server.on("error", () =>
+  process.stderr.write(
+    "** (vodscribe:" + process.pid + "): WARNING **: 17:58:32.295: Failed to start remote inspector server on " +
+      inspector + ": Error binding to address " + inspector + ": Address already in use\\n",
+  ),
+);
+server.listen(Number(at), host, start);
 process.on("SIGTERM", () => setTimeout(() => process.exit(0), 1500));
 setInterval(() => {}, 1000);
 `;
@@ -137,6 +179,7 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
     writeFileSync(path.join(dir, "driver.mjs"), FAKE_DRIVER);
     writeFileSync(path.join(dir, "app.mjs"), FAKE_APP);
     writeFileSync(path.join(dir, "linger"), "0");
+    writeFileSync(path.join(dir, "inspector"), "");
     writeFileSync(path.join(dir, "app.py"), FAKE_APP_THREADS);
     // The app is found by its binary: a copy of node's of its own.
     app = path.join(dir, "vodscribe");
@@ -150,6 +193,7 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
       FAKE_APP_SCRIPT: path.join(dir, "app.mjs"),
       FAKE_APP_THREADS_SCRIPT: path.join(dir, "app.py"),
       FAKE_LINGER_FILE: path.join(dir, "linger"),
+      FAKE_INSPECTOR_FILE: path.join(dir, "inspector"),
       FAKE_LOCK: String(await freePort()),
       E2E_DRIVER_PORT: String(await freePort()),
     });
@@ -211,6 +255,55 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
       // Gone at once, it's never seen; running a moment, it is.
       if (linger) assert.match(said, /^the app \(pid \d+\) exited [\d.]+ s after its start/);
     });
+
+  /** A port held here, as something else held the one WebKitWebDriver chose; handed to the next `times` apps. */
+  async function holdInspectorPort(times) {
+    const held = createServer().listen(0, "127.0.0.1");
+    await new Promise((ok) => held.once("listening", ok));
+    const { port } = held.address();
+    writeFileSync(path.join(dir, "inspector"), Array(times).fill(port).join(" "));
+    return { port, close: () => held.close() };
+  }
+
+  test("an app whose WebDriver port was taken before it listened gets a session on another", async (t) => {
+    // WebKitWebDriver chose the port and let it go, and something bound it
+    // before the app's WebKit could (CI run 43070303802, upgrade-0.5.1:
+    // "Failed to start remote inspector server on 127.0.0.1:41295 ...
+    // Address already in use", then no session in 120 s).
+    const held = await holdInspectorPort(1);
+    const logged = t.mock.method(console, "log");
+    try {
+      const started = Date.now();
+      const one = await webdriver(app);
+      const took = Date.now() - started;
+      assert.ok(took < 15_000, `it took ${took} ms`);
+      await one.close();
+    } finally {
+      held.close();
+    }
+    const lines = logged.mock.calls.map((c) => c.arguments.join(" "));
+    const said = new RegExp(
+      `^tauri-driver: the app \\(pid \\d+\\) couldn't listen for WebDriver on 127\\.0\\.0\\.1:${held.port} ` +
+        `\\(Error binding to address .*: Address already in use; the port has: pid ${process.pid} \\([^)]*\\), LISTEN\\): the session once more$`,
+    );
+    assert.ok(
+      lines.some((l) => said.test(l)),
+      `said:\n${lines.join("\n")}`,
+    );
+  });
+
+  test("an app whose WebDriver port is taken twice running fails its start at once, saying so", async () => {
+    const held = await holdInspectorPort(2);
+    try {
+      const said = await failedStart();
+      assert.match(
+        said,
+        /^the app \(pid \d+\) couldn't listen for WebDriver on 127\.0\.0\.1:\d+ \(.*; the port has: pid \d+/,
+      );
+    } finally {
+      held.close();
+    }
+  });
 
   test("an app that exits on its own, before its session, fails its start at once", async () => {
     // The app's lock held by something else: it quits, with no other copy of it running.

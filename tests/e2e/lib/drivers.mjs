@@ -143,6 +143,96 @@ const EXIT_WAIT = 5000;
  */
 const HANDOVER_WAIT = 5000;
 
+/**
+ * The apps (by pid) that said they couldn't listen where WebDriver reaches
+ * them, with the address and why, from what they write to tauri-driver's
+ * stderr (passed down to them). WebKitWebDriver picks a port for each
+ * session by binding a socket to port 0 and closing it, and hands it to the
+ * app in WEBKIT_INSPECTOR_SERVER; anything that binds that port before the
+ * app's WebKit does (the app's own servers bind 127.0.0.1:0 first, in its
+ * setup) leaves the app with no inspector server, and the session never
+ * comes (CI run 43070303802: upgrade-0.5.1 waited out its 120 s).
+ */
+const inspectorRefused = new Map();
+
+/**
+ * What a line of an app's stderr says of its inspector server not starting
+ * ({ pid, address, why }), or null: GLib's warning, as WebKitGTK writes it.
+ */
+export function inspectorRefusal(line) {
+  const m = line.match(/\([^():]*:(\d+)\): WARNING \*\*:.* Failed to start remote inspector server on (\S+): (.*)$/);
+  return m && { pid: Number(m[1]), address: m[2], why: m[3] };
+}
+
+/** The TCP states /proc/net/tcp numbers. */
+const TCP_STATES = {
+  "01": "ESTABLISHED",
+  "02": "SYN_SENT",
+  "03": "SYN_RECV",
+  "04": "FIN_WAIT1",
+  "05": "FIN_WAIT2",
+  "06": "TIME_WAIT",
+  "07": "CLOSE",
+  "08": "CLOSE_WAIT",
+  "09": "LAST_ACK",
+  "0A": "LISTEN",
+  "0B": "CLOSING",
+};
+
+/**
+ * What has local TCP port `port` now, in words: each socket's state and the
+ * process holding it (Linux, through /proc; null elsewhere). `app` is the
+ * pid to call "the app itself".
+ */
+export function holdersOf(port, app = null) {
+  if (process.platform !== "linux") return null;
+  const sockets = [];
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let rows;
+    try {
+      rows = readFileSync(file, "utf8").split("\n").slice(1);
+    } catch {
+      continue;
+    }
+    for (const row of rows) {
+      const [, local, , state, , , , , , inode] = row.trim().split(/\s+/);
+      if (inode !== undefined && parseInt(local.split(":")[1], 16) === port)
+        sockets.push({ state: TCP_STATES[state] ?? state, link: `socket:[${inode}]` });
+    }
+  }
+  if (!sockets.length) return "nothing by now";
+  const owners = new Map();
+  const wanted = new Set(sockets.map((s) => s.link));
+  for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
+    let fds;
+    try {
+      fds = readdirSync(`/proc/${pid}/fd`);
+    } catch {
+      continue;
+    }
+    for (const fd of fds) {
+      try {
+        const link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+        if (wanted.has(link)) owners.set(link, pid);
+      } catch {}
+    }
+  }
+  const named = (pid) => {
+    if (Number(pid) === app) return `pid ${pid} (the app itself)`;
+    try {
+      return `pid ${pid} (${readFileSync(`/proc/${pid}/comm`, "utf8").trim()})`;
+    } catch {
+      return `pid ${pid}`;
+    }
+  };
+  return sockets
+    .map(({ state, link }) => {
+      const pid = owners.get(link);
+      return `${pid ? named(pid) : link === "socket:[0]" ? "no process" : "a process not seen"}, ${state}`;
+    })
+    .join("; ");
+}
+
 /** Whether process `pid` (a number) is still the app of binary `exe`. */
 function isApp(pid, exe) {
   try {
@@ -189,7 +279,12 @@ export async function stopWebDriver() {
   if (tauriDriver) await stopTauriDriver();
 }
 
-export async function webdriver(app) {
+/**
+ * A session of the app, through tauri-driver. `again` is set on the second
+ * try after the first's app couldn't listen for WebDriver (inspectorRefused):
+ * the new session gets a new port, and a second refusal fails the start.
+ */
+export async function webdriver(app, { again = false } = {}) {
   // Another port for runs side by side on one computer: E2E_DRIVER_PORT.
   const port = Number(process.env.E2E_DRIVER_PORT ?? 4444);
   const base = `http://127.0.0.1:${port}`;
@@ -212,7 +307,19 @@ export async function webdriver(app) {
     mkdirSync(outDir(), { recursive: true });
     tauriDriver = spawn(command(process.env.TAURI_DRIVER ?? "tauri-driver"), ["--port", String(port), ...native], {
       cwd: outDir(),
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: ["ignore", "inherit", "pipe"],
+    });
+    // Passed on as it comes, and read for an app that couldn't listen for WebDriver.
+    let partial = "";
+    tauriDriver.stderr.setEncoding("utf8");
+    tauriDriver.stderr.on("data", (chunk) => {
+      process.stderr.write(chunk);
+      const lines = (partial + chunk).split("\n");
+      partial = lines.pop();
+      for (const line of lines) {
+        const refused = inspectorRefusal(line);
+        if (refused) inspectorRefused.set(refused.pid, refused);
+      }
     });
     if (!stopOnExit) {
       stopOnExit = true;
@@ -262,10 +369,22 @@ export async function webdriver(app) {
   const earlier = new Set(appPids(app));
   const asked = Date.now();
   const seen = new Set();
+  // This session's app couldn't listen for WebDriver: what it said, and what had the port.
+  let refused = null;
   const watch = setInterval(() => {
     const now = appPids(app);
     const mine = now.filter((pid) => !earlier.has(pid));
     for (const pid of mine) seen.add(pid);
+    const said = mine.map((pid) => inspectorRefused.get(Number(pid))).find(Boolean);
+    if (said) {
+      inspectorRefused.delete(said.pid);
+      const port = Number(said.address.split(":").pop());
+      refused = { ...said, holders: holdersOf(port, said.pid) };
+      early.abort(
+        `the app (pid ${said.pid}) couldn't listen for WebDriver on ${said.address} (${said.why}; the port has: ${refused.holders})`,
+      );
+      return;
+    }
     const others = now.filter((pid) => earlier.has(pid));
     const after = ((Date.now() - asked) / 1000).toFixed(1);
     const still = others.length
@@ -285,6 +404,21 @@ export async function webdriver(app) {
   } catch (e) {
     // The driver may be left waiting on that app: a new one for the next.
     spoiled ??= "the last session didn't start";
+    // Once more, on a new port: the port was taken in the moment after
+    // WebKitWebDriver chose it (inspectorRefused), not refused by the app.
+    // This app ended first: still running, it would take the next one's
+    // start (single-instance).
+    if (refused && !again) {
+      clearInterval(watch);
+      console.log(`tauri-driver: ${early.signal.reason}: the session once more`);
+      for (const pid of seen) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch {}
+      }
+      await waitFor("the app killed", async () => ![...seen].some((pid) => isApp(pid, app)), EXIT_WAIT).catch(() => {});
+      return webdriver(app, { again: true });
+    }
     if (early.signal.aborted) throw new Error(early.signal.reason);
     if (!limit.aborted) throw e;
     const older = appPid(app);
