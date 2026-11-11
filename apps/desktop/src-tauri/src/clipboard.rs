@@ -275,8 +275,8 @@ pub(crate) struct Pasted {
 /// else last), else in its timeline at `at` seconds (where.ts
 /// `insertionPoint`: after what's selected, never in its place, else the
 /// playhead); as one change undo takes back whole. Nothing (None) if
-/// nothing was copied, or the system's clipboard now holds something other
-/// than the copy's `text`.
+/// nothing was copied, its text is empty (not written yet), or the
+/// system's clipboard now holds something other than the copy's `text`.
 #[tauri::command]
 pub(crate) async fn paste_items(
     app: AppHandle,
@@ -288,7 +288,11 @@ pub(crate) async fn paste_items(
 ) -> CmdResult<Option<Pasted>> {
     let state = app.state::<AppState>();
     let held = match state.clipboard.lock().unwrap().as_ref() {
-        Some(clipboard) if clipboard.text == text && !clipboard.items.is_empty() => clipboard.items.clone(),
+        // An empty text is no copy: the page hasn't written it yet, and an
+        // empty system clipboard isn't this copy.
+        Some(clipboard) if !clipboard.text.is_empty() && clipboard.text == text && !clipboard.items.is_empty() => {
+            clipboard.items.clone()
+        }
         _ => return Ok(None),
     };
     let db = state.db.lock().unwrap();

@@ -332,14 +332,20 @@ pub fn parse(json: &str) -> Result<Annotations> {
 
 /// As `parse`, from JSON already read.
 pub fn from_value(value: serde_json::Value) -> Result<Annotations> {
-    let format = value.get("format");
-    if format.and_then(|f| f.as_str()) != Some(FORMAT) {
-        return Err(not_annotations(&format!("its format is {}", format.unwrap_or(&serde_json::Value::Null))));
+    // A field missing or null is said as none, as the page says it.
+    let format = value.get("format").filter(|f| !f.is_null());
+    match format {
+        None => return Err(not_annotations("it has no format")),
+        Some(f) if f.as_str() != Some(FORMAT) => return Err(not_annotations(&format!("its format is {f}"))),
+        Some(_) => {}
     }
-    let version = value.get("version");
-    if version.and_then(|v| v.as_u64()) != Some(VERSION.into()) {
-        let shown = version.map_or("none".to_string(), |v| v.to_string());
-        return Err(not_annotations(&format!("version {shown} isn't {VERSION}")));
+    let version = value.get("version").filter(|v| !v.is_null());
+    match version {
+        None => return Err(not_annotations("it has no version")),
+        Some(v) if v.as_u64() != Some(VERSION.into()) => {
+            return Err(not_annotations(&format!("version {v} isn't {VERSION}")));
+        }
+        Some(_) => {}
     }
     within_limits(&value)?;
     serde_json::from_value(value).map_err(|e| not_annotations(&e.to_string()))

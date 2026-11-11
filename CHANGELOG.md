@@ -14,6 +14,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Paused requests show their whole waveform. A request paused or failed after its audio came showed levels only up to where it stopped.
   - Unreadable settings are kept, not overwritten. A settings file that can't be read is set aside beside your library, and VODscribe says so.
   - Captions show a stretch just transcribed. Captions read just before a stretch finished no longer replace the newer ones.
+  - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".
 
 ## 0.7.3 — 2026-11-08
 

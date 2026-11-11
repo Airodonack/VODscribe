@@ -244,7 +244,10 @@ export function parseAnnotations(value: unknown): Annotations {
   };
   if (typeof value !== "object" || value === null) bad("not an object");
   const v = value as Record<string, unknown>;
+  // A field missing or null is said as none, as the app says it.
+  if (v.format == null) bad("it has no format");
   if (v.format !== ANNOTATIONS_FORMAT) bad(`its format is ${JSON.stringify(v.format)}`);
+  if (v.version == null) bad("it has no version");
   if (v.version !== ANNOTATIONS_VERSION) bad(`version ${JSON.stringify(v.version)} isn't ${ANNOTATIONS_VERSION}`);
   withinLimits(v);
   const source = (v.source ?? {}) as Record<string, unknown>;

@@ -98,3 +98,19 @@ fn the_copy_the_app_says_is_the_shape_the_page_reads() {
         }])
     );
 }
+
+/// plans/sections-074.md, "Decided 2026-11-11": "an empty recorded copy
+/// text counts as no copy (no paste goes ahead on it)". A copy's text is
+/// empty until the page writes it (`copied_text`), and an empty system
+/// clipboard isn't the copy's text.
+#[test]
+fn a_copy_whose_text_is_empty_is_no_copy() {
+    let app = TestApp::new();
+    let vod = app.add_site_vod("youtube", "x", "Stream", 60.0).id;
+    app.invoke("copy_items", json!({ "items": [{ "kind": "range", "vodId": vod, "start": 10.0, "end": 20.0 }] }))
+        .unwrap();
+    assert_eq!(paste(&app, vod, ""), None, "the page hasn't written the copy's text yet");
+    copy(&app, vod, 10.0, 20.0, "");
+    assert_eq!(paste(&app, vod, ""), None, "the copy's text was written empty");
+    assert!(app.clips(vod).is_empty());
+}

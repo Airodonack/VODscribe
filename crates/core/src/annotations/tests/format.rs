@@ -39,6 +39,17 @@ fn a_wrong_file_says_so() {
     assert_eq!(parse(&json).unwrap(), file("twitch", "v1"));
 }
 
+/// plans/sections-074.md, "Decided 2026-11-11": a VODscription file with no format or version
+/// "is said plainly by app and page alike (\"it has no format\", \"it has no version\")"; the
+/// page's `parseAnnotations` (annotations.ts) says the same.
+#[test]
+fn a_file_with_no_format_or_version_says_it_has_none() {
+    let err = parse("{\"version\": 1}").unwrap_err().to_string();
+    assert_eq!(err, "This isn't a VODscribe annotations file: it has no format.");
+    let err = parse(&format!("{{\"format\": \"{FORMAT}\"}}")).unwrap_err().to_string();
+    assert_eq!(err, "This isn't a VODscribe annotations file: it has no version.");
+}
+
 #[test]
 fn a_chapter_icon_is_one_emoji_or_none() {
     for icon in ["🎮", " 🍳 ", "👩‍🍳", "🏳️‍🌈", "❤️", "🇫🇷"] {
