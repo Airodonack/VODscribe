@@ -1,20 +1,60 @@
-//! Upgrades of libraries from the clip model on (V22 on).
+//! Upgrades of libraries from the clip model on (V22 on), and the libraries
+//! releases left: old schema and rows in, the same data out, read back
+//! through the library's readers (plans/sections-074.md, 1A specs 29 to 56).
 
 use super::*;
+use crate::testkit::{Released, at_version, back_to};
 
-/// Spec 29, with 30 and 31 till each has a library of its own: VODs, clips
-/// and edits become documents, each VOD with its own clip listing it, "a
-/// VOD's own clip over the whole VOD (`whole_of`, with the VOD's place in
-/// the library's list, which `vods.position` held)"; "Clips keep their ids
-/// (their pictures are named by them)" (db.rs:517, `MIGRATE_V22`; 0.5.0:
-/// "VODs and edits open in one player").
-#[test]
-fn vods_clips_and_edits_become_clips() {
-    let dir = crate::TempDir::new("migrate-v22");
+/// A folder of the test's own, `name`d, and where its library file goes.
+fn library(name: &str) -> (crate::TempDir, PathBuf) {
+    let dir = crate::TempDir::new(name);
     let path = dir.join("library.sqlite");
-    {
-        let conn = crate::testkit::at_version(&path, 21);
-        conn.execute_batch(
+    (dir, path)
+}
+
+/// As `library`, laid out as the app lays one out (`Paths`), for the specs
+/// of the library's own files.
+fn library_in(name: &str) -> (crate::TempDir, crate::Paths) {
+    let dir = crate::TempDir::new(name);
+    let paths = crate::Paths::new(dir.join("lib"));
+    paths.ensure().unwrap();
+    (dir, paths)
+}
+
+/// The format a library is at: how many migrations it has had.
+fn format_of(conn: &Connection) -> usize {
+    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap() as usize
+}
+
+/// The library at `path` opened as the app opens it, so upgraded to this
+/// version's format.
+fn upgraded(path: &Path) -> Db {
+    let db = Db::open(path).unwrap();
+    assert_eq!(format_of(&db.conn), MIGRATIONS.len(), "upgraded to this version's format");
+    db
+}
+
+/// As `upgraded`, the library `paths` lays out.
+fn upgraded_in(paths: &crate::Paths) -> Db {
+    let db = Db::open_in(paths).unwrap();
+    assert_eq!(format_of(&db.conn), MIGRATIONS.len(), "upgraded to this version's format");
+    db
+}
+
+/// `seconds` in flicks, as the library has kept times since V22.
+fn flicks(seconds: f64) -> i64 {
+    Flicks::from_seconds(seconds).0
+}
+
+/// A library as 0.4.0 left one (format 21, before the clip model), written
+/// at `path`: VOD 1 listed last and VOD 2 first, with the edit between;
+/// VOD 1's clip bar with two clips (Lunch, its file dragged out, after
+/// Dinner) and VOD 2's with one only dragged out; a chapter on VOD 1 and a
+/// highlight on VOD 2; the edit, rendered, of a piece of each, one with a
+/// stretch struck (in seconds, as then).
+fn at_21(path: &Path) {
+    at_version(path, 21)
+        .execute_batch(
             "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at, position) VALUES
                  (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0, 2), (2, 'kick', 'b', 'u', 'Second', 300.0, 'done', 0, 0);
              INSERT INTO clips (id, vod_id, start, end, title, position, created_at, status, file_path, shown, handed_out) VALUES
@@ -29,11 +69,19 @@ fn vods_clips_and_edits_become_clips() {
                  (5, 1, 1, 1, 100.0, 130.0, 'b', '[]'), (4, 1, 2, 0, 5.0, 18.0, 'a', '[[12.0,13.5]]');",
         )
         .unwrap();
-    }
-    let db = Db::open(&path).unwrap();
-    use crate::edits::LibraryItem::{Edit, Vod};
+}
+
+/// Spec 29: "`clips` holds every document: a VOD's own clip over the whole
+/// VOD (`whole_of` …), the edits (listed, `position`), and the clip bar's
+/// clips, now snippets hanging off their VOD's clip (`bar_of`). `items`
+/// holds their pieces" (db.rs:517, `MIGRATE_V22`; 0.5.0: "VODs and edits
+/// open in one player").
+#[test]
+fn vods_clips_and_edits_become_documents_with_the_vods_own_clip_listing_it() {
+    let (_dir, path) = library("migrate-v22");
+    at_21(&path);
+    let db = upgraded(&path);
     let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0);
-    assert_eq!(db.library_order().unwrap(), [Vod(2), Edit(edit.id), Vod(1)], "the order kept");
     assert_eq!((edit.title.as_str(), edit.current), ("Best of", true));
     // Its file isn't there, nor where settle takes files from: read as
     // gone (where it would be built), as before, so it's made again.
@@ -45,41 +93,267 @@ fn vods_clips_and_edits_become_clips() {
         pieces.iter().map(|p| (p.id, p.vod_id, p.start, p.end)).collect::<Vec<_>>(),
         [(4, 2, 5.0, 18.0), (5, 1, 100.0, 130.0)]
     );
-    assert_eq!(pieces[0].struck, [(12.0, 13.5)], "in flicks now, the same in seconds");
-    assert_eq!(db.piece_row(4).unwrap().unwrap().struck, [(Flicks::from_seconds(12.0), Flicks::from_seconds(13.5))]);
-    // The clip bar's clips keep their ids, order and files; the one only dragged out is hidden still.
-    let bar: Vec<_> = db.clips(1).unwrap().into_iter().map(|c| (c.id, c.start, c.end, c.title, c.shown)).collect();
-    assert_eq!(bar, [(2, 30.0, 40.0, "Dinner".into(), true), (1, 10.0, 20.5, "Lunch".into(), true)]);
+    // Each VOD has its own clip, over all of it, listing it.
+    for vod in [1, 2] {
+        let own = db.vod_clip(vod).unwrap().unwrap();
+        let length = db.vod(vod).unwrap().unwrap().info.duration.unwrap();
+        assert_eq!(db.edit_pieces(own).unwrap().iter().map(|p| (p.start, p.end)).collect::<Vec<_>>(), [(0.0, length)]);
+        assert_ne!(own, edit.id);
+        assert!(db.vod(vod).unwrap().unwrap().listed);
+    }
+    // The clip bars' clips hang off their VOD's clip, with their files; the one only dragged out is hidden still.
+    let bar: Vec<_> = db.clips(1).unwrap().into_iter().map(|c| (c.title, c.start, c.end, c.shown)).collect();
+    assert_eq!(bar, [("Dinner".into(), 30.0, 40.0, true), ("Lunch".into(), 10.0, 20.5, true)]);
+    let own = db.vod_clip(1).unwrap().unwrap();
+    assert!(db.clips(1).unwrap().iter().all(|c| c.bar == Some(ClipBar::Vod { id: 1 }) && c.id != own));
     assert!(db.clip_handed_out(1).unwrap() && !db.clip_handed_out(2).unwrap());
     let lunch = db.clip(1).unwrap().unwrap().file_path;
     assert_eq!(lunch, Some(shown(&db.files().clip_file(1, "mp4"))), "its file isn't there either: read as gone");
-    assert_eq!(db.clips(2).unwrap().iter().map(|c| (c.id, c.shown)).collect::<Vec<_>>(), [(3, false)]);
-    // Each VOD has its clip, over all of it.
-    let own = db.vod_clip(1).unwrap().unwrap();
-    assert_eq!(db.edit_pieces(own).unwrap().iter().map(|p| (p.start, p.end)).collect::<Vec<_>>(), [(0.0, 600.0)]);
-    assert!(own != edit.id && db.vod_clip(2).unwrap().unwrap() != edit.id);
-    // Marks are the VODs' clips' own, where they were.
-    let marks: Vec<_> = db.marks(1).unwrap().into_iter().map(|m| (m.id, m.kind, m.start, m.text)).collect();
-    assert_eq!(marks, [(7, "chapter".into(), 65.25, Some("The raid".into()))]);
-    assert_eq!(db.marks(2).unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [8]);
-    assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [2, 1], "VODs list in the order too");
-    // Each VOD counts what uses it: its clip, its snippets (shown or not) and the edit's piece.
-    assert_eq!((db.uses(1).unwrap(), db.uses(2).unwrap()), (4, 3));
-    // Nothing of the old tables is left, nor the order on VODs.
-    let tables: Vec<String> = {
-        let mut stmt = db.conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap();
-        stmt.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
-    };
-    assert!(
-        !tables.iter().any(|t| t == "edits" || t == "edit_pieces" || t == "clips_old" || t == "marks_old"),
-        "{tables:?}"
+    assert_eq!(
+        db.clips(2).unwrap().iter().map(|c| (c.title.as_str(), c.shown)).collect::<Vec<_>>(),
+        [("Dragged", false)]
     );
-    assert!(db.conn.execute("SELECT position FROM vods", []).is_err());
     // Deleting a VOD takes its clip, the bar and its marks.
     db.delete_vod(1).unwrap();
     assert!(db.vod_clip(1).unwrap().is_none() && db.clips(1).unwrap().is_empty() && db.marks(1).unwrap().is_empty());
     assert_eq!(db.clip(2).unwrap(), None);
     assert_eq!(db.edit_pieces(edit.id).unwrap().len(), 1, "the edit keeps its piece of the other VOD");
+}
+
+/// Spec 30: a VOD's own clip comes "with the VOD's place in the library's
+/// list, which `vods.position` held", and the edits are listed by
+/// `position` (db.rs:517, `MIGRATE_V22`).
+#[test]
+fn the_library_keeps_its_order_through_the_clip_model() {
+    let (_dir, path) = library("migrate-v22-order");
+    at_21(&path);
+    let db = upgraded(&path);
+    use crate::edits::LibraryItem::{Edit, Vod};
+    let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0).id;
+    assert_eq!(db.library_order().unwrap(), [Vod(2), Edit(edit), Vod(1)]);
+    assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [2, 1], "VODs list in the order too");
+}
+
+/// Spec 31: "Clips keep their ids (their pictures are named by them); VODs'
+/// clips and edits get ids above them" (db.rs:517, `MIGRATE_V22`): each
+/// clip's picture (`Paths::clip_thumb`) is the one it had.
+#[test]
+fn clips_keep_their_ids_through_the_clip_model_so_their_pictures_are_found() {
+    let (dir, path) = library("migrate-v22-ids");
+    at_21(&path);
+    let pictures = crate::Paths::new(&*dir);
+    std::fs::create_dir_all(pictures.clip_thumbs()).unwrap();
+    for (id, title) in [(1, "Lunch"), (2, "Dinner"), (3, "Dragged")] {
+        std::fs::write(pictures.clip_thumb(id), title).unwrap();
+    }
+    let db = upgraded(&path);
+    let clips: Vec<Clip> = [1, 2].iter().flat_map(|&vod| db.clips(vod).unwrap()).collect();
+    assert_eq!(
+        clips.iter().map(|c| (c.id, c.title.as_str())).collect::<Vec<_>>(),
+        [(2, "Dinner"), (1, "Lunch"), (3, "Dragged")]
+    );
+    for clip in &clips {
+        assert_eq!(std::fs::read_to_string(db.files().clip_thumb(clip.id)).unwrap(), clip.title, "its own picture");
+    }
+    let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0).id;
+    let others = [db.vod_clip(1).unwrap().unwrap(), db.vod_clip(2).unwrap().unwrap(), edit];
+    assert!(others.iter().all(|&id| id > 3), "a VOD's clip or an edit took a clip's id: {others:?}");
+}
+
+/// Spec 32: "Marks belong to a clip (the VOD's own, for those made so far)
+/// and keep the VOD moment they're at" (db.rs:517, `MIGRATE_V22`).
+#[test]
+fn marks_stay_on_their_moment_through_the_clip_model() {
+    let (_dir, path) = library("migrate-v22-marks");
+    at_21(&path);
+    let db = upgraded(&path);
+    let marks =
+        |vod| -> Vec<_> { db.marks(vod).unwrap().into_iter().map(|m| (m.id, m.kind, m.start, m.text)).collect() };
+    assert_eq!(marks(1), [(7, "chapter".into(), 65.25, Some("The raid".into()))]);
+    assert_eq!(marks(2), [(8, "highlight".into(), 3.0, None)]);
+    // The VOD's own clip's, at that moment of the VOD.
+    let own: Vec<_> = db
+        .clip_marks(db.vod_clip(1).unwrap().unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|(id, m)| (id, m.vod_id, m.at))
+        .collect();
+    assert_eq!(own, [(7, 1, Flicks::from_seconds(65.25))]);
+}
+
+/// Spec 33: "the struck stretches, JSON seconds till now, are put in flicks
+/// by `Db::open` in the same transaction" (db.rs:517, `MIGRATE_V22`;
+/// `struck_to_flicks`, db.rs:1426): they read the same, in seconds, from a
+/// library from before the clip model and from one already in flicks.
+#[test]
+fn struck_stretches_read_the_same_in_flicks() {
+    let (_dir, path) = library("migrate-v22-struck");
+    at_21(&path);
+    let db = upgraded(&path);
+    let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0).id;
+    let struck: Vec<_> = db.edit_pieces(edit).unwrap().into_iter().map(|p| (p.id, p.struck)).collect();
+    assert_eq!(struck, [(4, vec![(12.0, 13.5)]), (5, vec![])]);
+    assert_eq!(db.piece_row(4).unwrap().unwrap().struck, [(Flicks::from_seconds(12.0), Flicks::from_seconds(13.5))]);
+
+    // At V22 they're in flicks already: put in flicks again, they'd be far off.
+    let (_dir, path) = library("migrate-v23-struck");
+    at_version(&path, 22)
+        .execute_batch(&format!(
+            "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at) VALUES
+                 (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0);
+             INSERT INTO clips (id, title, created_at, position, whole_of) VALUES (1, 'First', 0, 1, 1), (2, 'Best of', 0, 0, NULL);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES (1, 0, 'piece', 1, 0, NULL);
+             INSERT INTO items (id, clip_id, position, kind, vod_id, start, end, struck, title) VALUES
+                 (5, 2, 0, 'piece', 1, {}, {}, '[[{},{}]]', 'a');",
+            flicks(5.0),
+            flicks(18.0),
+            flicks(12.0),
+            flicks(13.5)
+        ))
+        .unwrap();
+    let db = upgraded(&path);
+    assert_eq!(db.edit_pieces(2).unwrap()[0].struck, [(12.0, 13.5)]);
+}
+
+/// Spec 34: "what's been rendered of a clip (its status, file, error, the
+/// revision it's of, and whether its file was dragged out) is kept apart
+/// from the clip" (db.rs:610, `MIGRATE_V23`), and reads the same: a clip's
+/// status, file, error and hand-out; an edit up to date if rendered at its
+/// revision.
+#[test]
+fn what_was_rendered_of_a_clip_is_kept_apart_and_reads_the_same() {
+    let (_dir, path) = library("migrate-v23");
+    at_version(&path, 22)
+        .execute_batch(&format!(
+            "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at) VALUES
+                 (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0);
+             INSERT INTO clips (id, title, created_at, revision, position, bar_of, bar_position, whole_of, shown, status,
+                                file_path, error, rendered_revision, handed_out) VALUES
+                 (1, 'First', 0, 0, 1, NULL, NULL, 1, 1, 'waiting', NULL, NULL, NULL, 0),
+                 (2, 'Lunch', 0, 2, NULL, 1, 1, NULL, 1, 'ready', '/v/2.mp4', NULL, 2, 1),
+                 (3, 'Broken', 0, 0, NULL, 1, 2, NULL, 1, 'error', NULL, 'ffmpeg failed', NULL, 0),
+                 (4, 'Best of', 0, 4, 0, NULL, NULL, NULL, 1, 'ready', '/v/4.mp4', NULL, 4, 0),
+                 (5, 'Older', 0, 5, 2, NULL, NULL, NULL, 1, 'ready', '/v/5.mp4', NULL, 3, 0);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES
+                 (1, 0, 'piece', 1, 0, NULL), (2, 0, 'piece', 1, {ten}, {twenty}), (3, 0, 'piece', 1, {ten}, {twenty}),
+                 (4, 0, 'piece', 1, 0, {ten}), (5, 0, 'piece', 1, 0, {ten});",
+            ten = flicks(10.0),
+            twenty = flicks(20.0)
+        ))
+        .unwrap();
+    let db = upgraded(&path);
+    let lunch = db.clip(2).unwrap().unwrap();
+    assert_eq!(
+        (lunch.status, lunch.file_path, lunch.error, lunch.revision),
+        (ClipStatus::Ready, Some(shown(&db.files().clip_file(2, "mp4"))), None, 2)
+    );
+    assert!(db.clip_handed_out(2).unwrap(), "its file was dragged out");
+    let broken = db.clip(3).unwrap().unwrap();
+    assert_eq!(
+        (broken.status, broken.file_path, broken.error.as_deref()),
+        (ClipStatus::Error, None, Some("ffmpeg failed"))
+    );
+    assert!(!db.clip_handed_out(3).unwrap());
+    let edits: Vec<_> = db
+        .edits(crate::edits::tests::at_first())
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.title, e.status, e.revision, e.current))
+        .collect();
+    assert_eq!(edits, [("Best of".into(), ClipStatus::Ready, 4, true), ("Older".into(), ClipStatus::Ready, 5, false)]);
+}
+
+/// Spec 35: "each VOD (a source) counts the pieces of clips that use it, its
+/// own clip's included … A source at zero is unused: no entry lists it and
+/// no clip holds any of it" (db.rs:848, `MIGRATE_V24`): counted as it
+/// upgrades, then kept as clips change.
+#[test]
+fn a_vod_used_by_an_edit_counts_its_pieces_after_the_upgrade() {
+    let (_dir, path) = library("migrate-v24");
+    at_version(&path, 23)
+        .execute_batch(&format!(
+            "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at) VALUES
+                 (1, 'kick', 'a', 'u', 'Used', 600.0, 'done', 0), (2, 'kick', 'b', 'u', 'Alone', 600.0, 'done', 0),
+                 (3, 'kick', 'c', 'u', 'Clipped', 600.0, 'done', 0);
+             INSERT INTO clips (id, title, created_at, position, bar_of, bar_position, whole_of) VALUES
+                 (1, 'Used', 0, 0, NULL, NULL, 1), (2, 'Alone', 0, 1, NULL, NULL, 2), (3, 'Clipped', 0, 2, NULL, NULL, 3),
+                 (4, 'Best of', 0, 3, NULL, NULL, NULL), (5, 'Snippet', 0, NULL, 3, 1, NULL);
+             INSERT INTO renders (clip_id) VALUES (1), (2), (3), (4), (5);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES
+                 (1, 0, 'piece', 1, 0, NULL), (2, 0, 'piece', 2, 0, NULL), (3, 0, 'piece', 3, 0, NULL),
+                 (4, 0, 'piece', 1, 0, {one}), (4, 1, 'piece', 1, {two}, {three}), (5, 0, 'piece', 3, 0, {one});",
+            one = flicks(1.0),
+            two = flicks(2.0),
+            three = flicks(3.0)
+        ))
+        .unwrap();
+    let db = upgraded(&path);
+    assert_eq!([1, 2, 3].map(|vod| db.uses(vod).unwrap()), [3, 1, 2], "its clip, the edit's pieces, the snippet");
+    assert_eq!(db.unused_sources().unwrap(), Vec::<i64>::new());
+    assert!(db.remove_entry(2).unwrap(), "nothing else holds it");
+    assert!(!db.remove_entry(1).unwrap(), "the edit holds it");
+    assert_eq!(db.unused_sources().unwrap(), [2]);
+    assert!(db.delete_edit(4).unwrap());
+    assert_eq!(db.uses(1).unwrap(), 0);
+    assert!(db.remove_entry(3).unwrap(), "its snippet went with its clip");
+    assert_eq!(db.unused_sources().unwrap(), [1, 2, 3]);
+}
+
+/// Spec 36: "a source can be gone (`gone`): its files, transcript and chat
+/// erased while clips still have pieces of it" (db.rs:631, `MIGRATE_V25`;
+/// 0.5.0: "Removing a VOD that an edit uses leaves the edit's pieces of it
+/// where they are"): none is, from before.
+#[test]
+fn no_source_from_before_is_gone() {
+    let (_dir, path) = library("migrate-v25");
+    at_version(&path, 24)
+        .execute_batch(&format!(
+            "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at) VALUES
+                 (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0), (2, 'kick', 'b', 'u', 'Second', 600.0, 'done', 0);
+             INSERT INTO clips (id, title, created_at, position, whole_of) VALUES
+                 (1, 'First', 0, 0, 1), (2, 'Second', 0, 1, 2), (3, 'Best of', 0, 2, NULL);
+             INSERT INTO renders (clip_id) VALUES (1), (2), (3);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES
+                 (1, 0, 'piece', 1, 0, NULL), (2, 0, 'piece', 2, 0, NULL), (3, 0, 'piece', 1, 0, {one}),
+                 (3, 1, 'piece', 2, 0, {one});",
+            one = flicks(1.0)
+        ))
+        .unwrap();
+    let db = upgraded(&path);
+    assert_eq!([1, 2].map(|vod| db.is_gone(vod).unwrap()), [false, false]);
+    assert!(db.vods().unwrap().iter().all(|v| v.listed));
+    assert_eq!(db.edit_pieces(3).unwrap().iter().map(|p| p.vod_id).collect::<Vec<_>>(), [1, 2]);
+}
+
+/// Spec 37: V26 keeps "what a clip's rendered file was made of … so a change
+/// that leaves those as they were (a highlight, a cut) doesn't leave it out
+/// of date" (db.rs:635, `MIGRATE_V26`; 0.5.0: "A rendered edit has its
+/// chapters"). One rendered before has none kept: it reads as up to date
+/// till it's changed (decided 2026-11-11, plans/sections-074.md "Decided",
+/// unstated behaviour 1).
+#[test]
+fn an_edit_rendered_before_made_of_was_kept_reads_as_up_to_date_till_changed() {
+    let (_dir, path) = library("migrate-v26");
+    at_version(&path, 25)
+        .execute_batch(&format!(
+            "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at) VALUES
+                 (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0);
+             INSERT INTO clips (id, title, created_at, revision, position, whole_of) VALUES
+                 (1, 'First', 0, 0, 0, 1), (2, 'Best of', 0, 3, 1, NULL), (3, 'Older', 0, 4, 2, NULL);
+             INSERT INTO renders (clip_id, status, file_path, revision) VALUES
+                 (1, 'waiting', NULL, NULL), (2, 'ready', '/v/2.mp4', 3), (3, 'ready', '/v/3.mp4', 2);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES
+                 (1, 0, 'piece', 1, 0, NULL), (2, 0, 'piece', 1, 0, {ten}), (3, 0, 'piece', 1, 0, {ten});",
+            ten = flicks(10.0)
+        ))
+        .unwrap();
+    let db = upgraded(&path);
+    let now = crate::edits::tests::at_first();
+    let current = |id| db.edit(id, now).unwrap().unwrap().current;
+    assert!(current(2), "rendered at the revision it's at");
+    assert!(!current(3), "changed since it was rendered, as before");
+    db.rename_edit(2, "Best of all").unwrap();
+    assert!(!current(2), "changed");
 }
 
 /// Spec 38: "Each VOD's transcription so far becomes stretches: a finished
@@ -90,11 +364,9 @@ fn vods_clips_and_edits_become_clips() {
 /// transcribe it."; e2e upgrade-0.5.0.mjs header).
 #[test]
 fn transcriptions_so_far_become_stretches() {
-    let dir = crate::TempDir::new("migrate-v27");
-    let path = dir.join("library.sqlite");
-    {
-        let conn = crate::testkit::at_version(&path, 26);
-        conn.execute_batch(&format!(
+    let (_dir, path) = library("migrate-v27");
+    at_version(&path, 26)
+        .execute_batch(&format!(
             "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, progress, error, model, added_at) VALUES
                  (1, 'kick', 'done', 'u', 't', 600, 'done', 1, NULL, '{model}', 0),
                  (2, 'kick', 'paused', 'u', 't', 600, 'paused', 0.2, NULL, '{model}', 0),
@@ -102,31 +374,42 @@ fn transcriptions_so_far_become_stretches() {
                  (4, 'kick', 'stopped', 'u', 't', 600, 'error', 0, 'Stopped', NULL, 0),
                  (5, 'kick', 'failed', 'u', 't', 600, 'error', 0, 'HTTP 404', NULL, 0),
                  (6, 'kick', 'running', 'u', 't', 600, 'transcribing', 0.5, NULL, '{model}', 0),
-                 (7, 'kick', 'stopped-lines', 'u', 't', 600, 'error', 0, 'Stopped', '{model}', 0);
+                 (7, 'kick', 'stopped-lines', 'u', 't', 600, 'error', 0, 'Stopped', '{model}', 0),
+                 (8, 'kick', 'waiting', 'u', 't', 600, 'ready', 0, NULL, NULL, 0),
+                 (9, 'kick', 'downloading', 'u', 't', 600, 'downloading', 0.3, NULL, NULL, 0);
              INSERT INTO segments (vod_id, start, end, text, words) VALUES
                  (1, 0, 5, 'a', '[]'), (2, 100, 120, 'b', '[]'), (6, 280, 300, 'c', '[]'), (7, 40, 50, 'd', '[]');",
             model = crate::model::CPU_MODEL.id
         ))
         .unwrap();
-    }
-    let db = Db::open(&path).unwrap();
+    let db = upgraded(&path);
     let vod = |id| db.vod(id).unwrap().unwrap();
     let stretches = |id| -> Vec<_> {
         db.stretches(id).unwrap().into_iter().map(|s| (s.start, s.end, s.status, s.reached)).collect()
     };
+    // Finished.
     assert_eq!(stretches(1), [(0.0, None, Status::Done, None)]);
     assert_eq!((vod(1).status, vod(1).transcribed, vod(1).outdated), (Status::Done, Transcribed::All, false));
-    assert_eq!(stretches(2), [(0.0, None, Status::Paused, Some(120.0))]);
-    assert_eq!((vod(2).status, vod(2).progress, vod(2).transcribed), (Status::Paused, 0.2, Transcribed::Some));
+    assert_eq!(db.stretches(1).unwrap()[0].model.as_deref(), Some(crate::model::CPU_MODEL.id));
+    // Under way: downloading, or transcribing as far as its lines go.
+    assert_eq!(stretches(9), [(0.0, None, Status::Downloading, None)]);
+    assert_eq!(stretches(6), [(0.0, None, Status::Transcribing, Some(300.0))]);
+    // Waiting.
+    assert_eq!(stretches(8), [(0.0, None, Status::Ready, None)]);
     assert_eq!(stretches(3), [(0.0, None, Status::Queued, None)], "added when adding meant transcribing");
     assert_eq!((vod(3).status, vod(3).transcribed), (Status::Queued, Transcribed::None));
-    assert_eq!(stretches(4), [], "stopped, with nothing to keep");
-    assert_eq!((vod(4).status, vod(4).error), (Status::None, None));
+    // Paused.
+    assert_eq!(stretches(2), [(0.0, None, Status::Paused, Some(120.0))]);
+    assert_eq!((vod(2).status, vod(2).progress, vod(2).transcribed), (Status::Paused, 0.2, Transcribed::Some));
+    // Failed: the request, with its error.
+    assert_eq!(stretches(5), [(0.0, None, Status::Error, None)]);
+    assert_eq!(db.stretches(5).unwrap()[0].error.as_deref(), Some("HTTP 404"));
     assert_eq!((vod(5).status, vod(5).error.as_deref()), (Status::Error, Some("HTTP 404")));
-    assert_eq!(stretches(6), [(0.0, None, Status::Transcribing, Some(300.0))]);
+    // Stopped: done as far as its lines go, or nothing.
     assert_eq!(stretches(7), [(0.0, Some(50.0), Status::Done, None)], "stopped, its lines kept");
     assert_eq!((vod(7).status, vod(7).transcribed), (Status::None, Transcribed::Some));
-    assert_eq!(db.stretches(1).unwrap()[0].model.as_deref(), Some(crate::model::CPU_MODEL.id));
+    assert_eq!(stretches(4), [], "stopped, with nothing to keep");
+    assert_eq!((vod(4).status, vod(4).error), (Status::None, None));
 }
 
 /// Spec 39: chat from before is searchable by who wrote it: "Chat's authors
@@ -135,53 +418,74 @@ fn transcriptions_so_far_become_stretches() {
 /// tests/e2e/fixtures/upgrade-matrix.mjs header: "the author index of format
 /// 28 is filled from the old rows").
 #[test]
-fn search_reads_word_counts_and_chat_authors_after_upgrading() {
-    let dir = crate::TempDir::new("migrate-v28");
-    let path = dir.join("library.sqlite");
-    {
-        let conn = crate::testkit::at_version(&path, 27);
-        conn.execute_batch(
+fn chat_from_before_is_searchable_by_who_wrote_it() {
+    let (_dir, path) = library("migrate-v28");
+    at_version(&path, 27)
+        .execute_batch(
             "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, status, added_at) VALUES
                  (1, 'twitch', '1', 'u', 't', 'Streamer', 600, 'done', 0);
+             INSERT INTO clips (id, title, created_at, position, whole_of) VALUES (1, 't', 0, 0, 1);
+             INSERT INTO renders (clip_id) VALUES (1);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES (1, 0, 'piece', 1, 0, NULL);
              INSERT INTO segments (vod_id, start, end, text, words) VALUES
                  (1, 0, 1, 'Clutch play', '[]'), (1, 5, 6, 'what a play', '[]');
              INSERT INTO chat (vod_id, time, author, text, parts) VALUES
                  (1, 1, 'Bob', 'PLAY', '[]'), (1, 2, 'bobby', 'hi', '[]'), (1, 3, 'alice', 'hi', '[]');",
         )
         .unwrap();
+    let db = upgraded(&path);
+    let found = |query: &str| -> Vec<(Source, Option<String>, f64)> {
+        let hits = db.search(query, &SearchFilter::default(), 10).unwrap().hits;
+        hits.into_iter().map(|h| (h.source, h.author, h.time)).collect()
+    };
+    for typed in ["from:bob", "from:BOB"] {
+        assert_eq!(found(typed), [(Source::Chat, Some("Bob".into()), 1.0)], "{typed}");
     }
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
-    // The counts are the indexes' own, words already there included: nothing to fill.
-    let lines = |table: &str, term: &str| -> i64 {
-        let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
-        db.conn.query_row(&sql, [term], |r| r.get(0)).optional().unwrap().unwrap_or(0)
-    };
-    assert_eq!((lines("segments_vocab", "play"), lines("segments_vocab", "clutch")), (2, 1));
-    assert_eq!((lines("chat_vocab", "hi"), lines("chat_vocab", "play"), lines("chat_vocab", "nope")), (2, 1, 0));
-    // `from:` and its suggestions go by the author index.
-    let plan = |sql: &str| -> String {
-        let mut stmt = db.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-        let rows = stmt.query_map([], |r| r.get::<_, String>(3)).unwrap();
-        rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("; ")
-    };
-    assert!(plan("SELECT id FROM chat WHERE author COLLATE NOCASE IN ('bob')").contains("chat_by_author"));
-    assert!(
-        plan("SELECT author FROM chat WHERE author COLLATE NOCASE >= 'b' AND author COLLATE NOCASE < 'c'")
-            .contains("chat_by_author")
-    );
+    assert_eq!(found("from:bob play"), [(Source::Chat, Some("Bob".into()), 1.0)]);
+    assert_eq!(found("from:alice"), [(Source::Chat, Some("alice".into()), 3.0)]);
     let names: Vec<String> = db.author_suggestions("BO", None).unwrap().into_iter().map(|s| s.name).collect();
     assert_eq!(names, ["Bob", "bobby"]);
+    // What was said, as before.
+    let said: Vec<f64> = found("play").into_iter().filter(|h| h.0 == Source::Speech).map(|h| h.2).collect();
+    assert_eq!(said.len(), 2, "{said:?}");
+}
+
+/// Spec 40: V29 adds "annotations imported from a file … A highlight's end,
+/// its kind … and why it's one, on its mark; who says a line (`speaker`), on
+/// the line; a VOD's cast and what it does when" (db.rs:685, `MIGRATE_V29`;
+/// 0.7.0: "A VOD can come with annotations."): a library from before has
+/// none of them.
+#[test]
+fn a_library_from_before_annotations_has_none_imported() {
+    let (_dir, path) = library("migrate-v29");
+    at_version(&path, 28)
+        .execute_batch(&format!(
+            "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at) VALUES
+                 (1, 'twitch', '1', 'u', 't', 600, 'done', 0);
+             INSERT INTO clips (id, title, created_at, position, whole_of) VALUES (1, 't', 0, 0, 1);
+             INSERT INTO renders (clip_id) VALUES (1);
+             INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES (1, 0, 'piece', 1, 0, NULL);
+             INSERT INTO marks (id, clip_id, vod_id, kind, at, text, source, created_at) VALUES
+                 (1, 1, 1, 'highlight', {five}, 'Big laugh', 'user', 0);
+             INSERT INTO segments (vod_id, start, end, text, words) VALUES (1, 0, 1, 'hello', '[]');
+             INSERT INTO stretches (vod_id, start, end, status, progress) VALUES (1, 0, NULL, 'done', 1);",
+            five = flicks(5.0)
+        ))
+        .unwrap();
+    let db = upgraded(&path);
+    assert!(db.vod_annotations(1).unwrap().is_none(), "no cast or activity");
+    let marks = db.marks(1).unwrap();
+    assert_eq!((marks[0].text.as_deref(), &marks[0].detail), (Some("Big laugh"), &MarkDetail::default()));
+    let lines: Vec<_> = db.lines(1).unwrap().into_iter().map(|l| (l.text, l.speaker)).collect();
+    assert_eq!(lines, [("hello".into(), None)]);
 }
 
 /// Spec 41: a highlight from before casts names nobody; V30 adds "who is in
 /// an imported highlight (`people`: its cast's names, as a JSON array), on
 /// its mark" (db.rs:703, `MIGRATE_V30`).
 #[test]
-fn marks_from_before_highlights_had_a_cast_read_with_none() {
-    let dir = crate::TempDir::new("migrate-v29");
-    let path = dir.join("library.sqlite");
+fn a_highlight_from_before_casts_names_nobody() {
+    let (_dir, path) = library("migrate-v30");
     let vod = {
         let db = Db::open(&path).unwrap();
         let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
@@ -189,10 +493,8 @@ fn marks_from_before_highlights_had_a_cast_read_with_none() {
         vod.id
     };
     // Back to version 29: the column 30 adds, gone.
-    crate::testkit::back_to(&path, 29);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 29);
+    let db = upgraded(&path);
     let marks = db.marks(vod).unwrap();
     assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
     // And a cast, once there is one, is kept and read back.
@@ -206,9 +508,8 @@ fn marks_from_before_highlights_had_a_cast_read_with_none() {
 /// chapter is about, as one emoji (`icon`), on its mark" (db.rs:708,
 /// `MIGRATE_V31`).
 #[test]
-fn marks_from_before_chapters_had_an_icon_read_with_none() {
-    let dir = crate::TempDir::new("migrate-v30");
-    let path = dir.join("library.sqlite");
+fn a_chapter_from_before_icons_has_none() {
+    let (_dir, path) = library("migrate-v31");
     let vod = {
         let db = Db::open(&path).unwrap();
         let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
@@ -216,10 +517,8 @@ fn marks_from_before_chapters_had_an_icon_read_with_none() {
         vod.id
     };
     // Back to version 30: the column 31 adds, gone.
-    crate::testkit::back_to(&path, 30);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 30);
+    let db = upgraded(&path);
     let marks = db.marks(vod).unwrap();
     assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
     // And an icon, once there is one, is kept and read back.
@@ -233,18 +532,15 @@ fn marks_from_before_chapters_had_an_icon_read_with_none() {
 /// annotations are published for it is "unknown until asked" (db.rs:712,
 /// `MIGRATE_V32`).
 #[test]
-fn vods_from_before_annotations_were_looked_up_are_unknown() {
-    let dir = crate::TempDir::new("migrate-v31");
-    let path = dir.join("library.sqlite");
+fn a_vod_from_before_look_ups_is_unknown_to_the_file_host() {
+    let (_dir, path) = library("migrate-v32");
     let vod = {
         let db = Db::open(&path).unwrap();
         db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id
     };
     // Back to version 31: the columns 32 adds, gone.
-    crate::testkit::back_to(&path, 31);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 31);
+    let db = upgraded(&path);
     assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
     let listed = db.vods().unwrap();
     assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -254,18 +550,15 @@ fn vods_from_before_annotations_were_looked_up_are_unknown() {
 /// says: "A chat always replaces the others ... Null when nothing says"
 /// (db.rs:721, `MIGRATE_V33`).
 #[test]
-fn vods_from_before_their_start_was_kept_have_none_till_their_chat_says() {
-    let dir = crate::TempDir::new("migrate-v32");
-    let path = dir.join("library.sqlite");
+fn a_vod_from_before_its_start_was_kept_has_none_till_its_chat_says() {
+    let (_dir, path) = library("migrate-v33");
     let vod = {
         let db = Db::open(&path).unwrap();
         db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id
     };
     // Back to version 32: the columns 33 and 34 add, gone.
-    crate::testkit::back_to(&path, 32);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 32);
+    let db = upgraded(&path);
     assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
     db.set_chat_start(vod, 1790631005.0).unwrap();
     assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -274,9 +567,8 @@ fn vods_from_before_their_start_was_kept_have_none_till_their_chat_says() {
 /// Spec 45: an import from before points of view has none: "Null for an
 /// import from before: none known" (db.rs:733, `MIGRATE_V34`).
 #[test]
-fn annotations_imported_before_povs_were_kept_have_none() {
-    let dir = crate::TempDir::new("migrate-v33");
-    let path = dir.join("library.sqlite");
+fn an_import_from_before_points_of_view_has_none() {
+    let (_dir, path) = library("migrate-v34");
     let vod = {
         let db = Db::open(&path).unwrap();
         let vod = db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id;
@@ -289,21 +581,153 @@ fn annotations_imported_before_povs_were_kept_have_none() {
         vod
     };
     // Back to version 33: the column 34 adds, gone.
-    crate::testkit::back_to(&path, 33);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 33);
+    let db = upgraded(&path);
     let kept = db.vod_annotations(vod).unwrap().unwrap();
     assert!(kept.povs.is_empty() && kept.cast.is_empty());
+}
+
+/// Spec 46: V35 keeps "which of an import's chapters or highlights a mark was
+/// brought in as … kept when the user changes it, so the next import doesn't
+/// add that one again beside theirs. Null for the user's own marks and for
+/// marks imported before" (db.rs:739, `MIGRATE_V35`). 0.7.0's "Newer
+/// annotations keep your own changes" holds for marks imported before too:
+/// "your own marks stay, and so does an imported chapter or highlight you
+/// renamed or moved, without the newer annotations adding their copy beside
+/// yours" (decided 2026-11-11, plans/sections-074.md "Decided", unstated
+/// behaviour 2: "a duplicate is a bug").
+#[test]
+#[ignore = "disagreement: an import adds its copy beside a mark imported before V35 that the user renamed or moved"]
+fn a_mark_imported_before_v35_and_changed_by_the_user_is_not_imported_again_beside_theirs() {
+    let (_dir, path) = library("migrate-v35");
+    let file = crate::annotations::tests::file("youtube", "abcdefghijk");
+    let vod = {
+        let db = Db::open(&path).unwrap();
+        let (vod, _) = db.import_annotations(&file, None).unwrap();
+        let find =
+            |text: &str| db.marks(vod.id).unwrap().into_iter().find(|m| m.text.as_deref() == Some(text)).unwrap();
+        db.set_mark_text(find("Middle").id, Some("My middle")).unwrap();
+        db.move_mark(find("Big laugh").id, 6.0).unwrap();
+        vod.id
+    };
+    // Back to version 34: which import each was brought in as, gone.
+    back_to(&path, 34);
+    let db = upgraded(&path);
+    db.import_annotations(&file, None).unwrap();
+    let marks: Vec<_> =
+        db.marks(vod).unwrap().into_iter().map(|m| (m.start, m.text.unwrap(), m.detail.source)).collect();
+    assert_eq!(
+        marks,
+        [
+            (0.0, "Start".into(), crate::annotations::SOURCE.into()),
+            (6.0, "Big laugh".into(), "user".into()),
+            (20.0, "My middle".into(), "user".into()),
+        ],
+        "the user's changed copies stand in for the import's"
+    );
+}
+
+/// Spec 47: "Where the VOD it was kept from is still in the library
+/// (keeping a later stretch failed, so the VOD stayed), those come back from
+/// its rows": who speaks each line, and what each chat message is, how much
+/// and when it happened (db.rs:746, `MIGRATE_V36`; 0.7.0 Fixes: "Kept
+/// stretches keep subs, gifts and tips.").
+#[test]
+fn stretches_kept_while_their_vod_stays_get_back_their_speakers_and_chat_kinds() {
+    let (_dir, path) = library("migrate-v36");
+    let (vod, kept) = {
+        let mut db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
+        let segments = [
+            Segment { start: 9.0, end: 11.0, text: " a".into(), words: vec![word(" a", 10.5, 11.0)] },
+            Segment { start: 11.0, end: 12.0, text: " hi".into(), words: vec![word(" hi", 11.0, 12.0)] },
+        ];
+        db.insert_segments(vod, &segments).unwrap();
+        db.conn.execute("UPDATE segments SET speaker = 'S' || id WHERE vod_id = ?1", [vod]).unwrap();
+        let chat = [
+            event(12.0, "hello", Kind::Message, None, None),
+            event(13.0, "resubbed", Kind::Sub, Some(2.0), Some(12.5)),
+            event(14.0, "gift", Kind::Gift, Some(5.0), None),
+        ];
+        crate::db::insert_chat(&db.conn, vod, &chat).unwrap();
+        // Kept with the copy that left columns out; its VOD stays, as when
+        // keeping the next stretch failed and nothing was removed.
+        let kept = db.add_realized(vod, 10.0, 15.0).unwrap();
+        db.conn
+            .execute_batch(&format!(
+                "UPDATE segments SET speaker = NULL WHERE vod_id = {kept};
+                 UPDATE chat SET kind = 'message', amount = NULL, event_time = NULL WHERE vod_id = {kept};"
+            ))
+            .unwrap();
+        (vod, kept)
+    };
+    back_to(&path, 35);
+    let db = upgraded(&path);
+
+    let lines = db.lines(kept).unwrap();
+    let speakers: Vec<Option<String>> = db.lines(vod).unwrap().into_iter().map(|l| l.speaker).collect();
+    assert_eq!(lines.into_iter().map(|l| l.speaker).collect::<Vec<_>>(), speakers);
+    let events = |kind| {
+        db.chat_of_kind(kept, kind)
+            .unwrap()
+            .into_iter()
+            .map(|(_, m)| (m.time, m.amount, m.event_time))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(events(Kind::Sub), [(3.0, Some(2.0), Some(2.5))]);
+    assert_eq!(events(Kind::Gift), [(4.0, Some(5.0), None)]);
+    assert_eq!(events(Kind::Message).len(), 1);
+}
+
+/// A chat message from "fan" at `time`, of `kind`.
+fn event(time: f64, text: &str, kind: Kind, amount: Option<f64>, event_time: Option<f64>) -> ChatMessage {
+    ChatMessage { kind, amount, event_time, color: None, author: "fan".into(), ..message(time, "fan", text) }
+}
+
+/// Spec 48: of the speakers and chat kinds a kept stretch was copied
+/// without, "where the VOD is gone, so are they" (db.rs:746,
+/// `MIGRATE_V36`): it keeps the lines and messages it has, as it has them.
+#[test]
+fn a_kept_stretch_whose_vod_is_gone_keeps_what_it_has() {
+    let (_dir, path) = library("migrate-v36-gone");
+    let (orphan, lines, chat) = {
+        let mut db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("y")).unwrap().0.id;
+        db.insert_segments(vod, &[Segment { start: 0.0, end: 2.0, text: " tip".into(), words: Vec::new() }]).unwrap();
+        db.conn.execute("UPDATE segments SET speaker = 'Marlowe' WHERE vod_id = ?1", [vod]).unwrap();
+        let chat = [event(1.0, "tip", Kind::Tip, Some(100.0), None), event(2.0, "hi", Kind::Message, None, None)];
+        crate::db::insert_chat(&db.conn, vod, &chat).unwrap();
+        let orphan = db.add_realized(vod, 0.0, 5.0).unwrap();
+        db.conn
+            .execute_batch(&format!(
+                "UPDATE segments SET speaker = NULL WHERE vod_id = {orphan};
+                 UPDATE chat SET kind = 'message', amount = NULL WHERE vod_id = {orphan};"
+            ))
+            .unwrap();
+        db.delete_vod(vod).unwrap();
+        let lines: Vec<_> =
+            db.lines(orphan).unwrap().into_iter().map(|l| (l.start, l.end, l.text, l.speaker)).collect();
+        let chat: Vec<_> =
+            db.chat(orphan).unwrap().into_iter().map(|m| (m.time, m.author, m.kind, m.amount, m.parts)).collect();
+        (orphan, lines, chat)
+    };
+    assert_eq!((lines.len(), chat.len()), (1, 2));
+    back_to(&path, 35);
+    let db = upgraded(&path);
+    let after: Vec<_> = db.lines(orphan).unwrap().into_iter().map(|l| (l.start, l.end, l.text, l.speaker)).collect();
+    assert_eq!(after, lines);
+    let after: Vec<_> =
+        db.chat(orphan).unwrap().into_iter().map(|m| (m.time, m.author, m.kind, m.amount, m.parts)).collect();
+    assert_eq!(after, chat);
 }
 
 /// Spec 49: a VOD from before channel logins has none: "Null for a VOD
 /// added before: unknown" (db.rs:779, `MIGRATE_V37`; 0.7.2 Fixes: "Every
 /// Twitch channel shows its picture.").
 #[test]
-fn a_channels_login_is_kept_and_vods_from_before_have_none() {
-    let dir = crate::TempDir::new("migrate-v36");
-    let path = dir.join("library.sqlite");
+fn a_vod_from_before_channel_logins_has_none() {
+    let (_dir, path) = library("migrate-v37");
     let before = {
         let db = Db::open(&path).unwrap();
         let info =
@@ -313,10 +737,8 @@ fn a_channels_login_is_kept_and_vods_from_before_have_none() {
         db.add_vod(&info).unwrap().0.id
     };
     // Back to version 36: the column 37 adds, gone.
-    crate::testkit::back_to(&path, 36);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 36);
+    let db = upgraded(&path);
     assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
     let info = VodInfo {
         platform: "twitch".into(),
@@ -335,46 +757,143 @@ fn a_channels_login_is_kept_and_vods_from_before_have_none() {
     assert_eq!(json["channel_login"], "marlowe");
 }
 
-/// Spec 52: a VOD from before channel pages has its page filled from its
-/// info where kept: "Null for a VOD added before, filled from its info where
-/// that is still kept (`pipeline::fill_channels`)" (db.rs:789,
-/// `MIGRATE_V40`; 0.7.2: "Names open a streamer card.", "The channel over
-/// the player links to its page on every site").
+/// Spec 50: V38 keeps "the contexts an import names … Null for an import
+/// from before: none known" (db.rs:785, which sits on `MIGRATE_V40`'s
+/// constant: disagreement D2).
 #[test]
-fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
-    let root = crate::TempDir::new("channel-page");
-    let path = root.join("library.sqlite");
-    let before = {
+fn an_import_from_before_contexts_names_none() {
+    let (_dir, path) = library("migrate-v38");
+    let vod = {
         let db = Db::open(&path).unwrap();
-        db.add_vod(&VodInfo { platform: "dailymotion".into(), ..crate::edits::tests::info("old") }).unwrap().0.id
+        let mut file = crate::annotations::tests::file("youtube", "abcdefghijk");
+        file.contexts = vec!["gaming".into()];
+        let (vod, _) = db.import_annotations(&file, None).unwrap();
+        assert_eq!(db.vod_annotations(vod.id).unwrap().unwrap().contexts, ["gaming"]);
+        vod.id
     };
-    // Back to version 39: the column 40 adds, gone.
-    crate::testkit::back_to(&path, 39);
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
-    assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
-    let page = "https://www.dailymotion.com/quill";
-    let info =
-        VodInfo { platform: "dailymotion".into(), channel_url: Some(page.into()), ..crate::edits::tests::info("new") };
-    let (added, _) = db.add_vod(&info).unwrap();
-    assert_eq!(added.info.channel_url.as_deref(), Some(page));
+    // Back to version 37: the column 38 adds, gone.
+    back_to(&path, 37);
+    let db = upgraded(&path);
+    let kept = db.vod_annotations(vod).unwrap().unwrap();
+    assert_eq!((kept.contexts.len(), kept.cast.len()), (0, 1), "no contexts; the cast it had");
+}
+
+/// Spec 51, the first open: "The old columns still get the full path
+/// written beside the extension, for 0.7.1 … and `library::settle` moves
+/// what they record that isn't where it's built" (db.rs:834,
+/// `MIGRATE_BUILT_PATHS`; plans/0.7.2.md line 26): the upgrade moves no
+/// file, and settle then finds it where it was recorded. (A second open
+/// moving nothing is crates/core/tests/race_settle_mid_session.rs
+/// `a_second_connection_moves_no_file_a_job_has`.)
+#[test]
+fn files_recorded_by_path_keep_their_paths_till_settle_moves_them() {
+    let (_dir, paths) = library_in("migrate-v39");
+    let vod = {
+        let db = Db::open_in(&paths).unwrap();
+        db.add_vod(&info("kept")).unwrap().0.id
+    };
+    // As 0.7.1 recorded a kept video: its path, in the library's folder for them.
+    let video = paths.media().join("A talk [000001].mp4");
+    std::fs::create_dir_all(paths.media()).unwrap();
+    std::fs::write(&video, b"video").unwrap();
+    back_to(&paths.db(), 38)
+        .execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![vod, video.to_string_lossy()])
+        .unwrap();
+    let db = upgraded_in(&paths);
+    let built = paths.source_video(vod, "mp4");
+    assert_eq!(std::fs::read(&video).unwrap(), b"video", "where it was recorded");
+    assert!(!built.exists(), "not moved by the upgrade");
+    crate::library::settle(&db).unwrap();
+    assert_eq!(db.media_path(vod).unwrap(), Some(shown(&built)));
+    assert_eq!(std::fs::read(&built).unwrap(), b"video");
+}
+
+/// Spec 52: V40 keeps the channel's page; "Null for a VOD added before,
+/// filled from its info where that is still kept (`pipeline::fill_channels`)"
+/// (db.rs:789, `MIGRATE_V40`; 0.7.2: "Names open a streamer card.", "The
+/// channel over the player links to its page on every site"): only the
+/// VOD's own info, only what's missing.
+#[test]
+fn a_vod_from_before_channel_pages_has_its_page_filled_from_its_info_where_kept() {
+    let (_dir, paths) = library_in("migrate-v40");
+    let [kept, other, none] = {
+        let db = Db::open_in(&paths).unwrap();
+        ["kept", "other", "none"].map(|id| db.add_vod(&info(id)).unwrap().0.id)
+    };
+    // Back to version 39: the column 40 adds, gone. Two VODs' info still kept, one of another video.
+    back_to(&paths.db(), 39);
+    let info_of = |id: &str| {
+        serde_json::json!({
+            "extractor_key": "Youtube", "id": id, "webpage_url": format!("https://www.youtube.com/watch?v={id}"),
+            "title": "t", "channel": "Quill", "uploader": "Quill", "uploader_id": "@quill",
+            "uploader_url": "https://www.youtube.com/@quill"
+        })
+    };
+    std::fs::create_dir_all(paths.work()).unwrap();
+    std::fs::write(paths.source_info(kept), info_of("kept").to_string()).unwrap();
+    std::fs::write(paths.source_info(other), info_of("not-this-one").to_string()).unwrap();
+    let db = upgraded_in(&paths);
+    assert!(db.vods().unwrap().iter().all(|v| v.info.channel_url.is_none()), "none known from before");
+
+    crate::pipeline::fill_channels(&db, &paths, &db.vods().unwrap());
+    let channel = |id| {
+        let info = db.vod(id).unwrap().unwrap().info;
+        (info.channel_login, info.channel_url)
+    };
+    assert_eq!(channel(kept), (Some("@quill".into()), Some("https://www.youtube.com/@quill".into())));
+    assert_eq!(channel(other), (None, None), "another video's info");
+    assert_eq!(channel(none), (None, None), "nothing kept, nothing known");
+
+    // One added since keeps its own page; what's there stays.
+    let page = "https://www.youtube.com/@own";
+    let (added, _) = db.add_vod(&VodInfo { channel_url: Some(page.into()), ..info("added") }).unwrap();
+    std::fs::write(paths.source_info(added.id), info_of("added").to_string()).unwrap();
+    crate::pipeline::fill_channels(&db, &paths, &db.vods().unwrap());
+    assert_eq!(channel(added.id), (Some("@quill".into()), Some(page.into())), "only the login was missing");
     let json = serde_json::to_value(db.vod(added.id).unwrap().unwrap()).unwrap();
     assert_eq!(json["channel_url"], page);
-    // Filled in where there's none; what's there stays.
-    db.fill_channel(before, Some("x2"), Some("https://www.dailymotion.com/x2")).unwrap();
-    db.fill_channel(added.id, Some("other"), Some("https://www.dailymotion.com/other")).unwrap();
-    let old = db.vod(before).unwrap().unwrap().info;
-    assert_eq!(
-        (old.channel_login.as_deref(), old.channel_url.as_deref()),
-        (Some("x2"), Some("https://www.dailymotion.com/x2"))
-    );
-    let new = db.vod(added.id).unwrap().unwrap().info;
-    assert_eq!(
-        (new.channel_login, new.channel_url.as_deref()),
-        (Some("other".into()), Some(page)),
-        "only the login was missing"
-    );
+}
+
+/// Spec 53: V41 keeps the codec and quality a clip's (or edit's) file was
+/// made with; "Null for a file made before: known only by its extension"
+/// (db.rs:801, `MIGRATE_V41`; 0.7.2: "Clips come in more formats."): such a
+/// file reads as its format was made then (settings.rs:280, "the format's
+/// codec, H.264 at CRF 18 or DNxHR LB"), so it's made again only when the
+/// codec or quality chosen now isn't that.
+#[test]
+fn a_clip_made_before_encodings_were_recorded_reads_as_its_format_was_made_then() {
+    use crate::settings::{ClipCodec, ClipFormat, ClipQuality, Settings};
+    let (_dir, path) = library("migrate-v41");
+    let (clip, edit) = {
+        let db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("a")).unwrap().0.id;
+        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap().id;
+        let file = shown(&db.files().clip_file(clip, "mp4"));
+        db.set_clip_file(clip, 1.0, 2.0, ClipStatus::Ready, Some(&file), None).unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 10.0), "a", None).unwrap();
+        (clip, edit)
+    };
+    // Back to version 40, the edit rendered as a MOV as that version recorded it.
+    let edit_file = shown(&crate::Paths::new(path.parent().unwrap()).clip_file(edit, "mov"));
+    back_to(&path, 40)
+        .execute(
+            "UPDATE renders SET status = 'ready', file_ext = 'mov', file_path = ?2,
+                 revision = (SELECT revision FROM clips WHERE id = ?1) WHERE clip_id = ?1",
+            params![edit, edit_file],
+        )
+        .unwrap();
+    let db = upgraded(&path);
+    let then = |clip_format| Settings { clip_format, ..Settings::default() }.clip_encoding();
+    let made = db.clip(clip).unwrap().unwrap();
+    assert_eq!(made.encoding, None, "not known");
+    let file = made.file_path.unwrap();
+    assert!(crate::clips::made_as(Path::new(&file), made.encoding, then(ClipFormat::Mp4)));
+    let h265 = ClipEncoding { codec: ClipCodec::H265, quality: ClipQuality::Standard };
+    assert!(!crate::clips::made_as(Path::new(&file), made.encoding, h265), "made again in another codec");
+    assert!(db.edit(edit, then(ClipFormat::Mov)).unwrap().unwrap().current);
+    let prores = ClipEncoding { codec: ClipCodec::Prores, quality: ClipQuality::Standard };
+    assert!(!db.edit(edit, prores).unwrap().unwrap().current, "made again in another codec");
 }
 
 /// Spec 54: an upgraded library never gives a deleted clip's id again: "a
@@ -385,11 +904,10 @@ fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
 /// clip."). Edits and pasted clips are clips too. A library from before
 /// upgrades with all it had, as it had it.
 #[test]
-fn clip_ids_are_never_reused() {
+fn an_upgraded_library_never_gives_a_deleted_clips_id_again() {
     use crate::clipboard::Paste;
     use crate::edits::Put;
-    let dir = crate::TempDir::new("clip-ids");
-    let path = dir.join("library.sqlite");
+    let (_dir, path) = library("migrate-v42");
     // Every row of the tables that hold clips and what's theirs.
     let rows = |conn: &Connection| -> Vec<Vec<rusqlite::types::Value>> {
         let mut all = Vec::new();
@@ -413,8 +931,8 @@ fn clip_ids_are_never_reused() {
         (vod, rows(&db.conn))
     };
     // Back to version 41, before clips kept their ids.
-    crate::testkit::back_to(&path, 41);
-    let db = Db::open(&path).unwrap();
+    back_to(&path, 41);
+    let db = upgraded(&path);
     assert_eq!(rows(&db.conn), before, "upgraded, the same clips, pieces, files and marks");
 
     let a = db.add_clip(vod, 5.0, 6.0, "c", true).unwrap().id;
@@ -437,15 +955,42 @@ fn clip_ids_are_never_reused() {
     assert!(db.add_clip(vod, 7.0, 8.0, "d", true).unwrap().id > older);
 }
 
-/// The stretches' `note` (v27), which nothing ever read or wrote, goes
+/// Spec 55: V43 records which make of a clip its file is; "Null for one made
+/// before, at the path its id alone builds, which it keeps; so nothing is
+/// moved" (db.rs:822, `MIGRATE_V43`; 0.7.3 Fixes: "A file another app took
+/// stays.").
+#[test]
+fn a_clip_made_before_v43_keeps_its_file_where_it_is() {
+    let (_dir, path) = library("migrate-v43");
+    let clip = {
+        let db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("a")).unwrap().0.id;
+        let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap().id;
+        let file = db.files().clip_file(clip, "mp4");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"made before").unwrap();
+        db.set_clip_file(clip, 1.0, 2.0, ClipStatus::Ready, Some(&shown(&file)), None).unwrap();
+        clip
+    };
+    // Back to version 42: which make it is, gone.
+    back_to(&path, 42);
+    let db = upgraded(&path);
+    let file = db.files().clip_file(clip, "mp4");
+    let made = db.clip(clip).unwrap().unwrap();
+    assert_eq!((made.status, made.file_path), (ClipStatus::Ready, Some(shown(&file))));
+    assert_eq!(std::fs::read(&file).unwrap(), b"made before");
+    let files: Vec<_> = std::fs::read_dir(db.files().clips()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(files, [file.file_name().unwrap()], "nothing moved or made");
+}
+
+/// V44: the stretches' `note` (v27), which nothing ever read or wrote, goes
 /// (`MIGRATE_V44`), and a library from before upgrades with every stretch
 /// as it was: done, asked for, paused partway, failed, with its audio
 /// (testing.md, "Order after the pilot" 1: old schema and rows in, the
 /// same data out).
 #[test]
 fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
-    let dir = crate::TempDir::new("stretch-note");
-    let path = dir.join("library.sqlite");
+    let (_dir, path) = library("stretch-note");
     let columns = |conn: &Connection| -> Vec<String> {
         let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('stretches')").unwrap();
         stmt.query_map([], |r| r.get(0)).unwrap().map(|c| c.unwrap()).collect()
@@ -469,81 +1014,211 @@ fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
     };
     assert_eq!(before.len(), 4);
     // Back to version 43, the column there, holding something on one row.
-    crate::testkit::back_to(&path, 43).execute("UPDATE stretches SET note = 'old' WHERE start = 100", []).unwrap();
-    let db = Db::open(&path).unwrap();
-    let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(version, 44);
+    back_to(&path, 43).execute("UPDATE stretches SET note = 'old' WHERE start = 100", []).unwrap();
+    let db = upgraded(&path);
     assert_eq!(db.stretches(vod).unwrap(), before, "upgraded, the same stretches");
     assert_eq!(serde_json::to_value(db.vod(vod).unwrap().unwrap()).unwrap(), shown, "and the VOD shown the same");
     assert!(!columns(&db.conn).contains(&"note".to_string()), "upgraded: {:?}", columns(&db.conn));
 }
 
-/// Spec 47: "Where the VOD it was kept from is still in the library
-/// (keeping a later stretch failed, so the VOD stayed), those come back from
-/// its rows": who speaks each line, and what each chat message is, how much
-/// and when it happened (db.rs:746, `MIGRATE_V36`; 0.7.0 Fixes: "Kept
-/// stretches keep subs, gifts and tips."). Moved here from sources.rs.
-#[test]
-fn stretches_kept_while_their_vod_stays_get_back_their_speakers_and_chat_kinds() {
-    let dir = crate::TempDir::new("migrate-v36");
-    let path = dir.join("library.sqlite");
-    let (vod, kept) = {
-        let mut db = Db::open(&path).unwrap();
-        let vod = db.add_vod(&info("x")).unwrap().0.id;
-        let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
-        let segments = [
-            Segment { start: 9.0, end: 11.0, text: " a".into(), words: vec![word(" a", 10.5, 11.0)] },
-            Segment { start: 11.0, end: 12.0, text: " hi".into(), words: vec![word(" hi", 11.0, 12.0)] },
-        ];
-        db.insert_segments(vod, &segments).unwrap();
-        db.conn.execute("UPDATE segments SET speaker = 'S' || id WHERE vod_id = ?1", [vod]).unwrap();
-        let message = |time: f64, text: &str, kind: Kind, amount: Option<f64>, event_time: Option<f64>| ChatMessage {
-            time,
-            author: "fan".into(),
-            color: None,
-            parts: vec![ChatPart::Text { text: text.into() }],
-            kind,
-            amount,
-            event_time,
-            at: None,
-        };
-        let chat = [
-            message(12.0, "hello", Kind::Message, None, None),
-            message(13.0, "resubbed", Kind::Sub, Some(2.0), Some(12.5)),
-            message(14.0, "gift", Kind::Gift, Some(5.0), None),
-        ];
-        crate::db::insert_chat(&db.conn, vod, &chat).unwrap();
-        // Kept with the copy that left columns out; its VOD stays, as when
-        // keeping the next stretch failed and nothing was removed.
-        let kept = db.add_realized(vod, 10.0, 15.0).unwrap();
-        db.conn
-            .execute_batch(&format!(
-                "UPDATE segments SET speaker = NULL WHERE vod_id = {kept};
-                 UPDATE chat SET kind = 'message', amount = NULL, event_time = NULL WHERE vod_id = {kept};"
-            ))
-            .unwrap();
-        // One whose VOD is gone: nothing to get back.
-        let other = db.add_vod(&info("y")).unwrap().0.id;
-        crate::db::insert_chat(&db.conn, other, &[message(1.0, "tip", Kind::Tip, Some(100.0), None)]).unwrap();
-        let orphan = db.add_realized(other, 0.0, 5.0).unwrap();
-        db.conn.execute("UPDATE chat SET kind = 'message', amount = NULL WHERE vod_id = ?1", [orphan]).unwrap();
-        db.delete_vod(other).unwrap();
-        (vod, kept)
-    };
-    crate::testkit::back_to(&path, 35);
-    let db = Db::open(&path).unwrap();
+/// Spec 56: each library a release left (tests/e2e/fixtures, `Released`)
+/// opens in this version with every row it kept: "the library is at this
+/// version's format, a copy of the old one kept beside it …; the library
+/// lists every VOD, with its transcription …; a word from a transcript and a
+/// chat author (`from:`, in any case) are found by search …; clips, marks
+/// and the edits with their pieces (and group) are there"
+/// (tests/e2e/fixtures/upgrade-matrix.mjs header; e2e keeps only what a
+/// window shows, the edit open in the page). One test per release.
+mod each_released_library_opens_with_every_row_it_kept {
+    use super::*;
 
-    let lines = db.lines(kept).unwrap();
-    let speakers: Vec<Option<String>> = db.lines(vod).unwrap().into_iter().map(|l| l.speaker).collect();
-    assert_eq!(lines.into_iter().map(|l| l.speaker).collect::<Vec<_>>(), speakers);
-    let events = |kind| {
-        db.chat_of_kind(kept, kind)
-            .unwrap()
-            .into_iter()
-            .map(|(_, m)| (m.time, m.amount, m.event_time))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(events(Kind::Sub), [(3.0, Some(2.0), Some(2.5))]);
-    assert_eq!(events(Kind::Gift), [(4.0, Some(5.0), None)]);
-    assert_eq!(events(Kind::Message).len(), 1);
+    /// Release `version`'s library opened in this version, from format
+    /// `from`, a copy of it as it was kept beside it.
+    fn opened(version: &str, from: usize) -> (Released, Db) {
+        let released = Released::new(version);
+        let db = upgraded(&released.library);
+        let copy = released.dir().join(format!("library-v{from}.sqlite"));
+        assert_eq!(format_of(&Connection::open(&copy).unwrap()), from, "{version}: the copy kept from before");
+        (released, db)
+    }
+
+    /// Each VOD's platform, title and status, and whether it's listed.
+    fn vods(db: &Db) -> Vec<(String, String, Status, bool)> {
+        let mut vods: Vec<_> =
+            db.vods().unwrap().into_iter().map(|v| (v.info.platform, v.info.title, v.status, v.listed)).collect();
+        vods.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        vods
+    }
+
+    /// The VOD of `platform`.
+    fn on(db: &Db, platform: &str) -> Vod {
+        db.vods().unwrap().into_iter().find(|v| v.info.platform == platform).unwrap()
+    }
+
+    fn stretches(db: &Db, vod: i64) -> Vec<(f64, Option<f64>, Status, Option<f64>)> {
+        db.stretches(vod).unwrap().into_iter().map(|s| (s.start, s.end, s.status, s.reached)).collect()
+    }
+
+    /// Where its last line ends.
+    fn last_line(db: &Db, vod: i64) -> f64 {
+        db.lines(vod).unwrap().iter().map(|l| l.end).fold(0.0, f64::max)
+    }
+
+    /// The landed file on this computer, as the fixtures name its folder.
+    const LANDED: &str = "{FIXTURES}/eagle-has-landed.mp3";
+
+    /// The library 0.4.0, 0.5.1 and 0.5.2's development left, every kind
+    /// of row each kept (make-matrix-library.mjs), with the Kick VOD's
+    /// transcription as `paused` (its last line's end where `reached` is
+    /// None) and the landing edit's `pieces`, a group's included.
+    fn the_matrix(version: &str, from: usize, paused: &[(f64, Option<f64>, Status, Option<f64>)], pieces: usize) {
+        let (_released, db) = opened(version, from);
+        let done = |platform: &str, title: &str| (platform.into(), title.into(), Status::Done, true);
+        assert_eq!(
+            vods(&db),
+            [
+                ("kick".into(), "Walking the wetland trail".into(), Status::Paused, true),
+                done("local", "eagle-has-landed"),
+                done("twitch", "Speedrunning the old tutorial"),
+                done("youtube", "Building a lighthouse on the cliff"),
+            ]
+        );
+        let [local, youtube, twitch, kick] = ["local", "youtube", "twitch", "kick"].map(|p| on(&db, p));
+        assert_eq!(local.source_path.as_deref(), Some(LANDED), "where it is, as the fixture names it");
+
+        // Every line and message, the transcriptions whole, the paused one as this release's shape becomes.
+        let counts = |vod: &Vod| (db.lines(vod.id).unwrap().len(), db.chat(vod.id).unwrap().len());
+        assert_eq!([&local, &youtube, &twitch, &kick].map(counts), [(1, 0), (6, 6), (4, 4), (5, 0)]);
+        for vod in [&local, &youtube, &twitch] {
+            assert_eq!(stretches(&db, vod.id), [(0.0, None, Status::Done, None)], "{}", vod.info.platform);
+        }
+        let last = last_line(&db, kick.id);
+        let paused: Vec<_> =
+            paused.iter().map(|&(a, b, status, reached)| (a, b, status, reached.or(Some(last)))).collect();
+        assert_eq!(stretches(&db, kick.id), paused);
+        assert_eq!(kick.transcribed, Transcribed::Some);
+        let events = |vod: &Vod, kind| -> Vec<_> {
+            db.chat_of_kind(vod.id, kind).unwrap().into_iter().map(|(_, m)| (m.author, m.amount)).collect()
+        };
+        assert_eq!(events(&youtube, Kind::Gift), [("LoudLarry".into(), Some(5.0))]);
+        assert_eq!(events(&twitch, Kind::Sub), [("Subbed_Sam".into(), Some(1.0))]);
+        assert_eq!(events(&twitch, Kind::Tip), [("BigTipper".into(), Some(5.0))]);
+
+        // Search: a word of the transcript, and a chat author in any case (format 28's index).
+        let search = |query: &str| db.search(query, &SearchFilter::default(), 50).unwrap().hits;
+        let found: Vec<_> = search("lighthouse").into_iter().map(|h| (h.vod_id, h.source)).collect();
+        assert!(found.contains(&(youtube.id, Source::Speech)), "{found:?}");
+        for (typed, wanted) in [("from:nightowl42", 4), ("from:NightOwl42 night", 1)] {
+            let hits = search(typed);
+            let theirs = hits.iter().filter(|h| h.source == Source::Chat && h.author.as_deref() == Some("NightOwl42"));
+            assert_eq!((hits.len(), theirs.count()), (wanted, wanted), "{typed}");
+        }
+        let stone: Vec<_> = search("in:chat stone").into_iter().map(|h| h.author).collect();
+        assert_eq!(stone, [Some("LoudLarry".into())]);
+
+        // Clips, with their ids and files; marks.
+        let clips = |vod: &Vod| -> Vec<_> {
+            db.clips(vod.id).unwrap().into_iter().map(|c| (c.id, c.title, c.status, c.file_path)).collect()
+        };
+        let clip =
+            |id: i64, title: &str| (id, title.into(), ClipStatus::Ready, Some(shown(&db.files().clip_file(id, "mp3"))));
+        assert_eq!(clips(&local), [clip(1, "Houston")]);
+        assert_eq!(clips(&youtube), [clip(2, "Welcome back"), clip(3, "The lamp")]);
+        assert_eq!(clips(&twitch), [clip(4, "Pelican skip")]);
+        assert_eq!(clips(&kick), []);
+        let marks = |vod: &Vod| -> Vec<_> {
+            db.marks(vod.id).unwrap().into_iter().map(|m| (m.kind, m.start, m.text)).collect()
+        };
+        assert_eq!(
+            marks(&youtube),
+            [
+                ("chapter".into(), 0.0, Some("Intro".into())),
+                ("cut".into(), 24.0, None),
+                ("highlight".into(), 40.0, Some("Tower done".into())),
+            ]
+        );
+        assert_eq!(marks(&twitch), [("chapter".into(), 7.0, Some("The skip".into()))]);
+
+        // Edits with their pieces, struck stretches in seconds and the landing's group.
+        let edits = db.edits(crate::edits::tests::at_first()).unwrap();
+        let edit = |title: &str| edits.iter().find(|e| e.title == title).unwrap().id;
+        assert_eq!(edits.len(), 2);
+        let landing = db.edit_pieces(edit("Landing highlights")).unwrap();
+        let stream = db.edit_pieces(edit("Stream highlights")).unwrap();
+        assert_eq!(landing.len(), pieces);
+        assert_eq!(landing.iter().filter(|p| p.group.is_some()).count(), pieces - 3);
+        let piece = |p: &crate::edits::EditPiece| (p.vod_id, p.title.clone(), p.start, p.end, p.struck.clone());
+        assert_eq!(
+            landing[..3].iter().map(piece).collect::<Vec<_>>(),
+            [
+                (local.id, "Houston".into(), 0.9, 2.0, vec![]),
+                (local.id, "Base".into(), 2.2, 4.0, vec![(2.6, 3.0)]),
+                (local.id, "Landed".into(), 4.2, 5.2, vec![]),
+            ]
+        );
+        assert_eq!(
+            stream.iter().map(piece).collect::<Vec<_>>(),
+            [
+                (youtube.id, "Calm wind".into(), 16.0, 24.0, vec![]),
+                (twitch.id, "Pelican".into(), 7.0, 15.0, vec![(10.0, 11.5)]),
+                (kick.id, "Boardwalk".into(), 20.0, 45.0, vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn v0_3_0() {
+        let (_released, db) = opened("0.3.0", 16);
+        assert_eq!(vods(&db), [("local".into(), "eagle-has-landed".into(), Status::Done, true)]);
+        let vod = on(&db, "local");
+        assert_eq!(vod.source_path.as_deref(), Some(LANDED), "where it is, as the fixture names it");
+        assert_eq!(vod.transcribed, Transcribed::All);
+        assert_eq!(stretches(&db, vod.id), [(0.0, None, Status::Done, None)], "transcribed whole, before stretches");
+        let said: Vec<_> = db.lines(vod.id).unwrap().into_iter().map(|l| l.text).collect();
+        assert_eq!(said, ["Swift in uh Tranguelity Base here, the angle has landed."]);
+        assert_eq!(db.search("landed", &SearchFilter::default(), 10).unwrap().hits.len(), 1);
+        assert!(db.clips(vod.id).unwrap().is_empty() && db.edits(crate::edits::tests::at_first()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn v0_4_0() {
+        the_matrix("0.4.0", 21, &[(0.0, None, Status::Paused, None)], 3);
+    }
+
+    #[test]
+    fn v0_5_0() {
+        let (_released, db) = opened("0.5.0", 26);
+        assert_eq!(
+            vods(&db),
+            [
+                ("local".into(), "eagle-has-landed".into(), Status::Done, true),
+                ("local".into(), "landed-10-minutes".into(), Status::Paused, true),
+            ]
+        );
+        let by = |title: &str| db.vods().unwrap().into_iter().find(|v| v.info.title == title).unwrap();
+        let (done, paused) = (by("eagle-has-landed"), by("landed-10-minutes"));
+        assert_eq!(stretches(&db, done.id), [(0.0, None, Status::Done, None)]);
+        assert_eq!(db.lines(paused.id).unwrap().len(), 12, "its lines kept");
+        let last = last_line(&db, paused.id);
+        assert_eq!(stretches(&db, paused.id), [(0.0, None, Status::Paused, Some(last))], "paused at its last line");
+        assert_eq!(
+            (paused.transcribed, paused.source_path.as_deref()),
+            (Transcribed::Some, Some("{SPEECH}/landed-10-minutes.mp3"))
+        );
+    }
+
+    #[test]
+    fn v0_5_1() {
+        the_matrix("0.5.1", 26, &[(0.0, None, Status::Paused, None)], 5);
+    }
+
+    #[test]
+    fn v0_5_2_dev() {
+        the_matrix(
+            "0.5.2-dev",
+            27,
+            &[(0.0, Some(60.0), Status::Done, Some(60.0)), (60.0, Some(120.0), Status::Paused, Some(90.0))],
+            5,
+        );
+    }
 }

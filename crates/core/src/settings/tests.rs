@@ -466,3 +466,54 @@ fn a_clip_encoding_goes_in_the_file_its_codec_does() {
         [ClipFormat::Mp4, ClipFormat::Mp4, ClipFormat::Mov, ClipFormat::Mov]
     );
 }
+
+/// Spec 21: each settings file a release left (tests/e2e/fixtures,
+/// `testkit::Released`) reads in this version with the values it holds:
+/// "the settings kept their values, and have no key bindings"
+/// (tests/e2e/fixtures/upgrade-matrix.mjs header; e2e upgrade.mjs and
+/// upgrade-0.5.0.mjs check the dark theme those two releases left). One test
+/// per release.
+mod every_released_settings_file_reads_with_its_values {
+    use super::*;
+
+    /// Release `version`'s settings file as this version reads it: on the
+    /// CPU, in `theme`, the emote providers in the order `emotes` and each
+    /// off, at `video_height`, making clips as `clip_format`, with no key
+    /// bindings.
+    fn reads(version: &str, theme: Theme, emotes: [&str; 3], video_height: Option<u32>, clip_format: ClipFormat) {
+        let released = crate::testkit::Released::new(version);
+        let settings = Settings::load(&released.settings);
+        let providers: Vec<(&str, bool)> = settings.emote_providers.0.iter().map(|p| (p.id.as_str(), p.on)).collect();
+        assert_eq!(
+            (settings.device, settings.theme, providers, settings.video_height, settings.clip_format),
+            (Device::Cpu, theme, emotes.map(|id| (id, false)).to_vec(), video_height, clip_format),
+            "{version}"
+        );
+        assert!(settings.key_bindings.is_empty(), "{version}: {:?}", settings.key_bindings);
+    }
+
+    #[test]
+    fn v0_3_0() {
+        reads("0.3.0", Theme::Dark, ["7tv", "bttv", "ffz"], None, ClipFormat::Mp4);
+    }
+
+    #[test]
+    fn v0_4_0() {
+        reads("0.4.0", Theme::Light, ["ffz", "7tv", "bttv"], Some(720), ClipFormat::Mov);
+    }
+
+    #[test]
+    fn v0_5_0() {
+        reads("0.5.0", Theme::Dark, ["7tv", "bttv", "ffz"], None, ClipFormat::Mp4);
+    }
+
+    #[test]
+    fn v0_5_1() {
+        reads("0.5.1", Theme::Light, ["ffz", "7tv", "bttv"], Some(720), ClipFormat::Mov);
+    }
+
+    #[test]
+    fn v0_5_2_dev() {
+        reads("0.5.2-dev", Theme::Light, ["ffz", "7tv", "bttv"], Some(720), ClipFormat::Mov);
+    }
+}
