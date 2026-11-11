@@ -359,6 +359,19 @@ export default {
     if (once.length !== 1 || JSON.stringify(done(once)) !== JSON.stringify([[120, 180, "done"]]))
       throw new Error(`after 2:00–3:00 the stretches are ${JSON.stringify(once)}`);
     ctx.log(`2:00–3:00: ${first.length} lines, ${hits.length} "landed", captions only there`);
+    // The player, open since before anything was transcribed, shows them
+    // too: at 2:30 its caption is the cue there.
+    await app.js(`const v = document.querySelector(".player video"); v.pause(); v.currentTime = 150;`);
+    const caption = () => app.js(`return document.querySelector(".player .caption")?.textContent.trim() ?? null`);
+    await until(
+      "the caption at 2:30",
+      async () => {
+        const shown = await caption();
+        if (shown === at(150).text) return true;
+        throw new Error(`at 2:30 the player shows the caption ${JSON.stringify(shown)}, not "${at(150).text}"`);
+      },
+      10_000,
+    );
 
     // The transcript: those lines, with a row before and after them for
     // the parts not transcribed; the captions button now works.

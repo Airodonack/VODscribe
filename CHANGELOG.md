@@ -13,6 +13,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Clips deleted while finishing leave nothing. A clip deleted just as its file was finished kept that file in the library's folder for good.
   - Paused requests show their whole waveform. A request paused or failed after its audio came showed levels only up to where it stopped.
   - Unreadable settings are kept, not overwritten. A settings file that can't be read is set aside beside your library, and VODscribe says so.
+  - Captions show a stretch just transcribed. Captions read just before a stretch finished no longer replace the newer ones.
 
 ## 0.7.3 — 2026-11-08
 

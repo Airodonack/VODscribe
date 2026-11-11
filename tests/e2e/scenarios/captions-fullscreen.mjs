@@ -1,7 +1,8 @@
 // The OS-level layer again (lib/os.mjs). The app's own player draws its
 // captions over the picture, outside the page, so only the screen shows
 // them: C turns them off and on, and the picture's lower part changes with
-// them. F fills the screen with the window; Escape gives it back.
+// them. The video plays before it's transcribed, so its captions are the
+// ones that came after it opened. F fills the screen with the window; Escape gives it back.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -28,9 +29,10 @@ export default {
       ctx.skip(`no screenshot here: ${e.message.split("\n")[0]}`);
     }
     await app.toLibrary();
+    // Opened and played before it has a transcript: its captions come
+    // once it's transcribed, without opening it again.
     const [added] = await app.addFiles([videos(path.join(ctx.out, "fixtures")).video]);
-    const vod = await app.transcribe(added.id);
-    await app.openVod(vod.id);
+    await app.openVod(added.id);
     await app.click('.bar button[aria-label="Play"]');
     await until(
       "it to play",
@@ -40,6 +42,7 @@ export default {
     if (!(await app.js(`return !!document.querySelector(".player .picture")`)))
       ctx.skip("plays in the web view here, which draws its own captions in the page");
     await app.pause();
+    await app.transcribe(added.id);
     // In the speech (one cue over the whole landing), paused: the picture stands.
     await app.toStart();
     await app.key("ArrowRight", { shift: true });

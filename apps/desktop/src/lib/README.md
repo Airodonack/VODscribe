@@ -67,6 +67,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `playerKeys.ts`: the keys both players share, and their legend.
 - `mediaSeek.ts`: seeks that land on WebKitGTK.
 - `media.ts`: the arithmetic of captions, waveforms, frame steps and cuts.
+- `captions.svelte.ts`: each VOD's captions, read once for all its players.
 - `hold.svelte.ts`: a bar button right-clicked or held opens its menu.
 - `TranscribeFrom.svelte`: the Transcribe menu.
 - `Shortcuts.svelte`: a player's keyboard legend.

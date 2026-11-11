@@ -2,7 +2,8 @@
   import ChannelDisc from "./ChannelDisc.svelte";
   import { channelCard, showCard } from "./streamers.svelte";
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, events, type Cue, type Vod } from "./api";
+  import { api, type Vod } from "./api";
+  import { captions } from "./captions.svelte";
   import { ask } from "./ask";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
@@ -258,24 +259,13 @@
   // The transcript's lines as captions, for the captions button (greyed
   // till a part is transcribed) and, where the player doesn't draw them
   // over its picture (a site's own: embed.ts `drawsCaptions`), for the
-  // strip under it. Asked again as the VOD changes: a stretch transcribed
-  // brings its captions.
-  let cues = $state.raw<Cue[]>([]);
+  // strip under it. Read again as the VOD changes (captions.svelte.ts): a
+  // stretch transcribed brings its captions.
+  const watchingCaptions = captions.watch(untrack(() => vod.id));
+  const cues = $derived(captions.of(vod.id));
   // Whether they've been read: until then, whether there are any is told
   // by what of the VOD is transcribed.
-  let cuesRead = $state(false);
-  function fetchCues() {
-    api.captions(vod.id).then(
-      (c) => {
-        if (destroyed) return;
-        cues = c;
-        cuesRead = true;
-      },
-      (e) => console.error("captions", e),
-    );
-  }
-  fetchCues();
-  const changed = events.vod((v) => v.id === vod.id && fetchCues());
+  const cuesRead = $derived(captions.read(vod.id));
 
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
   const reading = new PlayerReading(start);
@@ -564,7 +554,7 @@
   onDestroy(() => {
     destroyed = true;
     clearTimeout(copiedTimer);
-    void changed.then((u) => u());
+    watchingCaptions();
     player?.destroy();
     if (refusedToast !== null) toast.drop(refusedToast);
     // The note asks about this VOD's clip.

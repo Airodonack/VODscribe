@@ -7,8 +7,9 @@
   // these functions over.
 
   import { landingSeeks } from "./mediaSeek";
-  import { onDestroy, onMount } from "svelte";
-  import { api, events, type Cue, type Vod } from "./api";
+  import { onDestroy, onMount, untrack } from "svelte";
+  import { api, type Vod } from "./api";
+  import { captions } from "./captions.svelte";
   import { holdToCarry, stretchCarry } from "./dragout";
   import { DEFAULT_FPS, cueAt, elementSound, stepTime, unplayable } from "./media";
   import { prefs } from "./playerPrefs.svelte";
@@ -35,12 +36,13 @@
   // A file whose type didn't say it's sound alone finds out once loaded.
   let noPicture = $state(false);
   const pictureless = $derived(audio || noPicture);
-  let cues = $state.raw<Cue[]>([]);
   // Until the file's own is known.
   let fps: number | null = null;
   let destroyed = false;
 
-  const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
+  // Read again as the VOD changes (captions.svelte.ts): a stretch transcribed brings its captions.
+  const watchingCaptions = captions.watch(untrack(() => vod.id));
+  const cue = $derived(prefs.captions ? cueAt(captions.of(vod.id), time) : null);
 
   onMount(() => {
     const v = video!;
@@ -54,7 +56,6 @@
     // Through seek: before its metadata is in, a video may drop where it's put.
     seek(start, false);
     if (autoplay) v.play().catch(() => {});
-    fetchCues();
     api.frameRate(vod.id).then(
       (f) => (fps = f),
       (e) => console.error("frame rate", e),
@@ -90,18 +91,9 @@
     }
   }
 
-  // Asked again as the VOD changes: a stretch transcribed brings its captions.
-  function fetchCues() {
-    api.captions(vod.id).then(
-      (c) => !destroyed && (cues = c),
-      (e) => console.error("captions", e),
-    );
-  }
-  const changed = events.vod((v) => v.id === vod.id && fetchCues());
-
   onDestroy(() => {
     destroyed = true;
-    void changed.then((u) => u());
+    watchingCaptions();
     cancelAnimationFrame(frame);
     press.stop();
     // Stop the download too: a <video> removed while loading keeps fetching.

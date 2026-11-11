@@ -22,7 +22,8 @@ import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
 import { invoke } from "@tauri-apps/api/core";
 import Screen from "./Screen.svelte";
-import { api, events, type Cue, type Vod } from "./api";
+import { api, events, type Vod } from "./api";
+import { captions } from "./captions.svelte";
 import * as overlay from "./screenOverlay";
 import { prefs } from "./playerPrefs.svelte";
 import LocalPlayer from "./LocalPlayer.svelte";
@@ -893,16 +894,9 @@ function bridge(
   const own = new OwnStatus();
   // Our captions, drawn over our picture (under their frame, as it is): the
   // cue at the player's time, again whenever it, the box or full screen changes.
-  // Asked again as the VOD changes: a VOD just added gets its transcript
-  // (so its captions) after it opens.
-  let cues: Cue[] = [];
-  const fetchCues = () =>
-    api.captions(vod.id).then(
-      (c) => !stopped && (cues = c),
-      (e) => console.error("captions", e),
-    );
-  void fetchCues();
-  const changed = events.vod((v) => v.id === vod.id && void fetchCues());
+  // Read again as the VOD changes (captions.svelte.ts): a VOD just added gets
+  // its transcript (so its captions) after it opens.
+  const watchingCaptions = captions.watch(vod.id);
   let at = time;
   let drawn = "";
   let controlsCover = 0;
@@ -910,7 +904,7 @@ function bridge(
     if (stopped) return;
     const r = host.getBoundingClientRect();
     const fullscreen = !!host.closest(".fullscreen");
-    const text = prefs.captions && r.width && r.height ? (cueAt(cues, at)?.text ?? null) : null;
+    const text = prefs.captions && r.width && r.height ? (cueAt(captions.of(vod.id), at)?.text ?? null) : null;
     const key = JSON.stringify([text, r.width, r.height, fullscreen, controlsCover]);
     if (key === drawn) return;
     drawn = key;
@@ -939,7 +933,7 @@ function bridge(
     overlay.show(null);
     window.removeEventListener("message", listener);
     void told.then((unlisten) => unlisten());
-    void changed.then((unlisten) => unlisten());
+    watchingCaptions();
     unmount(screen);
     host.remove();
     // Only this session's: a later VOD's is left be.

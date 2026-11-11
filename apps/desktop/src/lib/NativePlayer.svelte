@@ -8,7 +8,8 @@
   // (screenOverlay.ts): nothing of the page can draw over it.
 
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, events, type Cue, type Vod } from "./api";
+  import { api, type Vod } from "./api";
+  import { captions } from "./captions.svelte";
   import { holdToCarry, stretchCarry } from "./dragout";
   import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
@@ -35,7 +36,6 @@
   const now = () => driver.time();
 
   let time = $state(untrack(() => start));
-  let cues = $state.raw<Cue[]>([]);
   let destroyed = false;
   /** Whether it's open and has shown a frame: till then the VOD's library
    *  picture stands in the box, rather than the screen's black. */
@@ -45,7 +45,9 @@
    *  question (milliseconds): one takes some 30 ms otherwise. */
   const ASKING_AFTER = 1000;
 
-  const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
+  // Read again as the VOD changes (captions.svelte.ts): a stretch transcribed brings its captions.
+  const watchingCaptions = captions.watch(untrack(() => vod.id));
+  const cue = $derived(prefs.captions ? cueAt(captions.of(vod.id), time) : null);
 
   /** The folder of the file, if it's one macOS asks the person's leave to
    *  read (Downloads, Desktop, Documents) the first time the app opens a file
@@ -105,18 +107,8 @@
         if (!destroyed) onerror?.(String(e));
       },
     );
-    fetchCues();
     follow();
   });
-
-  // Asked again as the VOD changes: a stretch transcribed brings its captions.
-  function fetchCues() {
-    api.captions(vod.id).then(
-      (c) => !destroyed && (cues = c),
-      (e) => console.error("captions", e),
-    );
-  }
-  const changed = events.vod((v) => v.id === vod.id && fetchCues());
 
   // The position, for the captions: smoothly while playing.
   let frame = 0;
@@ -131,7 +123,7 @@
   onDestroy(() => {
     destroyed = true;
     clearTimeout(askingSoon);
-    void changed.then((u) => u());
+    watchingCaptions();
     cancelAnimationFrame(frame);
     press.stop();
     api.setScreenOverlay(null).catch(() => {});
