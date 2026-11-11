@@ -335,9 +335,13 @@ fn decode_video(run: &mut Run, first: &Media, seek: f64) -> i32 {
         .unwrap_or((video.width, video.height));
     let fps = run.after("-r").and_then(|r| r.parse::<f64>().ok()).unwrap_or(video.fps);
     // The frame showing at the time sought; after a trim, the first at or after it.
+    // The app writes `-ss` to the microsecond, so a frame's own time (307/30
+    // is 10.233333) can fall a little short of it: ffmpeg starts on that
+    // frame still, as its times are the stream's ticks, so a few
+    // microseconds short count as on it.
     let from = match filter("trim=start=") {
         Some(trim) => ((seek + number(Some(&trim))) * fps - 1e-6).ceil(),
-        None => (seek * fps + 1e-6).floor(),
+        None => (seek * fps + fps * 1e-5).floor(),
     };
     let frames = (first.duration * fps - 1e-6).ceil();
     for n in from.max(0.0) as u64..frames.max(0.0) as u64 {

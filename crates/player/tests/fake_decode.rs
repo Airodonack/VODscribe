@@ -71,6 +71,12 @@ fn frames_are_the_files_from_the_time_asked(ffmpeg: &Path, file: &Path) {
         assert!((frame.pts - n as f64 / 30.0).abs() < 1e-9, "{} for frame {n}", frame.pts);
     }
     drop(stream);
+    // From a frame's own time that `-ss` writes a little short of it (67/30
+    // as 2.233333) or past it (62/30 as 2.066667): that frame.
+    for n in [62u64, 67] {
+        let first = video.from(n as f64 / 30.0).unwrap().recv().expect("a frame");
+        assert_eq!(media::frame_number(&first.yuv, 64, 36, 0), Some(n), "from frame {n}'s time");
+    }
     // Near the end: the last three frames, then nothing.
     let mut end = video.from(9.9).unwrap();
     let numbers: Vec<u64> =
