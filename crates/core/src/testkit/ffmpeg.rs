@@ -11,11 +11,20 @@
 //! there from the run's start, as ffmpeg's is, but isn't media till the
 //! run's end; what it's made with (`-crf`, `-profile:v`, `-pix_fmt`,
 //! `-tag:v`) is kept in it. It keeps what each run was asked (`runs`).
+//!
+//! It decodes too, as the player and the storyboards ask (crates/player
+//! decode.rs, storyboard.rs): raw frames of the size and rate asked from the
+//! time asked to the file's end, each frame saying its number
+//! (`media::numbered_frame`); the sound as silence, at the rate asked; and a
+//! storyboard's keyframes, one each second of the file, as pictures naming
+//! their time (`media::storyboard_time`). These go as fast as the app reads
+//! them, and the failures and holds asked for (`fails_at`, `holds_at`) are
+//! for the files it makes, not these.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::media::{Media, Video};
+use super::media::{self, Media, Video};
 use super::tools::{self, Fake, Gate, Run};
 
 /// The fake ffmpeg at a path, faked until it's dropped.
@@ -211,6 +220,18 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     let picture = !run.has("-vn") && wants("v") && first.video.is_some();
     let sound = wants("a") && first.audio.is_some();
 
+    // Decoded, for the player (decode.rs) and the storyboards.
+    let to_pipe = last == "pipe:1";
+    match run.after("-f").as_deref() {
+        Some("rawvideo") if to_pipe && picture => return decode_video(run, first, inputs[0].seek),
+        Some("s16le") if to_pipe && sound => return decode_sound(run, first, inputs[0].seek),
+        Some("image2pipe") if to_pipe && run.has("-filter_complex") && first.video.is_some() => {
+            let seeks: Vec<f64> = inputs.iter().map(|i| i.seek).collect();
+            return storyboard(run, first, &seeks);
+        }
+        _ => {}
+    }
+
     // A still: a JPEG to stdout, or one frame as a PNG.
     if run.after("-frames:v").as_deref() == Some("1") {
         if first.video.is_none() {
@@ -295,6 +316,102 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     if progress {
         run.out(&format!("out_time_us={}\nprogress=end\n", us(1.0)));
     }
+    0
+}
+
+/// `first`'s frames from `seek`, as the player's decoder asks (`-f rawvideo
+/// -pix_fmt yuv420p`): each scaled to the size its `-vf` scales to, at the
+/// rate `-r` says, from the one showing at `seek` (or, where the filters
+/// begin with a `trim`, the first from there on) to the file's end.
+fn decode_video(run: &mut Run, first: &Media, seek: f64) -> i32 {
+    let video = first.video.as_ref().expect("a picture, as mapped");
+    let filters = run.after("-vf").unwrap_or_default();
+    let filter = |name: &str| filters.split(',').find_map(|f| f.strip_prefix(name)).map(str::to_string);
+    let (width, height) = filter("scale=")
+        .and_then(|s| {
+            let mut sides = s.split(':').map(|n| n.parse::<u32>().ok());
+            Some((sides.next()??, sides.next()??))
+        })
+        .unwrap_or((video.width, video.height));
+    let fps = run.after("-r").and_then(|r| r.parse::<f64>().ok()).unwrap_or(video.fps);
+    // The frame showing at the time sought; after a trim, the first at or after it.
+    let from = match filter("trim=start=") {
+        Some(trim) => ((seek + number(Some(&trim))) * fps - 1e-6).ceil(),
+        None => (seek * fps + 1e-6).floor(),
+    };
+    let frames = (first.duration * fps - 1e-6).ceil();
+    for n in from.max(0.0) as u64..frames.max(0.0) as u64 {
+        if run.stopped() {
+            return 255;
+        }
+        run.out_bytes(&media::numbered_frame(n, width, height));
+    }
+    0
+}
+
+/// `first`'s sound from `seek`, as the player's decoder asks (`-f s16le -ac 2
+/// -ar <rate>`, and an `atempo` chain to play it faster or slower): silence,
+/// as many stereo samples as that much of the file takes at that speed.
+fn decode_sound(run: &mut Run, first: &Media, seek: f64) -> i32 {
+    let rate = run.after("-ar").and_then(|r| r.parse::<f64>().ok()).unwrap_or(48_000.0);
+    let speed: f64 = run
+        .after("-af")
+        .map_or(1.0, |chain| chain.split(',').filter_map(|f| f.strip_prefix("atempo=")?.parse::<f64>().ok()).product());
+    let mut left = (((first.duration - seek).max(0.0) / speed * rate).round() as usize) * 4;
+    let chunk = [0u8; 4096];
+    while left > 0 {
+        if run.stopped() {
+            return 255;
+        }
+        let n = left.min(chunk.len());
+        run.out_bytes(&chunk[..n]);
+        left -= n;
+    }
+    0
+}
+
+/// A storyboard's batch (storyboard.rs `grab`): each input sought to a
+/// slot's time gives the keyframe at or before it (one each whole second of
+/// the file), told by `showinfo` on stderr as the time from where that
+/// input was sought, and its picture to stdout, in order of input. An MPEG-TS
+/// file's inputs are sought earlier and their frames up to the slot's time
+/// shown (its `trim=end=` in the graph), the last of them taken; with no
+/// keyframe between, or past the file's end, the input gives none.
+fn storyboard(run: &mut Run, first: &Media, seeks: &[f64]) -> i32 {
+    let graph = run.after("-filter_complex").unwrap_or_default();
+    let late = graph.contains("reverse");
+    let filters = if late { 6 } else { 4 };
+    // Each input's part of the graph, `[k:v:0]…[vk];`, in order.
+    let parts: Vec<&str> = graph.split(';').collect();
+    let mut said = String::new();
+    let mut out = Vec::new();
+    for (k, &seek) in seeks.iter().enumerate() {
+        let part = parts.get(k).copied().unwrap_or_default();
+        let scale = part.split(',').find_map(|f| f.strip_prefix("scale=")).unwrap_or_default();
+        let mut sides = scale.split(':').map(|n| n.parse::<u32>().unwrap_or(0));
+        let (width, height) = (sides.next().unwrap_or(0), sides.next().unwrap_or(0));
+        // The keyframes it shows: the one it lands on, or (sought earlier)
+        // each up to the slot's time.
+        let keyframes: Vec<f64> = if late {
+            let until = part
+                .split(',')
+                .find_map(|f| f.split_once("trim=end=").map(|(_, n)| n.parse::<f64>().unwrap_or(0.0)))
+                .unwrap_or(0.0);
+            let (a, b) = (seek.ceil() as u64, (seek + until).floor() as u64);
+            (a..=b).map(|s| s as f64).filter(|&s| s <= seek + until).collect()
+        } else {
+            vec![(seek + 1e-6).floor()]
+        };
+        let keyframes: Vec<f64> = keyframes.into_iter().filter(|&s| s < first.duration).collect();
+        let Some(&shown) = keyframes.last() else { continue };
+        let n = filters * k + 1;
+        for (i, &pts) in keyframes.iter().enumerate() {
+            said += &format!("[Parsed_showinfo_{n} @ 0x0] n:{i:4} pts:{:7} pts_time:{} duration:1\n", 0, pts - seek);
+        }
+        out.extend(media::storyboard_jpeg(shown, width, height));
+    }
+    run.err(&said);
+    run.out_bytes(&out);
     0
 }
 

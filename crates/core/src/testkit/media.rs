@@ -3,6 +3,11 @@
 //! what it was cut from, so a test can ask of a clip's file what it would of
 //! a video, without decoding one. Real ffmpeg can't read them, and the
 //! fakes read nothing else.
+//!
+//! Decoded (the player's decoders, its storyboards), a fake video's frames
+//! say which they are: frame `n` is grey, its top half's shade and its
+//! bottom half's telling `n` (`numbered_frame`, `frame_number`), and a
+//! storyboard's picture names its time (`storyboard_time`).
 
 use std::path::Path;
 
@@ -123,4 +128,68 @@ impl Media {
         }
         text + "At least one output file must be specified\n"
     }
+}
+
+/// Shades a fake frame's halves take: video's luma, 16 to 234.
+const SHADES: u64 = 219;
+
+/// Frame `n` of a fake video, `width` by `height`, as the fake ffmpeg
+/// decodes it to planar YUV 4:2:0 (the Y plane, then the Cb and Cr planes):
+/// grey, its top half's shade `n / 219` (mod 219) and its bottom half's
+/// `n % 219`, in video's range (16 is black).
+pub fn numbered_frame(n: u64, width: u32, height: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+    let (top, bottom) = (16 + (n / SHADES % SHADES) as u8, 16 + (n % SHADES) as u8);
+    let mut yuv = Vec::with_capacity(w * h + 2 * cw * ch);
+    yuv.resize(w * (h / 2), top);
+    yuv.resize(w * h, bottom);
+    yuv.resize(w * h + 2 * cw * ch, 128);
+    yuv
+}
+
+/// The number of the fake frame (`numbered_frame`) whose pixels are `pixels`,
+/// `width` by `height`: YUV 4:2:0 as decoded (`channels` 0), or RGB as the
+/// player turns it (`channels` 3, or 4 for RGBA), scaled or not. Read at the
+/// middle of each half; None if it's no fake frame there (not grey, or a
+/// shade out of range).
+pub fn frame_number(pixels: &[u8], width: u32, height: u32, channels: usize) -> Option<u64> {
+    let (w, h) = (width as usize, height as usize);
+    let shade = |row: usize| -> Option<u64> {
+        let at = row * w + w / 2;
+        let luma = if channels == 0 {
+            *pixels.get(at)?
+        } else {
+            let px = pixels.get(at * channels..at * channels + 3)?;
+            if px[0].abs_diff(px[1]) > 1 || px[1].abs_diff(px[2]) > 1 {
+                return None;
+            }
+            // The player's video range to RGB, undone: 16 to 235 spread to 0 to 255.
+            (px[1] as f64 * 219.0 / 255.0 + 16.0).round() as u8
+        };
+        (16..16 + SHADES as u8).contains(&luma).then(|| (luma - 16) as u64)
+    };
+    Some(shade(h / 4)? * SHADES + shade(h * 3 / 4)?)
+}
+
+/// The picture a fake storyboard frame is (the fake ffmpeg's JPEG of its
+/// keyframe at `pts` seconds, `width` by `height`): a JPEG's start and end
+/// markers around a comment naming them.
+pub(crate) fn storyboard_jpeg(pts: f64, width: u32, height: u32) -> Vec<u8> {
+    let said = format!("{STORYBOARD}{pts} {width}x{height}");
+    let mut jpeg = vec![0xff, 0xd8, 0xff, 0xfe];
+    jpeg.extend_from_slice(&(said.len() as u16 + 2).to_be_bytes());
+    jpeg.extend_from_slice(said.as_bytes());
+    jpeg.extend_from_slice(&[0xff, 0xd9]);
+    jpeg
+}
+
+/// How a fake storyboard picture's comment begins.
+const STORYBOARD: &str = "FAKE FRAME at ";
+
+/// The time in its file of the keyframe a fake storyboard picture shows
+/// (`storyboard_jpeg`); None if it's no fake one.
+pub fn storyboard_time(jpeg: &[u8]) -> Option<f64> {
+    let text = std::str::from_utf8(jpeg.get(6..jpeg.len().checked_sub(2)?)?).ok()?;
+    text.strip_prefix(STORYBOARD)?.split(' ').next()?.parse().ok()
 }

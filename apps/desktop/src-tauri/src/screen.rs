@@ -39,8 +39,12 @@ pub(crate) fn attach(app: &AppHandle, window: &crate::WebviewWindow) -> anyhow::
     Ok(())
 }
 
-/// Whether the window has a screen.
+/// Whether the window has a screen. In a test, whether the test gave it one
+/// (`TestApp::with_screen`): the mock runtime's window has none.
 pub(crate) fn attached(app: &AppHandle) -> bool {
+    #[cfg(test)]
+    return crate::testkit::screen(app).attached();
+    #[cfg(not(test))]
     app.state::<Screen>().0.lock().unwrap().is_some()
 }
 
@@ -50,6 +54,9 @@ pub(crate) fn attached(app: &AppHandle) -> bool {
 /// driver's teardown as the program exits) crashed NVIDIA's driver on quit
 /// while playing. Waits out a paint under way; none comes after.
 pub(crate) fn close(app: &AppHandle) {
+    #[cfg(test)]
+    return crate::testkit::screen(app).close();
+    #[cfg(not(test))]
     if let Some(screen) = app.try_state::<Screen>()
         && let Some(screen) = screen.0.lock().unwrap().as_ref()
     {
@@ -57,8 +64,12 @@ pub(crate) fn close(app: &AppHandle) {
     }
 }
 
-/// Shows `frame` on the screen (none: black), if there is one.
+/// Shows `frame` on the screen (none: black), if there is one. In a test,
+/// the test's screen keeps it (`TestApp::screen`).
 pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_player::decode::Frame>>) {
+    #[cfg(test)]
+    return crate::testkit::screen(app).show(frame);
+    #[cfg(not(test))]
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.show(frame);
     }

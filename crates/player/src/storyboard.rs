@@ -458,16 +458,31 @@ fn grab(ffmpeg: &Path, source: &Path, layout: Layout, times: &[f64]) -> Result<V
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = cmd.spawn().with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
-    let _tracked = tools::track(&child);
-    let out = child.wait_with_output()?;
-    if !out.status.success() {
-        let said = String::from_utf8_lossy(&out.stderr);
+    // Through `tools::spawn`, so a test's fake ffmpeg answers in a test build.
+    let mut child = tools::spawn(&mut cmd).with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
+    let _tracked = child.track();
+    // Its errors read beside its output, as `wait_with_output` reads them,
+    // as bytes: what isn't UTF-8 is replaced, not the whole of it lost.
+    let stderr = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            bytes
+        })
+    });
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        pipe.read_to_end(&mut stdout)?;
+    }
+    let status = child.wait()?;
+    let stderr = stderr.map(|t| t.join().unwrap_or_default()).unwrap_or_default();
+    let said = String::from_utf8_lossy(&stderr);
+    if !status.success() {
         let last = said.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
         bail!("ffmpeg couldn't read its frames: {last}");
     }
-    let shown = showinfo(&String::from_utf8_lossy(&out.stderr), &seeks, filters(late));
-    let jpegs = split_jpegs(&out.stdout);
+    let shown = showinfo(&said, &seeks, filters(late));
+    let jpegs = split_jpegs(&stdout);
     let found: Vec<usize> = (0..times.len()).filter(|&i| shown[i].is_some()).collect();
     if found.len() != jpegs.len() {
         bail!("ffmpeg gave {} frames for {} found", jpegs.len(), found.len());

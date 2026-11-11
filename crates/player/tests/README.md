@@ -1,6 +1,6 @@
 # vodscribe-player tests
 
-Each test makes its videos with ffmpeg and reads back what the compositor drew. They skip without ffmpeg on `PATH`, unless `VODSCRIBE_TESTS_NEED_ALL` is set, as on CI.
+Each test makes its videos with ffmpeg and reads back what the compositor drew, but `fake_decode.rs`, which checks the test kit's fake ffmpeg against the real one. Without ffmpeg on `PATH` they skip what needs it, unless `VODSCRIBE_TESTS_NEED_ALL` is set, as on CI.
 
 - `frames.rs`: seeks and steps land on exactly the frame asked for.
 - `colours.rs`: every common kind of YUV and RGB comes out the right colour.
@@ -14,4 +14,5 @@ Each test makes its videos with ffmpeg and reads back what the compositor drew. 
 - `sound_idle.rs`: the sound output stream stops while paused and starts again on Play.
 - `sound_loss.rs`: the sound output going away while playing; run by hand with `VODSCRIBE_SOUND_OFF` and `VODSCRIBE_SOUND_ON`.
 - `empty.rs`: an edit with no pieces plays nothing and doesn't spin.
+- `fake_decode.rs`: the test kit's fake ffmpeg decodes frames, sound and storyboards as the real one does.
 - `diagnosis.rs`: what the player reports of itself for a stall.

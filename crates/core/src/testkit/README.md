@@ -3,10 +3,10 @@
 Fakes for what's outside the app, and helpers to set up a library, so a unit or integration test does no slow I/O and decides the order things happen in. The app's own kit, `apps/desktop/src-tauri/src/testkit.rs`, runs the whole app on them.
 
 - `tools.rs`: programs faked in this process, keyed by their path, and `Gate`, a point a fake waits at.
-- `ffmpeg.rs`: a fake ffmpeg: details, cuts and renders with progress, stills, and its failures.
+- `ffmpeg.rs`: a fake ffmpeg: details, cuts and renders with progress, stills, the player's and the storyboards' decoding, and its failures.
 - `yt_dlp.rs`: a fake yt-dlp: a VOD's details and its downloads, as the site serves them.
 - `worker.rs`: a fake transcription worker: the words it's told are said.
-- `media.rs`: the fake media files the fakes write and read.
+- `media.rs`: the fake media files the fakes write and read, and the frames they decode.
 - `net.rs`: recorded answers for links.
 - `library.rs`: a library in a folder of its own, and VODs and words put in it.
 - `tests.rs`: the kit's own tests, each fake beside the real program where it's installed.
@@ -49,7 +49,7 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `add_video_file`, `add_file` and `add_site_vod` add VODs; the fake site serves a site's VOD.
 - `make_clip` makes a clip and waits for its file; `add_clip` only asks for it, and `made` waits.
 - `clips`, `clip` and `db` tell what the library has.
-- `invoke("cancel_job", json!({ "kind": "clip", "id": id }))` calls a command as the page does, with its arguments in camelCase. Call the command's Rust function through `app.run(...)` when the test needs its typed answer.
+- `invoke("cancel_job", json!({ "kind": "clip", "id": id }))` calls a command as the page does, with its arguments in camelCase; `invoke_bytes` for one that answers in bytes (`player_still`). Call the command's Rust function through `app.run(...)` when the test needs its typed answer.
 - `heard("clip")` gives the events the page heard, in order.
 - `desktop()` tells what the file manager was asked to show or open.
 - `quit()` quits as closing the window does, and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's tidying, then the queues taking up what was left.
@@ -58,6 +58,7 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
 - `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
 - `clock()` is the app's clock. It stands still till the test moves it with `clock().advance(Duration::from_millis(250))`, so a cut's progress, sent at most every quarter second, is sent when the test says.
+- `with_screen()` gives the window a screen for the player to draw on, which the mock runtime's lacks, and `screen()` is it: `showing()` is the frame on it (None while it's black), `frame_shown()` waits for one and gives its number, `closed()` says whether it was taken away for good.
 - `started_with("VODSCRIBE_DRAG_WAITS", "1")` has the app see that variable, as if it had been started with it. Each test's variables are its own, and the process's aren't seen.
 - The app's queues end with the test, but a command that starts a thread of its own (looking up a VODscription after an add or a refresh, a site's player's picture let go, setup's and the GPU pack's installs) runs on: wait for what it does before the test ends.
 
@@ -120,6 +121,21 @@ The test says where a drag ends: `LetGo::CalledOff` (Escape), `Back` on the wind
 
 Never sleep to wait for something. Wait for what shows it happened: `made`, an event `heard`, or `eventually(what, condition)`.
 
+The player plays fake media as the real one plays a file: the fake ffmpeg decodes it, and frame `n` of its picture says `n` (`media::frame_number` reads it from the frame's YUV, or from the RGB the page is given). Give a test's video a small picture, so it decodes in a moment:
+
+```rust
+let app = TestApp::new();
+app.with_screen();
+let mut source = Media::video(60.0);
+let video = source.video.as_mut().unwrap();
+(video.width, video.height) = (64, 36);
+let vod = app.add_file("Day 3.mp4", &source);
+app.invoke("player_open", json!({ "id": vod.id, "at": 10.0, "play": false })).unwrap();
+assert_eq!(app.screen().frame_shown(), 300); // 0:10, at 30 a second
+```
+
+Decoded, a fake video's sound is silence, at the rate asked. Its storyboard has a keyframe each second, each picture naming its time (`media::storyboard_time`). The player's sound plays out in time on a stand-in, not the computer's speakers.
+
 Fake media files hold what a file would (length, picture, sound) and what they were cut from, as JSON. Make a source with `Media::video(60.0)` or `Media::sound(60.0)` and `write`, and read a result with `Media::read`.
 
 `Net::new()` answers links for as long as it's kept: `serves(prefix, body)`, or `answers(prefix, 404)`. Give a test's links a host of its own, since tests run at once.
@@ -128,7 +144,7 @@ Core tests use the same fakes without the app: `Library::new()` for the library,
 
 ## What's real and what isn't
 
-The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), the GPU check (`gpu.rs`), and the player's decoders and storyboards (`crates/player`).
+The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), and the GPU check (`gpu.rs`).
 
 Where the restart and the fake drag differ from the real ones:
 

@@ -50,6 +50,8 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColor", "CGColorSpace", "CGDataProvider", "CGImage"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
 
-# Its own tests read the counts (`counts` above).
+# Its own tests read the counts (`counts` above), and decode with the
+# test kit's fake ffmpeg as well as the real one.
 [dev-dependencies]
 vodscribe-player = { path = ".", features = ["counts"] }
+vodscribe-core = { path = "../core", features = ["testkit"] }

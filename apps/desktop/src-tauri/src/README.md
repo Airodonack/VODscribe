@@ -37,9 +37,10 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `webview.rs`: the window's WebKitGTK view on Linux.
 - `receive.rs`: files dropped with no path, written into the library.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.
-- `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes, with a fake drag out of the window, started again after a quit.
+- `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes, with a fake drag out of the window and a screen of the test's, started again after a quit.
 - [`testkit`](testkit): the app kit's own tests.
 - [`clips`](clips): clips' tests.
+- [`player`](player): the player commands' tests.
 - [`recovery`](recovery): setting a library aside, and the next start.
 - [`drag_source`](drag_source): dragging clips out before they're made.
 - [`drop_target`](drop_target): taking drops on Windows, macOS and Linux, virtual files and file promises included.

@@ -8,7 +8,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::JoinHandle;
@@ -172,11 +172,13 @@ pub fn video_starts() -> u64 {
 
 /// A stream of frames or samples from one ffmpeg process.
 pub struct Stream<T> {
-    child: Child,
+    /// Started by `tools::spawn`, so a test's fake ffmpeg answers in a test build.
+    child: tools::Child,
     frames: Receiver<T>,
     _reader: JoinHandle<()>,
-    /// Stopped with the app (`tools::stop_tracked`); untracked once `child` is waited for.
-    _tracked: tools::Tracked,
+    /// Stopped with the app (`tools::stop_tracked`); untracked once `child` is
+    /// waited for. None for a test's fake, which quitting needn't stop.
+    _tracked: Option<tools::Tracked>,
 }
 
 impl<T: Send + 'static> Stream<T> {
@@ -193,7 +195,7 @@ impl<T: Send + 'static> Stream<T> {
 
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
-        tools::kill_tree(&mut self.child);
+        self.child.kill_tree();
     }
 }
 
@@ -206,27 +208,25 @@ fn start<T: Send + 'static>(
     from: f64,
     map: &str,
     output: &[&str],
-    read: impl FnOnce(std::process::ChildStdout, SyncSender<T>) + Send + 'static,
+    read: impl FnOnce(Box<dyn Read + Send>, SyncSender<T>) + Send + 'static,
 ) -> Result<Stream<T>> {
     let mut cmd = tools::command(ffmpeg);
-    let mut child =
-        tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), path)
-            .args(["-hide_banner", "-nostdin", "-loglevel", "error"])
-            // Rotated phone videos are read as stored: the frame size stays the probe's.
-            .args(["-noautorotate", "-ss", &format!("{:.6}", from.max(0.0)), "-i"])
-            .arg(path)
-            .args(["-map", map])
-            .args(output)
-            .arg("pipe:1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
+    tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), path)
+        .args(["-hide_banner", "-nostdin", "-loglevel", "error"])
+        // Rotated phone videos are read as stored: the frame size stays the probe's.
+        .args(["-noautorotate", "-ss", &format!("{:.6}", from.max(0.0)), "-i"])
+        .arg(path)
+        .args(["-map", map])
+        .args(output)
+        .arg("pipe:1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = tools::spawn(&mut cmd).with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
     let stdout = child.stdout.take().context("ffmpeg's output")?;
     let (tx, frames) = mpsc::sync_channel(AHEAD);
     let reader = std::thread::Builder::new().name("decode".into()).spawn(move || read(stdout, tx))?;
-    let tracked = tools::track(&child);
+    let tracked = child.track();
     Ok(Stream { child, frames, _reader: reader, _tracked: tracked })
 }
 

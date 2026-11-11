@@ -367,7 +367,8 @@ async fn open_with(
             // then, and at once when it starts to move or the end is reached.
             let (shown, told) = (app.clone(), app.clone());
             player.on_frame(Box::new(move |event| {
-                let state = shown.state::<AppState>();
+                // Its thread can outlive the state (a test's app ending): then there's none to tell.
+                let Some(state) = shown.try_state::<AppState>() else { return };
                 let open = state.player.open.lock().unwrap();
                 let Some(open) = open.as_ref() else { return };
                 if event == Event::Frame {
@@ -622,7 +623,7 @@ pub(crate) fn player_close(app: AppHandle) {
 }
 
 /// Closes whatever player is open, clearing the screen.
-fn close(app: &AppHandle) {
+pub(crate) fn close(app: &AppHandle) {
     let state = app.state::<AppState>();
     state.player.asked.fetch_add(1, Ordering::AcqRel);
     // Let go of after the lock: a player stopping isn't waited for by every

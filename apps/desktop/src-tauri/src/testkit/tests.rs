@@ -1,7 +1,7 @@
 //! The app kit's own specs: the app starts on its fakes, and again on the
 //! library of one that quit or was killed; its commands are reached as the
-//! page reaches them; what it says and asks is heard; and a drag out of the
-//! window ends where the test lets it go.
+//! page reaches them; what it says and asks is heard; a drag out of the
+//! window ends where the test lets it go; and its screen is the test's.
 
 use serde_json::json;
 
@@ -341,4 +341,31 @@ fn the_variables_an_app_was_started_with_are_its_tests_own() {
     assert_eq!(crate::system::var(waits.handle(), "VODSCRIBE_DRAG_WAITS").as_deref(), Some("1"));
     assert_eq!(crate::system::var(other.handle(), "VODSCRIBE_DRAG_WAITS"), None);
     assert_eq!(crate::system::var(waits.handle(), "PATH"), None, "the process's");
+}
+
+/// The window has a screen only once the test gives it one; then it keeps
+/// the frame the player shows (a fake video's, decoded by the fake ffmpeg,
+/// saying its number) and black once it's cleared, and once it's closed for
+/// good it's shown nothing more.
+#[test]
+fn the_screen_is_the_tests_and_keeps_what_the_player_shows_till_closed() {
+    let app = TestApp::new();
+    assert!(!crate::screen::attached(app.handle()), "the mock runtime's window has none");
+    app.with_screen();
+    assert!(crate::screen::attached(app.handle()));
+    let mut source = Media::video(10.0);
+    let video = source.video.as_mut().unwrap();
+    (video.width, video.height) = (32, 18);
+    let vod = app.add_file("Day 3.mp4", &source);
+    app.invoke("player_open", json!({ "id": vod.id, "at": 2.0, "play": false })).unwrap();
+    assert_eq!(app.screen().frame_shown(), 60, "the frame at 0:02, of 30 a second");
+    let shown = app.screen().showing().unwrap();
+    assert_eq!((shown.width, shown.height, shown.pts), (32, 18, 2.0));
+    crate::screen::show(app.handle(), None);
+    assert!(app.screen().showing().is_none(), "black");
+    crate::screen::close(app.handle());
+    assert!(app.screen().closed());
+    let shows = app.screen().shows();
+    crate::screen::show(app.handle(), Some(shown));
+    assert!(app.screen().showing().is_none() && app.screen().shows() == shows, "nothing once it's closed");
 }

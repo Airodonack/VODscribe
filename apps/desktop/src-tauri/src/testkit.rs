@@ -8,8 +8,10 @@
 //! no system's drag: `Drags` keeps it, and the test lets it go where it
 //! says (drag_source). The app's clock stands still till the test moves it
 //! (`Clock`), and the variables it was started with are the test's own
-//! (`Env`). An app that quit or was killed leaves its folder (`Folder`) to
-//! the test, which starts the app on it again.
+//! (`Env`). The window has no screen for the player to draw on till the
+//! test gives it one (`Screen`), and the player's sound goes to no device.
+//! An app that quit or was killed leaves its folder (`Folder`) to the test,
+//! which starts the app on it again.
 //!
 //! The helpers say what a test does in the words of its spec: "a file
 //! `Day 3.mp4` of a minute is added" (`add_video_file`), "a clip of
@@ -118,6 +120,9 @@ impl Drop for TestApp {
         // opened (it failed first) ends, and can be joined; and a drag's
         // receiver waiting for a file stops.
         self.drags().end();
+        // The player first: its threads tell the state of each frame, and
+        // end once it's closed, while the queues below are joined.
+        crate::player::close(self.handle());
         self.ffmpeg.end();
         self.yt_dlp.end();
         no_links().retain(|dir| *dir != self.paths().clips());
@@ -186,6 +191,10 @@ impl TestApp {
         app.manage(crate::choices::Kept::load(paths.choices()));
         app.manage(crate::recovery::Problem::none(paths.db()));
         app.manage(crate::screen::Screen::default());
+        app.manage(Screen::default());
+        // The player's sound plays out in time on a stand-in, not the
+        // computer's speakers (every player opened from now, in any test).
+        vodscribe_player::sound::stand_in::choose();
         let db = Db::open_in(&paths).unwrap();
         vodscribe_core::library::settle(&db).unwrap();
         // The site still has the VODs added before, for what's left to make.
@@ -279,6 +288,17 @@ impl TestApp {
         self.app.state::<Env>().vars.lock().unwrap().insert(name.into(), value.into());
     }
 
+    /// The window has a screen from now, as the app's own player needs
+    /// (`screen::attached`): what it's shown is kept (`screen`).
+    pub(crate) fn with_screen(&self) {
+        self.screen().attached.store(true, Ordering::SeqCst);
+    }
+
+    /// The window's screen, as the tests have it (`Screen`).
+    pub(crate) fn screen(&self) -> &Screen {
+        self.app.state::<Screen>().inner()
+    }
+
     /// The library, held until the guard is dropped (as a command holds it).
     pub(crate) fn db(&self) -> MutexGuard<'_, Db> {
         self.state().inner().db.lock().unwrap()
@@ -333,6 +353,15 @@ impl TestApp {
         self.invoke_with(cmd, tauri::ipc::InvokeBody::Json(args), Default::default())
     }
 
+    /// `invoke` for a command that answers in bytes (`player_still`), as the
+    /// page gets them.
+    pub(crate) fn invoke_bytes(&self, cmd: &str, args: Value) -> Result<Vec<u8>, Value> {
+        self.request(cmd, tauri::ipc::InvokeBody::Json(args), Default::default()).map(|body| match body {
+            tauri::ipc::InvokeResponseBody::Raw(bytes) => bytes,
+            tauri::ipc::InvokeResponseBody::Json(json) => json.into_bytes(),
+        })
+    }
+
     /// `invoke`, with the request's `body` and `headers` as the page sends
     /// them (`drag_clip`'s clips in a header, its picture as bytes).
     fn invoke_with(
@@ -341,6 +370,16 @@ impl TestApp {
         body: tauri::ipc::InvokeBody,
         headers: tauri::http::HeaderMap,
     ) -> Result<Value, Value> {
+        self.request(cmd, body, headers).map(|body| body.deserialize::<Value>().unwrap())
+    }
+
+    /// The command's answer to a request as the page makes it.
+    fn request(
+        &self,
+        cmd: &str,
+        body: tauri::ipc::InvokeBody,
+        headers: tauri::http::HeaderMap,
+    ) -> Result<tauri::ipc::InvokeResponseBody, Value> {
         let request = tauri::webview::InvokeRequest {
             cmd: cmd.into(),
             callback: tauri::ipc::CallbackFn(0),
@@ -353,7 +392,7 @@ impl TestApp {
             headers,
             invoke_key: tauri::test::INVOKE_KEY.into(),
         };
-        tauri::test::get_ipc_response(&self.window, request).map(|body| body.deserialize::<Value>().unwrap())
+        tauri::test::get_ipc_response(&self.window, request)
     }
 
     /// The payloads of the events `event` the page has heard so far, in order.
@@ -526,6 +565,72 @@ impl Env {
 /// The app's `Env` (system.rs).
 pub(crate) fn env(app: &AppHandle) -> &Env {
     app.state::<Env>().inner()
+}
+
+/// The screen the player draws on, as the tests have it (screen.rs): none
+/// till the test gives the window one (`TestApp::with_screen`); then the
+/// frame it shows is kept, and once it's closed, for good, it shows nothing
+/// more, as the real one.
+#[derive(Default)]
+pub(crate) struct Screen {
+    attached: AtomicBool,
+    closed: AtomicBool,
+    showing: Mutex<Option<Arc<vodscribe_player::decode::Frame>>>,
+    shows: AtomicU64,
+}
+
+impl Screen {
+    pub(crate) fn attached(&self) -> bool {
+        self.attached.load(Ordering::SeqCst)
+    }
+
+    /// The frame on it: None while it's black, or before anything's shown.
+    pub(crate) fn showing(&self) -> Option<Arc<vodscribe_player::decode::Frame>> {
+        self.showing.lock().unwrap().clone()
+    }
+
+    /// The number in its file of the fake video frame on it
+    /// (`media::frame_number`), once one shows (waited for).
+    pub(crate) fn frame_shown(&self) -> u64 {
+        eventually("a frame on the screen", || self.showing().is_some());
+        frame_number(&self.showing().unwrap())
+    }
+
+    /// How many times it's been shown something, a frame or black.
+    pub(crate) fn shows(&self) -> u64 {
+        self.shows.load(Ordering::SeqCst)
+    }
+
+    /// Whether it's been taken away for good (`screen::close`).
+    pub(crate) fn closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn show(&self, frame: Option<Arc<vodscribe_player::decode::Frame>>) {
+        // Under the frame's lock, as `close` sets it closed: none comes after.
+        let mut showing = self.showing.lock().unwrap();
+        if self.attached() && !self.closed() {
+            *showing = frame;
+            self.shows.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    pub(crate) fn close(&self) {
+        let _showing = self.showing.lock().unwrap();
+        self.closed.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The app's `Screen` (screen.rs).
+pub(crate) fn screen(app: &AppHandle) -> &Screen {
+    app.state::<Screen>().inner()
+}
+
+/// The number in its file of fake video frame `frame`, as the fake ffmpeg
+/// decodes it (`media::numbered_frame`).
+pub(crate) fn frame_number(frame: &vodscribe_player::decode::Frame) -> u64 {
+    vodscribe_core::testkit::media::frame_number(&frame.yuv, frame.width, frame.height, 0)
+        .expect("a fake video's frame")
 }
 
 /// `stamp` (`0:10`, `1:02:03.5`, `75`) in seconds.

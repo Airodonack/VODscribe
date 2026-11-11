@@ -500,3 +500,21 @@ fn a_fake_dropped_leaves_a_newer_one_at_its_path() {
     drop(older);
     assert!(tools::status(&mut tools::command(newer.path())).unwrap().success());
 }
+
+/// A fake video's decoded frame says its number, read from its YUV and from
+/// the RGB the player turns it into (video's range spread to the whole), and
+/// a fake storyboard picture says its keyframe's time.
+#[test]
+fn a_fake_frame_says_its_number_and_a_storyboard_picture_its_time() {
+    for n in [0, 1, 218, 219, 300, 1799, 47_960] {
+        let yuv = media::numbered_frame(n, 64, 36);
+        assert_eq!(yuv.len(), 64 * 36 * 3 / 2);
+        assert_eq!(media::frame_number(&yuv, 64, 36, 0), Some(n));
+        let rgb: Vec<u8> =
+            yuv[..64 * 36].iter().flat_map(|&y| [((y as f64 - 16.0) * 255.0 / 219.0).round() as u8; 3]).collect();
+        assert_eq!(media::frame_number(&rgb, 64, 36, 3), Some(n), "frame {n} as RGB");
+    }
+    assert_eq!(media::frame_number(&[255, 0, 0].repeat(4), 2, 2, 3), None, "not grey");
+    assert_eq!(media::storyboard_time(&media::storyboard_jpeg(12.0, 160, 90)), Some(12.0));
+    assert_eq!(media::storyboard_time(&[0xff, 0xd8, 0xff, 0xd9]), None);
+}

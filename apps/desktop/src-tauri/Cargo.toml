@@ -52,6 +52,8 @@ dragndrop-source = { path = "../../../crates/dragndrop-source" }
 tauri = { version = "2", features = ["test"] }
 # The fakes the tests stand in for programs and the network with.
 vodscribe-core = { path = "../../../crates/core", features = ["testkit"] }
+# The player's sound on a stand-in, not the computer's speakers.
+vodscribe-player = { path = "../../../crates/player", features = ["counts"] }
 
 # macOS: the app starts the drag itself (drag_source), and takes drops
 # (drop_target).
