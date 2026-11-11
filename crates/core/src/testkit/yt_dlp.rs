@@ -1,9 +1,12 @@
 //! A fake yt-dlp that answers as yt-dlp does to what the app asks of it: a
 //! VOD's details (`-J`, from what the test says the site serves) and its
 //! downloads (`fetch::download`: the audio, the whole video, or a section of
-//! it), written as fake media files (`Media`) cut from the VOD's link. It
-//! fails as yt-dlp does for a link the site doesn't serve, and on request
-//! for one it refuses, partway or not; or holds partway at a `Gate`.
+//! it), written as fake media files (`Media`) cut from the VOD's link. Each
+//! is written as it comes to a part file beside it (`<file>.part`), as
+//! yt-dlp writes, and renamed into place once whole, so a download stopped
+//! or held partway leaves its part file. It fails as yt-dlp does for a link
+//! the site doesn't serve, and on request for one it refuses, partway or
+//! not; or holds partway at a `Gate`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,6 +32,8 @@ struct Site {
     refuses: Vec<String>,
     /// Each download waits here once it's begun, before its progress.
     hold: Option<Gate>,
+    /// Each look-up of a link's details (`-J`) waits here before it answers.
+    details_hold: Option<Gate>,
 }
 
 impl YtDlp {
@@ -75,6 +80,12 @@ impl YtDlp {
     pub fn holds(&self, gate: &Gate) {
         self.site.lock().unwrap().hold = Some(gate.clone());
     }
+
+    /// Each look-up of a link's details from now (`-J`: an add, a refresh)
+    /// waits at `gate` before it answers, as a slow site does.
+    pub fn holds_details(&self, gate: &Gate) {
+        self.site.lock().unwrap().details_hold = Some(gate.clone());
+    }
 }
 
 /// yt-dlp's details of a VOD of `platform` (youtube, twitch, kick) with
@@ -96,9 +107,17 @@ pub fn details(platform: &str, id: &str, url: &str, title: &str, duration: f64) 
     })
 }
 
+/// What a download's part file holds till it's whole: no media yet.
+const BEING_WRITTEN: &[u8] = b"FAKE MEDIA (being downloaded)\n";
+
 fn answer(run: &mut Run, site: &Site) -> i32 {
     let args = run.args();
     if run.has("-J") {
+        if let Some(gate) = &site.details_hold
+            && !run.hold(gate)
+        {
+            return 255;
+        }
         let url = args.last().cloned().unwrap_or_default();
         return match site.serves.get(&url) {
             Some(info) => {
@@ -145,13 +164,26 @@ fn answer(run: &mut Run, site: &Site) -> i32 {
     }
     let template = run.after("-o").unwrap_or_default();
     let file = template.replace("%(ext)s", ext);
+    // Its first part, before it says how far it is; the rest as it ends.
+    let part = PathBuf::from(format!("{file}.part"));
+    if let Some(dir) = part.parent() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(&part, BEING_WRITTEN).unwrap();
     if let Some(gate) = &site.hold
         && !run.hold(gate)
     {
         return 255;
     }
     run.out("[vodscribe] 1000 4000 NA NA NA\n");
-    media.write(Path::new(&file));
+    if run.stopped() {
+        return 255;
+    }
+    media.write(&part);
+    if let Err(e) = std::fs::rename(&part, &file) {
+        run.err(&format!("ERROR: Unable to rename file: {e}\n"));
+        return 1;
+    }
     run.out("[vodscribe] 4000 4000 NA NA NA\n");
     run.out(&format!("[vodscribe-file]{file}\n"));
     0

@@ -329,6 +329,8 @@ impl Settings {
             },
             Err(e) => e.clone(),
         };
+        #[cfg(any(test, feature = "testkit"))]
+        crate::testkit::tools::held_at(crate::testkit::tools::At::SettingsRead, path);
         match set_aside(path, read.as_deref().ok()) {
             Ok(Some(aside)) => {
                 eprintln!("{}: unreadable ({unreadable}), set aside as {}", path.display(), aside.display())
@@ -346,6 +348,8 @@ impl Settings {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        #[cfg(any(test, feature = "testkit"))]
+        crate::testkit::tools::held_at(crate::testkit::tools::At::SettingsSave, path);
         let _turn = lock(&SAVING);
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, serde_json::to_string_pretty(&self.clone().normalized())?)?;

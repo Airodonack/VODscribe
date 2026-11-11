@@ -13,7 +13,7 @@ use super::*;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use vodscribe_core::db::{Clip, ClipStatus};
+use vodscribe_core::db::ClipStatus;
 use vodscribe_core::settings::ClipCodec;
 use vodscribe_core::testkit::{Gate, Media, eventually};
 use vodscribe_core::transcript::Segment;
@@ -44,14 +44,6 @@ fn removing_with_video(app: &TestApp, id: i64) -> std::thread::JoinHandle<CmdRes
         let state = handle.state::<AppState>();
         tauri::async_runtime::block_on(delete_vod(handle.clone(), state, id, Some(true), None))
     })
-}
-
-/// Waits till the list of jobs shows no VOD being erased, or waiting to be.
-fn erasures_done(app: &TestApp) {
-    eventually("the erasures done", || {
-        let jobs = app.invoke("list_jobs", json!({})).unwrap();
-        jobs.as_array().unwrap().iter().all(|job| job["kind"] != "erase")
-    });
 }
 
 /// The ids of the VODs in the library's list, in its order.
@@ -97,19 +89,6 @@ fn transcript(app: &TestApp, id: i64) -> Vec<String> {
     lines.as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap().to_string()).collect()
 }
 
-/// Clip `clip` dragged out of the window and let go on an editor that takes
-/// the file itself: the file it was given.
-fn dragged_out(app: &TestApp, clip: &Clip) -> PathBuf {
-    use crate::testkit::{LetGo, Receiver};
-    app.drag_out(&[clip.id]).unwrap();
-    let drag = app.drags().last();
-    drag.let_go(LetGo::On(Receiver::taking_files("Kdenlive")));
-    app.drag_ended();
-    let given = drag.given();
-    assert_eq!(given.len(), 1, "clip {} not handed out", clip.id);
-    given[0].clone()
-}
-
 /// Asks for VOD `id`'s whole video to be kept and waits till it is.
 fn keep_video(app: &TestApp, id: i64) {
     app.invoke("keep_video", json!({ "id": id })).unwrap();
@@ -140,7 +119,7 @@ fn a_removed_vods_clips_go_with_their_files_unless_another_app_took_them() {
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let taken = app.make_clip(vod.id, "0:10", "0:20");
     let left = app.make_clip(vod.id, "0:30", "0:40");
-    let given = dragged_out(&app, &taken);
+    let given = app.dragged_out(&taken);
     remove(&app, vod.id);
     assert_eq!((app.clip(taken.id), app.clip(left.id)), (None, None), "its clips are still there");
     assert!(!Path::new(left.file_path.as_deref().unwrap()).exists(), "a clip's file stayed");
@@ -163,7 +142,7 @@ fn a_removed_vods_download_or_transcription_stops_where_it_is() {
     remove(&app, vod.id);
     // The gate stays shut: only a download that stopped lets the erasure
     // past waiting for it (`WORK_STOPPING`, longer than `eventually` waits).
-    erasures_done(&app);
+    app.erasures_done();
     assert!(app.db().stretches(vod.id).unwrap().is_empty(), "its request is still there");
     assert!(!app.paths().source_audio(vod.id, "m4a").exists(), "its download went on");
 }
@@ -189,7 +168,7 @@ fn a_removed_vod_nothing_uses_is_erased_at_once_beside_whats_being_made() {
     for vod in &removed {
         remove(&app, vod.id);
     }
-    erasures_done(&app);
+    app.erasures_done();
     for vod in &removed {
         assert!(app.db().lines(vod.id).unwrap().is_empty(), "VOD {}'s transcript is still there", vod.id);
         assert!(app.db().is_gone(vod.id).unwrap(), "VOD {} not erased", vod.id);
@@ -228,7 +207,7 @@ fn an_erasure_erases_the_vods_files_footage_and_pictures() {
         std::fs::write(&file, b"made").unwrap();
     }
     remove(&app, removed.id);
-    erasures_done(&app);
+    app.erasures_done();
     let left: Vec<PathBuf> = files_of(removed.id).into_iter().filter(|f| f.exists()).collect();
     assert_eq!(left, Vec::<PathBuf>::new(), "its files stayed");
     assert!(files_of(other.id).iter().all(|f| f.is_file()), "another VOD's files went");
@@ -246,14 +225,14 @@ fn a_vod_used_by_an_edit_is_kept_as_a_source_until_nothing_uses_it() {
     app.says(vod.id, 12.0, "The Eagle has landed");
     let (edit, _) = an_edit(&app, vod.id, 10.0, 20.0);
     remove(&app, vod.id);
-    erasures_done(&app);
+    app.erasures_done();
     assert_eq!(listed(&app), Vec::<i64>::new());
     assert!(!app.db().is_gone(vod.id).unwrap(), "erased while the edit uses it");
     assert_eq!(transcript(&app, vod.id), ["The Eagle has landed"]);
     assert_eq!(pieces(&app, edit)[0]["hole"], false);
     app.invoke("delete_edit", json!({ "id": edit })).unwrap();
     let app = TestApp::on(app.quit());
-    erasures_done(&app);
+    app.erasures_done();
     assert!(app.db().vod(vod.id).unwrap().is_none(), "kept once nothing used it");
 }
 
@@ -270,7 +249,7 @@ fn a_vod_just_removed_keeps_its_row_as_a_gone_source_so_undo_in_an_edit_finds_a_
     let (edit, piece) = an_edit(&app, vod.id, 10.0, 20.0);
     app.invoke("remove_piece", json!({ "id": piece })).unwrap();
     remove(&app, vod.id);
-    erasures_done(&app);
+    app.erasures_done();
     assert!(app.db().is_gone(vod.id).unwrap(), "its row isn't a gone source");
     let undone = app.invoke("undo", json!({ "view": { "kind": "edit", "id": edit } })).unwrap();
     assert!(!undone.is_null(), "nothing to undo");

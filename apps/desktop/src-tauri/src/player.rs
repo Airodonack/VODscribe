@@ -327,8 +327,15 @@ pub(crate) struct PlannedStretch {
 pub(crate) async fn player_plan(app: AppHandle, id: i64) -> CmdResult<Vec<PlannedStretch>> {
     let handle = app.clone();
     let plan = app.state::<AppState>().player.plans.fetch_add(1, Ordering::AcqRel) + 1;
-    let (timeline, stretches) =
-        tauri::async_runtime::spawn_blocking(move || edit_timeline(&handle, id)).await.map_err(err)?.map_err(err)?;
+    let (timeline, stretches) = tauri::async_runtime::spawn_blocking(move || {
+        let planned = edit_timeline(&handle, id);
+        #[cfg(test)]
+        crate::testkit::planned(&handle);
+        planned
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
     let state = app.state::<AppState>();
     let mut planned = state.player.planned.lock().unwrap();
     if plan > *planned {

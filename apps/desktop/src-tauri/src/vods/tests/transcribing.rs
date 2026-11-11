@@ -4,25 +4,20 @@
 //! queue's own specs (its two stages, the worker process) are 4.1's.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock, mpsc};
-use std::time::Duration;
 
 use serde_json::{Value, json};
 use vodscribe_core::fetch::VodInfo;
 use vodscribe_core::stretches::Transcribed;
-use vodscribe_core::testkit::tools::{self as fakes, Fake, Run};
-use vodscribe_core::testkit::worker::Worker;
 use vodscribe_core::testkit::{Gate, eventually, said};
 
 use super::*;
 use crate::testkit::TestApp;
 
-/// The app with the transcription worker it runs faked (`worker`) and its
-/// model installed, so its queue transcribes what's asked: each file says
-/// what `worker.hears`.
+/// The app with the transcription worker it runs faked and its model
+/// installed (`TestApp::worker`), so its queue transcribes what's asked:
+/// each file says what `hears` says.
 struct Transcribing {
     app: TestApp,
-    worker: Worker,
 }
 
 impl std::ops::Deref for Transcribing {
@@ -32,95 +27,20 @@ impl std::ops::Deref for Transcribing {
     }
 }
 
-impl Drop for Transcribing {
-    /// The worker's runs end first, so one held at a gate the test never
-    /// opened (it failed first) lets the app's queue end.
-    fn drop(&mut self) {
-        self.worker.end();
-        let model = self.app.paths().model_dir();
-        routes().retain(|(m, _)| *m != model);
-    }
-}
-
-/// The app's worker, a sidecar beside the app (`tools::sidecar`), is at one
-/// path for every test in this process, so one fake there passes each run
-/// on to its test's own (`Worker`), found by the model folder the app gives
-/// it, which is in its library.
-fn routes() -> MutexGuard<'static, Vec<(PathBuf, PathBuf)>> {
-    static ROUTES: Mutex<Vec<(PathBuf, PathBuf)>> = Mutex::new(Vec::new());
-    ROUTES.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 fn transcribing() -> Transcribing {
-    static SIDECAR: OnceLock<Fake> = OnceLock::new();
-    SIDECAR.get_or_init(|| {
-        let exe = std::env::current_exe().unwrap();
-        fakes::fake(exe.with_file_name(format!("vodscribe-worker{}", std::env::consts::EXE_SUFFIX)), relay)
-    });
     let app = TestApp::new();
-    let paths = app.paths();
-    install_model(&paths.model_dir());
-    let worker = Worker::at(paths.root.with_file_name("worker").join("vodscribe-worker"));
-    routes().push((paths.model_dir(), worker.path().to_path_buf()));
-    Transcribing { app, worker }
-}
-
-/// The model the CPU worker reads, as installed (`model::is_installed`
-/// goes by each file's size): its files hard links to one set of empty
-/// files that size, made once in the system's temporary folder.
-fn install_model(dir: &Path) {
-    static FILES: OnceLock<PathBuf> = OnceLock::new();
-    let files = FILES.get_or_init(|| {
-        let files = std::env::temp_dir().join(format!("vodscribe-test-model-{}", std::process::id()));
-        std::fs::create_dir_all(&files).unwrap();
-        for file in vodscribe_core::model::CPU_MODEL.files {
-            std::fs::File::create(files.join(file.name)).unwrap().set_len(file.size).unwrap();
-        }
-        files
-    });
-    std::fs::create_dir_all(dir).unwrap();
-    for file in vodscribe_core::model::CPU_MODEL.files {
-        std::fs::hard_link(files.join(file.name), dir.join(file.name)).unwrap();
-    }
-}
-
-/// Runs the test's own worker with the arguments the app gave, passing on
-/// what it writes, and stops it when the app stops this run.
-fn relay(run: &mut Run) -> i32 {
-    let model = run.after("--model").map(PathBuf::from);
-    let Some(to) = routes().iter().find(|(m, _)| Some(m) == model.as_ref()).map(|(_, w)| w.clone()) else {
-        run.err("Error: no test's worker for this library\n");
-        return 1;
-    };
-    let mut cmd = vodscribe_core::tools::command(&to);
-    cmd.args(run.args());
-    let mut child = vodscribe_core::tools::spawn(&mut cmd).unwrap();
-    let errors = vodscribe_core::tools::drain(child.stderr.take().unwrap());
-    let (tx, rx) = mpsc::channel();
-    vodscribe_core::tools::send_lines(child.stdout.take().unwrap(), tx);
-    loop {
-        match rx.recv_timeout(Duration::from_millis(2)) {
-            Ok(line) => run.out(&format!("{line}\n")),
-            Err(mpsc::RecvTimeoutError::Timeout) if run.stopped() => {
-                child.kill_tree();
-                return 255;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    let status = child.wait().unwrap();
-    run.err(&errors.join().unwrap_or_default());
-    status.code().unwrap_or(255)
+    app.worker();
+    Transcribing { app }
 }
 
 /// What's said, as (second, text): `(10.0, "The Eagle has landed.")`.
 type Said<'a> = &'a [(f64, &'a str)];
 
 impl Transcribing {
-    /// From now every file the worker is given says `words`, in its own seconds.
+    /// From now every file the worker is given says `words`, at the VOD's
+    /// own seconds.
     fn hears(&self, words: Said) {
-        self.worker.hears(words.iter().flat_map(|(at, text)| said(*at, text)).collect());
+        self.worker().hears(words.iter().flat_map(|(at, text)| said(*at, text)).collect());
     }
 
     /// A file on this computer, `minutes` long, added; it says what the
@@ -278,18 +198,18 @@ fn a_stretch_is_asked_for_after_the_requests_already_made() {
     let first = app.file("Day 3.mp4", 10.0);
     let other = app.file("Day 4.mp4", 2.0);
     let gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     app.ask(first, 0.0, Some(180.0)).unwrap();
     app.held(first, &gate);
     app.ask(other, 0.0, None).unwrap();
     app.ask(first, 300.0, Some(360.0)).unwrap();
     let next = Gate::new();
-    app.worker.holds(&next);
+    app.worker().holds(&next);
     gate.open();
     app.held(other, &next);
     assert!(app.transcribing(other), "the other VOD's request, asked for first, is next");
     assert!(!app.transcribing(first));
-    app.worker.holds(&open_gate());
+    app.worker().holds(&open_gate());
     next.open();
     app.settled(first);
     assert_eq!(app.stretches(first), [(0.0, Some(180.0), Status::Done), (300.0, Some(360.0), Status::Done)]);
@@ -360,7 +280,7 @@ fn to_the_end_is_asked_for_with_no_end() {
 /// the first minute.
 fn held_from_start(app: &Transcribing, vod: i64, gate: &Gate) -> i64 {
     app.hears(&[(10.0, "The Eagle has landed."), (300.0, "Said later on.")]);
-    app.worker.holds(gate);
+    app.worker().holds(gate);
     app.ask(vod, 0.0, None).unwrap();
     app.held(vod, gate);
     vod
@@ -506,11 +426,11 @@ fn the_transcripts_stop_ends_its_request_alone() {
     app.hears(&[(10.0, "In the first minute."), (100.0, "In the second minute."), (320.0, "In the other part.")]);
     let vod = app.file("Ten minutes.mp4", 10.0);
     let gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     let stopped = app.ask(vod, 0.0, Some(180.0)).unwrap()["id"].as_i64().unwrap();
     app.held(vod, &gate);
     app.ask(vod, 300.0, Some(360.0)).unwrap();
-    app.worker.holds(&open_gate());
+    app.worker().holds(&open_gate());
     app.on("cancel_stretch", stopped);
     app.settled(vod);
     assert_eq!(app.lines(vod), lines(&[(10.0, "In the first minute."), (320.0, "In the other part.")]));
@@ -551,7 +471,7 @@ fn transcribe_again_replaces_the_lines_as_they_come() {
     app.settled(vod);
     app.hears(&[(10.0, "The new start."), (300.0, "The new later part.")]);
     let gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     app.on("retranscribe_vod", vod);
     app.held(vod, &gate);
     assert_eq!(app.lines(vod), lines(&[(10.0, "The new start."), (300.0, "The old later part.")]));
@@ -565,16 +485,15 @@ fn transcribe_again_replaces_the_lines_as_they_come() {
 /// vods.rs:773: "(a failed request it replaces goes)".
 #[test]
 fn transcribe_again_takes_the_place_of_a_failed_request() {
-    let mut app = transcribing();
+    let app = transcribing();
     app.hears(&[(10.0, "The Eagle has landed.")]);
     let vod = app.file("Ten minutes.mp4", 10.0);
-    app.worker.fails_at(200.0, "Error: the model couldn't be read");
+    app.worker().fails_at(200.0, "Error: the model couldn't be read");
     app.ask(vod, 0.0, None).unwrap();
     let failed = app.settled(vod);
     assert_eq!(failed.status, Status::Error);
     // The worker works again.
-    app.worker = Worker::at(app.worker.path());
-    app.hears(&[(10.0, "The Eagle has landed.")]);
+    app.worker().works();
     app.on("retranscribe_vod", vod);
     assert!(app.requests(vod).iter().all(|s| s.status != Status::Error), "the failed request is gone");
     let done = app.settled(vod);
@@ -622,7 +541,7 @@ fn transcribing_whats_outdated_asks_only_for_the_parts_an_older_model_made() {
     assert!(app.vod(vod).outdated);
     app.hears(&[(10.0, "The new start."), (300.0, "The new later part.")]);
     let gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     app.invoke("retranscribe_vod", json!({ "id": vod, "outdated": true })).unwrap();
     let asked: Vec<_> = app.requests(vod).iter().map(|s| (s.start, s.end)).collect();
     assert_eq!(asked, [(0.0, Some(60.0))]);
@@ -641,7 +560,7 @@ fn a_vods_stretches_are_listed_in_time_order() {
     app.ask(vod, 400.0, Some(460.0)).unwrap();
     app.settled(vod);
     let gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     app.ask(vod, 300.0, Some(420.0)).unwrap();
     app.held(vod, &gate);
     app.ask(vod, 100.0, Some(160.0)).unwrap();
@@ -661,7 +580,7 @@ fn a_pause_or_stop_reaches_a_vod_that_just_started_transcribing() {
         app.hears(&[(10.0, "The Eagle has landed."), (100.0, "Said later on.")]);
         let vod = app.file("Ten minutes.mp4", 10.0);
         let gate = Gate::new();
-        app.worker.holds(&gate);
+        app.worker().holds(&gate);
         app.ask(vod, 0.0, None).unwrap();
         app.held(vod, &gate);
         app.on(cmd, vod);
@@ -681,7 +600,7 @@ fn transcribed_vods_one_after_another_in_the_order_picked() {
     let [a, b, c] = ["A.mp4", "B.mp4", "C.mp4"].map(|name| app.file(name, 2.0));
     let picked = [c, a, b];
     let mut gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     for vod in picked {
         app.ask(vod, 0.0, None).unwrap();
     }
@@ -691,7 +610,7 @@ fn transcribed_vods_one_after_another_in_the_order_picked() {
         assert!(others.iter().all(|v| !app.transcribing(*v)), "VOD {vod} transcribed alone");
         assert!(picked[..i].iter().all(|v| app.vod(*v).transcribed == Transcribed::All), "those before it done");
         let next = Gate::new();
-        app.worker.holds(&next);
+        app.worker().holds(&next);
         std::mem::replace(&mut gate, next).open();
     }
     gate.open();
@@ -714,7 +633,7 @@ fn a_cancel_keeps_a_video_downloaded_on_request() {
     eventually("its video downloaded", || app.vod(vod).media);
     let video = app.db().media_path(vod).unwrap().unwrap();
     let gate = Gate::new();
-    app.worker.holds(&gate);
+    app.worker().holds(&gate);
     app.ask(vod, 0.0, None).unwrap();
     app.held(vod, &gate);
     app.on("cancel_vod", vod);

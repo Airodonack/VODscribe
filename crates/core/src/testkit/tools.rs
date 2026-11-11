@@ -7,14 +7,16 @@
 //! running at once, each with its own folder, never meet.
 //!
 //! `Gate` lets a test hold a fake partway (ffmpeg half through a clip) and
-//! act meanwhile, so a race is played in the order the test picks.
+//! act meanwhile, so a race is played in the order the test picks; and
+//! `hold_at` holds the library's own code where no fake runs (a settings
+//! file read, a save), by the file it's at.
 
 use std::ffi::OsString;
 use std::io::{PipeReader, PipeWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -184,6 +186,14 @@ impl Gate {
         Self::default()
     }
 
+    /// A gate open from the start: given in place of one something was
+    /// held at, it holds nothing more.
+    pub fn opened() -> Self {
+        let gate = Self::new();
+        gate.open();
+        gate
+    }
+
     /// Lets every run waiting here, and any to come, go on.
     pub fn open(&self) {
         self.0.0.lock().unwrap().open = true;
@@ -211,9 +221,60 @@ impl Gate {
     /// none does): the moment the test acts in.
     pub fn reached(&self) {
         let (state, cv) = &*self.0;
-        let state = cv.wait_timeout_while(state.lock().unwrap(), Duration::from_secs(5), |s| s.arrived == 0).unwrap().0;
-        assert!(state.arrived > 0, "no run reached the gate");
+        let waited = cv.wait_timeout_while(state.lock().unwrap(), Duration::from_secs(5), |s| s.arrived == 0);
+        // Its lock let go of first: a panic holding it would poison the
+        // gate, and the app's end, opening it, would panic again and abort.
+        let arrived = waited.unwrap().0.arrived;
+        assert!(arrived > 0, "no run reached the gate");
     }
+}
+
+/// A point in the library's own code a test holds it at (`hold_at`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum At {
+    /// `Settings::load`: a settings file read and found unreadable, before
+    /// it's set aside.
+    SettingsRead,
+    /// `Settings::save`: asked, before it takes its turn (and writes), so
+    /// a save asked later can go first.
+    SettingsSave,
+}
+
+/// The gates held at points of the library's own code (`hold_at`), with
+/// the file each is for: tests run at once, in one process.
+static HELD: Mutex<Vec<(At, PathBuf, Gate)>> = Mutex::new(Vec::new());
+
+fn held() -> MutexGuard<'static, Vec<(At, PathBuf, Gate)>> {
+    HELD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// From now, the code at `at` for the file at `path` waits at `gate` till
+/// the test opens it, in place of any gate it waited at there before.
+pub fn hold_at(at: At, path: &Path, gate: &Gate) {
+    let mut held = held();
+    held.retain(|(a, p, _)| !(*a == at && p == path));
+    held.push((at, path.to_path_buf(), gate.clone()));
+}
+
+/// The code at `at` for the file at `path` has come there: it waits if a
+/// test holds it there (`hold_at`).
+pub fn held_at(at: At, path: &Path) {
+    let gate = held().iter().find(|(a, p, _)| *a == at && p == path).map(|(_, _, gate)| gate.clone());
+    if let Some(gate) = gate {
+        gate.wait();
+    }
+}
+
+/// Opens and forgets each gate held for a file in `dir` (`hold_at`): a
+/// test's end, so nothing it held waits on.
+pub fn let_go(dir: &Path) {
+    held().retain(|(_, path, gate)| {
+        let ours = path.starts_with(dir);
+        if ours {
+            gate.open();
+        }
+        !ours
+    });
 }
 
 /// A fake's run, as `tools::Child` sees it.

@@ -7,7 +7,7 @@
 //! app could meet it: a file that isn't there or isn't media, a stream map
 //! that matches nothing, an encoder this build lacks (and its list of
 //! encoders, `-encoders`, says so); and on request partway, or holds
-//! partway (a still once its input is read) at a `Gate`. A file it makes is
+//! partway (a still once its input is read, a file's details) at a `Gate`. A file it makes is
 //! there from the run's start, as ffmpeg's is, but isn't media till the
 //! run's end; what it's made with (`-crf`, `-profile:v`, `-pix_fmt`,
 //! `-tag:v`) is kept in it. It keeps what each run was asked (`runs`).
@@ -15,7 +15,8 @@
 //! It decodes too, as the player and the storyboards ask (crates/player
 //! decode.rs, storyboard.rs): raw frames of the size and rate asked from the
 //! time asked to the file's end, each frame saying its number
-//! (`media::numbered_frame`); the sound as silence, at the rate asked; and a
+//! (`media::numbered_frame`); the sound as silence, at the rate and channels
+//! asked, to its stdout like any output to `pipe:1`; and a
 //! storyboard's keyframes, one each second of the file, as pictures naming
 //! their time (`media::storyboard_time`). These go as fast as the app reads
 //! them, and the failures and holds asked for (`fails_at`, `holds_at`) are
@@ -48,6 +49,8 @@ struct Plan {
     list_hold: Option<Gate>,
     /// A still waits at this gate, its input read.
     still_hold: Option<Gate>,
+    /// A file's details wait at this gate, the file read.
+    details_hold: Option<Gate>,
 }
 
 impl Ffmpeg {
@@ -110,6 +113,13 @@ impl Ffmpeg {
     /// file open while it decodes the frame.
     pub fn holds_stills(&self, gate: &Gate) {
         self.plan.lock().unwrap().still_hold = Some(gate.clone());
+    }
+
+    /// Each time it's asked a file's details from now (`local::probe`, the
+    /// player's probe before it opens a file), it waits, the file read,
+    /// until `gate` opens, or the app stops it: a probe of a slow disk.
+    pub fn holds_details(&self, gate: &Gate) {
+        self.plan.lock().unwrap().details_hold = Some(gate.clone());
     }
 
     /// From now it works as it should: no failure, hold or missing encoder.
@@ -193,6 +203,11 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     // Asked nothing of it: its details, and an error for no output.
     let last = args.last().cloned().unwrap_or_default();
     if inputs.last().is_some_and(|i| i.path == last) {
+        if let Some(gate) = &plan.details_hold
+            && !run.hold(gate)
+        {
+            return 255;
+        }
         let details = first.details(&inputs[0].path);
         run.err(&details);
         return 1;
@@ -251,6 +266,13 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
         return 0;
     }
 
+    // Nothing to send down its stdout, as ffmpeg finds a sound decode of a
+    // file with none. (A render's maps name its graph's outputs, which
+    // aren't read here, so a file it writes may say neither.)
+    if to_pipe && !picture && !sound {
+        run.err("Output file does not contain any stream\n");
+        return 1;
+    }
     let available = (first.duration - inputs[0].seek).max(0.0);
     let duration = run.after("-t").map_or(available, |t| number(Some(&t)).min(available));
     let codec = |flag: &str, was: Option<&str>| match run.after(flag).as_deref() {
@@ -285,11 +307,14 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     let progress = run.after("-progress").as_deref() == Some("pipe:1");
     let us = |fraction: f64| (duration * fraction * 1e6).round() as u64;
     // Its output is there from the start, not yet media, as ffmpeg's is
-    // while it writes: a run stopped or failed partway leaves it.
-    if let Some(dir) = Path::new(&last).parent() {
-        std::fs::create_dir_all(dir).unwrap();
+    // while it writes: a run stopped or failed partway leaves it. One to
+    // its stdout (`pipe:1`) is no file.
+    if !to_pipe {
+        if let Some(dir) = Path::new(&last).parent() {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(&last, BEING_WRITTEN).unwrap();
     }
-    std::fs::write(&last, BEING_WRITTEN).unwrap();
     let mut before = 0.0;
     for step in [0.25, 0.5, 0.75, 1.0] {
         // Due in this step: past the one before (or at the very start).
@@ -312,7 +337,11 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
         }
         before = step;
     }
-    made.write(Path::new(&last));
+    if to_pipe {
+        run.out_bytes(&made.to_bytes());
+    } else {
+        made.write(Path::new(&last));
+    }
     if progress {
         run.out(&format!("out_time_us={}\nprogress=end\n", us(1.0)));
     }
@@ -354,14 +383,18 @@ fn decode_video(run: &mut Run, first: &Media, seek: f64) -> i32 {
 }
 
 /// `first`'s sound from `seek`, as the player's decoder asks (`-f s16le -ac 2
-/// -ar <rate>`, and an `atempo` chain to play it faster or slower): silence,
-/// as many stereo samples as that much of the file takes at that speed.
+/// -ar <rate>`, and an `atempo` chain to play it faster or slower) and the
+/// transcription's (`-ac 1 -ar 16000`, for `-t` seconds): silence, as many
+/// samples of as many channels as that much of the file takes at that speed.
 fn decode_sound(run: &mut Run, first: &Media, seek: f64) -> i32 {
     let rate = run.after("-ar").and_then(|r| r.parse::<f64>().ok()).unwrap_or(48_000.0);
+    let channels = run.after("-ac").and_then(|c| c.parse::<usize>().ok()).unwrap_or(2);
     let speed: f64 = run
         .after("-af")
         .map_or(1.0, |chain| chain.split(',').filter_map(|f| f.strip_prefix("atempo=")?.parse::<f64>().ok()).product());
-    let mut left = (((first.duration - seek).max(0.0) / speed * rate).round() as usize) * 4;
+    let available = (first.duration - seek).max(0.0);
+    let length = run.after("-t").map_or(available, |t| number(Some(&t)).min(available));
+    let mut left = ((length / speed * rate).round() as usize) * 2 * channels;
     let chunk = [0u8; 4096];
     while left > 0 {
         if run.stopped() {

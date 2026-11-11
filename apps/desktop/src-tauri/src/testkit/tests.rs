@@ -369,3 +369,263 @@ fn the_screen_is_the_tests_and_keeps_what_the_player_shows_till_closed() {
     crate::screen::show(app.handle(), Some(shown));
     assert!(app.screen().showing().is_none() && app.screen().shows() == shows, "nothing once it's closed");
 }
+
+/// The lines VOD `id` has once its transcription has settled, as (start, text).
+fn transcribed(app: &TestApp, id: i64) -> Vec<(f64, String)> {
+    eventually("transcribed", || !crate::vods::busy(app.db().vod(id).unwrap().unwrap().status));
+    app.db().lines(id).unwrap().into_iter().map(|l| (l.start, l.text)).collect()
+}
+
+/// Each app's worker transcribes what its queue asks, saying the words it
+/// heard where the VOD says them: a section downloaded for a stretch of a
+/// site's VOD starts where it was cut, so a word at 1:10 is at 1:10, not ten
+/// seconds into the section. Two apps at once hear their own words.
+#[test]
+fn each_apps_worker_says_its_words_where_the_vod_says_them() {
+    let (app, other) = (TestApp::new(), TestApp::new());
+    app.worker().hears(vodscribe_core::testkit::said(70.0, "Inside the stretch"));
+    other.worker().hears(vodscribe_core::testkit::said(70.0, "Another app's words"));
+    let vod = app.add_site_vod("youtube", "noa29qsTc4g", "A talk", 600.0);
+    let file = other.add_video_file("Day 3.mp4", 600.0);
+    for (app, id) in [(&app, vod.id), (&other, file.id)] {
+        app.invoke("transcribe_stretch", json!({ "vodId": id, "start": 60.0, "end": 120.0 })).unwrap();
+    }
+    assert_eq!(transcribed(&app, vod.id), [(70.0, "Inside the stretch".to_string())]);
+    assert_eq!(transcribed(&other, file.id), [(70.0, "Another app's words".to_string())]);
+    assert_eq!(app.db().audio_path(vod.id).unwrap(), None, "the whole VOD downloaded, not a section");
+}
+
+/// A VOD saying `lines` lines, one a second, added: its id. An erasure of a
+/// thousand takes four parts (a part erases a third of a thousand lines).
+fn a_long_transcript(app: &TestApp, lines: usize) -> i64 {
+    let vod = app.add_video_file("A long talk.mp4", lines as f64);
+    let said: Vec<vodscribe_core::transcript::Segment> = (0..lines)
+        .map(|i| {
+            let words = vodscribe_core::testkit::said(i as f64, "word");
+            vodscribe_core::transcript::Segment { start: i as f64, end: i as f64 + 0.5, text: "word".into(), words }
+        })
+        .collect();
+    app.db().insert_segments(vod.id, &said).unwrap();
+    vod.id
+}
+
+/// An erasure held between its parts has erased one and let go of the
+/// library; held in a part, it keeps the library, while the views' reads,
+/// on a connection of their own, answer. Let go, it erases the rest.
+#[test]
+fn an_erasure_is_held_between_its_parts_or_in_one() {
+    let app = TestApp::new();
+    let vod = a_long_transcript(&app, 1000);
+    let between = Gate::new();
+    app.holds_erasures(&between);
+    app.invoke("delete_vod", json!({ "id": vod })).unwrap();
+    between.reached();
+    let left = app.db().erase_left(vod).unwrap();
+    assert!(0 < left && left < 1000, "{left} lines left after a part");
+    assert!(app.state().db.try_lock().is_ok(), "the library held between parts");
+    let in_a_part = Gate::new();
+    app.holds_erasure_parts(&in_a_part);
+    app.holds_erasures(&Gate::opened());
+    between.open();
+    in_a_part.reached();
+    assert!(app.state().db.try_lock().is_err(), "the library let go of in a part");
+    assert_eq!(app.invoke("list_vods", json!({})), Ok(json!([])), "a view's read waited");
+    in_a_part.open();
+    app.erasures_done();
+    assert_eq!(app.db().erase_left(vod).unwrap(), 0);
+}
+
+/// An edit's plan held once it's worked out isn't answered till let go;
+/// one asked meanwhile, not held, is.
+#[test]
+fn a_plan_held_is_answered_once_let_go() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let edit = app.invoke("create_edit", json!({})).unwrap()["id"].as_i64().unwrap();
+    app.invoke("add_range_to_edit", json!({ "editId": edit, "vodId": vod.id, "start": 10.0, "end": 20.0 })).unwrap();
+    let planned = Gate::new();
+    app.holds_plans(&planned);
+    let handle = app.handle().clone();
+    let first = std::thread::spawn(move || tauri::async_runtime::block_on(crate::player::player_plan(handle, edit)));
+    planned.reached();
+    app.holds_plans(&Gate::opened());
+    let second = app.invoke("player_plan", json!({ "id": edit })).unwrap();
+    assert_eq!(second.as_array().map(Vec::len), Some(1), "{second}");
+    assert!(!first.is_finished(), "answered while held");
+    planned.open();
+    assert_eq!(first.join().unwrap().map(|stretches| stretches.len()), Ok(1));
+}
+
+/// A search held once it's asked hasn't run: one typed after it runs
+/// first, and the one held, typed, gives way to it.
+#[test]
+fn a_search_held_once_asked_lets_one_typed_after_it_go_first() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    app.says(vod.id, 10.0, "The Eagle has landed");
+    let asked = Gate::new();
+    app.holds_searches(&asked);
+    let handle = app.handle().clone();
+    let search = move |handle| {
+        let filter = vodscribe_core::db::SearchFilter::default();
+        tauri::async_runtime::block_on(crate::vods::search(handle, "eagle".into(), filter, Some(true)))
+    };
+    let first = std::thread::spawn({
+        let handle = handle.clone();
+        move || search(handle).map(|_| ())
+    });
+    asked.reached();
+    app.holds_searches(&Gate::opened());
+    let second = app.invoke("search", json!({ "query": "eagle", "filter": {}, "typed": true })).unwrap();
+    assert_eq!(second["hits"].as_array().map(Vec::len), Some(1), "{second}");
+    asked.open();
+    assert_eq!(first.join().unwrap(), Err("overtaken by a newer search".to_string()));
+}
+
+/// A settings file read and found unreadable, held before it's set aside,
+/// is left as a save meanwhile wrote it; a save held before its turn lets
+/// one asked after it write first, and then writes over it.
+#[test]
+fn the_settings_are_held_after_a_read_and_before_a_save() {
+    use vodscribe_core::settings::{Settings, Theme};
+    let app = TestApp::new();
+    let path = app.paths().settings();
+    std::fs::write(&path, "not settings").unwrap();
+    let read = Gate::new();
+    app.holds_settings_reads(&read);
+    let loading = std::thread::spawn({
+        let path = path.clone();
+        move || Settings::load(&path)
+    });
+    read.reached();
+    let dark = Settings { theme: Theme::Dark, ..Settings::default() };
+    dark.save(&path).unwrap();
+    read.open();
+    loading.join().unwrap();
+    assert_eq!(Settings::load(&path).theme, Theme::Dark, "the file saved meanwhile set aside");
+    assert_eq!(Settings::taken_aside(&path), None);
+    let asked = Gate::new();
+    app.holds_settings_saves(&asked);
+    let saving = std::thread::spawn({
+        let path = path.clone();
+        move || Settings { theme: Theme::Light, ..Settings::default() }.save(&path).unwrap()
+    });
+    asked.reached();
+    app.holds_settings_saves(&Gate::opened());
+    Settings::default().save(&path).unwrap();
+    assert_eq!(Settings::load(&path).theme, Theme::System, "the save asked after it went first");
+    asked.open();
+    saving.join().unwrap();
+    assert_eq!(Settings::load(&path).theme, Theme::Light);
+}
+
+/// A line said by someone is read with their name, and one said by no one
+/// without; a site's VOD added on a channel is that channel's, and the fake
+/// site says so again after a restart, when the details are asked anew.
+#[test]
+fn a_line_has_its_speaker_and_a_vod_its_channel() {
+    let app = TestApp::new();
+    let vod = app.add_site_vod_of("twitch", "2901646294", "Day 3", 600.0, "Ada Plays");
+    assert_eq!(app.db().vod(vod.id).unwrap().unwrap().info.channel.as_deref(), Some("Ada Plays"));
+    app.says_as(vod.id, 10.0, "Hello chat", "Ada");
+    app.says(vod.id, 20.0, "Said by no one named");
+    let lines = app.invoke("transcript", json!({ "vodId": vod.id })).unwrap();
+    assert_eq!(lines[0]["speaker"], "Ada");
+    assert_eq!(lines[0]["text"], "Hello chat");
+    assert!(lines[1].get("speaker").is_none(), "{lines}");
+    let app = TestApp::on(app.quit());
+    let yt_dlp = vodscribe_core::tools::YtDlp { path: app.yt_dlp.path().into(), js_runtime: None };
+    let asked = app.paths().root.with_file_name("details.json");
+    let no = std::sync::atomic::AtomicBool::new(false);
+    let info = vodscribe_core::fetch::probe(&yt_dlp, &vod.info.url, &asked, &no).unwrap();
+    assert_eq!(info.channel.as_deref(), Some("Ada Plays"));
+}
+
+/// A clip dragged out to an editor through the kit hands it the clip's
+/// file, and the erasures are done once none is listed with the jobs.
+#[test]
+fn a_clip_dragged_out_gives_its_file_and_erasures_are_waited_out() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let given = app.dragged_out(&clip);
+    assert_eq!(Media::read(&given), Some(app.clip_media(&clip)));
+    let other = a_long_transcript(&app, 1000);
+    let between = Gate::new();
+    app.holds_erasures(&between);
+    app.invoke("delete_vod", json!({ "id": other })).unwrap();
+    between.reached();
+    let jobs = app.invoke("list_jobs", json!({})).unwrap();
+    assert!(jobs.as_array().unwrap().iter().any(|job| job["kind"] == "erase"), "{jobs}");
+    between.open();
+    app.erasures_done();
+    assert_eq!(app.db().erase_left(other).unwrap(), 0);
+}
+
+/// A library whose worker was faked has it again from its next start, so
+/// a transcription its queue takes up again reaches a worker (which hears
+/// nothing till told) and is done, rather than failing for want of one.
+#[test]
+fn a_restarted_app_has_its_worker_from_the_start() {
+    let app = TestApp::new();
+    let held = Gate::new();
+    app.worker().hears(vodscribe_core::testkit::said(10.0, "Before the quit"));
+    app.worker().holds(&held);
+    let vod = app.add_video_file("Day 3.mp4", 300.0);
+    app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
+    held.reached();
+    eventually("its first minute written", || app.db().requests(vod.id).unwrap().iter().any(|s| s.reached.is_some()));
+    let app = TestApp::on(app.quit());
+    transcribed(&app, vod.id);
+    let done = app.db().vod(vod.id).unwrap().unwrap();
+    assert_eq!((done.status, done.error), (vodscribe_core::db::Status::Done, None), "no worker took it up");
+}
+
+/// A thread a command started and didn't wait for (`started`: an added
+/// file's picture asked for, vods.rs `announce_file`) still running as the
+/// app ends is waited for before the app's state goes: let go only once the
+/// end has begun, it still finds the state. (Ended under it, a real one read
+/// freed memory: sections-074 2A1's report.)
+#[test]
+fn the_apps_end_waits_for_the_threads_its_commands_started() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let app = TestApp::new();
+    let late = Gate::new();
+    let found = Arc::new(AtomicBool::new(false));
+    let handle = app.handle().clone();
+    let thread = std::thread::spawn({
+        let (late, found, handle) = (late.clone(), found.clone(), handle.clone());
+        move || {
+            late.wait();
+            found.store(handle.try_state::<AppState>().is_some(), Ordering::SeqCst);
+        }
+    });
+    started(app.handle(), thread);
+    late.reached();
+    assert_eq!(app.threads_running(), 1);
+    // Let go once the app's end waits for it, or (were it not to) its state is gone.
+    let opener = std::thread::spawn(move || {
+        let waited_for = || handle.try_state::<Started>().is_none_or(|s| s.lock().is_empty());
+        while handle.try_state::<AppState>().is_some() && !waited_for() {
+            std::thread::yield_now();
+        }
+        late.open();
+    });
+    drop(app);
+    opener.join().unwrap();
+    assert!(found.load(Ordering::SeqCst), "the app's state went before the thread it started ended");
+}
+
+/// The thread an added file's command starts to ask for its picture
+/// (vods.rs `announce_file`) is one the app waits for (`threads_done`).
+#[test]
+fn an_added_files_picture_is_asked_for_on_a_thread_the_app_waits_for() {
+    let app = TestApp::new();
+    let path = app.paths().root.with_file_name("files").join("Day 4.mp4");
+    Media::video(60.0).write(&path);
+    app.run(crate::vods::add_files(app.handle().clone(), vec![path.to_string_lossy().into_owned()])).unwrap();
+    let started = app.app.state::<Started>().lock().len();
+    assert_eq!(started, 1, "its thread isn't waited for");
+    app.threads_done();
+    assert_eq!(app.threads_running(), 0);
+}

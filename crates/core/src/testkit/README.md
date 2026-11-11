@@ -2,7 +2,7 @@
 
 Fakes for what's outside the app, and helpers to set up a library, so a unit or integration test does no slow I/O and decides the order things happen in. The app's own kit, `apps/desktop/src-tauri/src/testkit.rs`, runs the whole app on them.
 
-- `tools.rs`: programs faked in this process, keyed by their path, and `Gate`, a point a fake waits at.
+- `tools.rs`: programs faked in this process, keyed by their path; `Gate`, a point a fake waits at; and the points of the library's own code a test holds (`hold_at`).
 - `ffmpeg.rs`: a fake ffmpeg: details, cuts and renders with progress, stills, the player's and the storyboards' decoding, and its failures.
 - `yt_dlp.rs`: a fake yt-dlp: a VOD's details and its downloads, as the site serves them.
 - `worker.rs`: a fake transcription worker: the words it's told are said.
@@ -57,10 +57,19 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
 - `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
+- `holds_erasures(&gate)` holds each erasure of a removed VOD between its parts, the library let go of; `holds_erasure_parts(&gate)` holds it in a part, the library still held.
+- `holds_plans(&gate)` holds each plan of an edit the page asks for once it's worked out, before it's played.
+- `holds_searches(&gate)` holds each search once it's asked, before it has its connection, so a search typed after it can go first.
+- `holds_settings_reads(&gate)` holds a read of an unreadable settings file before it sets the file aside, and `holds_settings_saves(&gate)` each save before its turn.
+- Each `holds_…` takes the place of the gate it held at before: `Gate::opened()` holds no more.
+- `worker()` is the transcription worker the app runs, faked, with its model installed: `app.worker().hears(said(10.0, "The Eagle has landed"))`, and the queue transcribes what's asked. The words are at the VOD's seconds, a section downloaded for a stretch included. A start on its library again has the worker from the start, hearing nothing till told.
+- `says_as(vod.id, 12.0, "Hello", "Ada")` is a line someone says, as a VODscription names them; `add_site_vod_of(…, "Ada Plays")` a VOD on that channel.
+- `dragged_out(&clip)` drags a clip out and lets it go on an editor that takes the file, and gives the file it got. `erasures_done()` waits till no VOD is being erased.
+- `threads_done()` waits for the threads the app's commands start and don't wait for (an added file's picture asked for). The app's end waits for them too, before its state goes; a new such thread is passed to `testkit::started`.
 - `clock()` is the app's clock. It stands still till the test moves it with `clock().advance(Duration::from_millis(250))`, so a cut's progress, sent at most every quarter second, is sent when the test says.
 - `with_screen()` gives the window a screen for the player to draw on, which the mock runtime's lacks, and `screen()` is it: `showing()` is the frame on it (None while it's black), `frame_shown()` waits for one and gives its number, `closed()` says whether it was taken away for good.
 - `started_with("VODSCRIBE_DRAG_WAITS", "1")` has the app see that variable, as if it had been started with it. Each test's variables are its own, and the process's aren't seen.
-- The app's queues end with the test, but a command that starts a thread of its own (looking up a VODscription after an add or a refresh, a site's player's picture let go, setup's and the GPU pack's installs) runs on: wait for what it does before the test ends.
+- The app's queues end with the test, but a command that starts a thread of its own (looking up a VODscription after an add or a refresh, a site's player's picture let go, setup's and the GPU pack's installs) runs on, unless it's passed to `started`: wait for what it does before the test ends.
 
 Times are written as a clock shows them (`"1:02:03.5"`), and `at` reads them. Run the tests with `cargo test` in `crates/core` and in `apps/desktop/src-tauri`; `cargo test clips::` runs one module's.
 
@@ -72,10 +81,13 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.ffmpeg.lacks("libx265")`: a build without that encoder, left out of its `-encoders` list too.
 - `app.ffmpeg.holds_list(&gate)`: its list of encoders waits at the gate, as a slow first run does.
 - `app.ffmpeg.holds_stills(&gate)`: each still it makes (a clip's picture) waits at the gate, its input read, as ffmpeg has the file open while it decodes.
+- `app.ffmpeg.holds_details(&gate)`: each time it's asked a file's details (a probe, the player's open among them), it waits at the gate.
 - `app.ffmpeg.updated()`: its file replaced, as an update does, so the app sees a new ffmpeg at the same path.
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
-- `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is.
-- `works()` puts ffmpeg back as it was.
+- `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is. A download is a part file beside its file till it's whole, as yt-dlp's is: one stopped or held partway leaves it.
+- `app.yt_dlp.holds_details(&gate)`: each look-up of a link's details (an add, a refresh) waits at the gate before it answers.
+- `app.worker().holds(&gate)` waits after the first minute it transcribes, and `fails_at(200.0, "message")` fails there.
+- `works()` puts ffmpeg back as it was, and the worker too, keeping what it hears.
 - `app.ffmpeg.runs()` gives the arguments of each run so far, in order.
 
 To play a race in a set order, hold a fake at a `Gate`, act, then let it go:
@@ -140,7 +152,7 @@ Fake media files hold what a file would (length, picture, sound) and what they w
 
 `Net::new()` answers links for as long as it's kept: `serves(prefix, body)`, or `answers(prefix, 404)`. Give a test's links a host of its own, since tests run at once.
 
-Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files.
+Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, and `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file.
 
 ## Older libraries
 

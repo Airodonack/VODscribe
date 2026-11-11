@@ -51,9 +51,19 @@ impl Library {
         add_site_vod(&self.db, platform, id, title, duration)
     }
 
+    /// `add_site_vod`, the VOD streamed on `channel` (yt-dlp's `channel`).
+    pub fn add_site_vod_of(&self, platform: &str, id: &str, title: &str, duration: f64, channel: &str) -> Vod {
+        add_site_vod_of(&self.db, platform, id, title, duration, Some(channel))
+    }
+
     /// `words` are said in VOD `vod_id` (`said`), as a transcription writes them.
     pub fn says(&mut self, vod_id: i64, words: Vec<Word>) {
         says(&mut self.db, vod_id, words)
+    }
+
+    /// `says`, by `speaker`, as an imported VODscription names who says a line.
+    pub fn says_as(&mut self, vod_id: i64, words: Vec<Word>, speaker: &str) {
+        says_as(&mut self.db, vod_id, words, speaker)
     }
 }
 
@@ -90,6 +100,11 @@ pub fn add_file(db: &Db, files: &std::path::Path, name: &str, media: &Media) -> 
 
 /// `Library::add_site_vod`, into `db`.
 pub fn add_site_vod(db: &Db, platform: &str, id: &str, title: &str, duration: f64) -> Vod {
+    add_site_vod_of(db, platform, id, title, duration, None)
+}
+
+/// `Library::add_site_vod_of`, into `db`: on `channel`, if one is given.
+pub fn add_site_vod_of(db: &Db, platform: &str, id: &str, title: &str, duration: f64, channel: Option<&str>) -> Vod {
     let url = match platform {
         "youtube" => format!("https://www.youtube.com/watch?v={id}"),
         "twitch" => format!("https://www.twitch.tv/videos/{id}"),
@@ -101,7 +116,7 @@ pub fn add_site_vod(db: &Db, platform: &str, id: &str, title: &str, duration: f6
         platform_id: id.into(),
         url,
         title: title.into(),
-        channel: None,
+        channel: channel.map(str::to_string),
         channel_login: None,
         channel_url: None,
         duration: Some(duration),
@@ -114,10 +129,24 @@ pub fn add_site_vod(db: &Db, platform: &str, id: &str, title: &str, duration: f6
 
 /// `Library::says`, into `db`: one line of `words`.
 pub fn says(db: &mut Db, vod_id: i64, words: Vec<Word>) {
-    let (Some(first), Some(last)) = (words.first(), words.last()) else { return };
-    let text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
-    let segment = Segment { start: first.start, end: last.end, text, words: words.clone() };
+    let Some(segment) = line(words) else { return };
     db.insert_segments(vod_id, &[segment]).unwrap();
+}
+
+/// `Library::says_as`, into `db`: one line of `words`, by `speaker`, as an
+/// import writes it (a transcription names no one).
+pub fn says_as(db: &mut Db, vod_id: i64, words: Vec<Word>, speaker: &str) {
+    let Some(s) = line(words) else { return };
+    let sql = format!("INSERT INTO segments ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", crate::db::SEGMENT_COLUMNS);
+    let words = serde_json::to_string(&s.words).unwrap();
+    db.conn.execute(&sql, rusqlite::params![vod_id, s.start, s.end, s.text, words, speaker]).unwrap();
+}
+
+/// `words` as one line: their text, from the first's start to the last's end.
+fn line(words: Vec<Word>) -> Option<Segment> {
+    let (start, end) = (words.first()?.start, words.last()?.end);
+    let text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+    Some(Segment { start, end, text, words })
 }
 
 /// `text`'s words said from `start` seconds on, half a second each.

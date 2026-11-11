@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 use super::*;
 use crate::settings::ClipEncoding;
-use crate::{clips, fetch, local, net, tools};
+use crate::{audio, clips, fetch, local, net, tools};
 
 fn never() -> AtomicBool {
     AtomicBool::new(false)
@@ -670,4 +670,159 @@ fn a_fake_frame_says_its_number_and_a_storyboard_picture_its_time() {
     assert_eq!(media::frame_number(&[255, 0, 0].repeat(4), 2, 2, 3), None, "not grey");
     assert_eq!(media::storyboard_time(&media::storyboard_jpeg(12.0, 160, 90)), Some(12.0));
     assert_eq!(media::storyboard_time(&[0xff, 0xd8, 0xff, 0xd9]), None);
+}
+
+/// Sound decoded as the waveform reads it (`peaks::read`, `audio::decode`:
+/// `-vn -ac 1 -ar 16000 -f s16le pipe:1`) comes down the fake ffmpeg's
+/// stdout, as ffmpeg's does: a sample for each 16,000th of a second asked
+/// for, and no file named `pipe:1` where the test runs (an invalid name on
+/// Windows). A file with no sound has none to give, and fails as ffmpeg
+/// does, writing nothing.
+#[test]
+fn a_fake_ffmpeg_decodes_sound_down_its_output_never_to_a_file() {
+    let dir = TempDir::new("kit-decode-sound");
+    let ffmpeg = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let decoded = |path: &Path, start: f64, end: Option<f64>| {
+        let mut samples = 0;
+        audio::decode(ffmpeg.path(), path, start, end, &never(), |s| {
+            samples += s.len();
+            Ok(())
+        })
+        .map(|()| samples)
+    };
+    let mut silent = Media::video(3.0);
+    silent.audio = None;
+    let picture = dir.join("silent.mp4");
+    silent.write(&picture);
+    let refused = decoded(&picture, 0.0, None);
+    let stray = || Path::new("pipe:1").exists();
+    assert!(!stray(), "a file named pipe:1 made in {}", std::env::current_dir().unwrap().display());
+    assert!(format!("{:#}", refused.unwrap_err()).contains("does not contain any stream"));
+    let sound = dir.join("sound.m4a");
+    Media::sound(3.0).write(&sound);
+    assert_eq!(decoded(&sound, 0.0, None).unwrap(), 3 * audio::SAMPLE_RATE, "the whole file, mono");
+    assert_eq!(decoded(&sound, 1.0, Some(2.5)).unwrap(), 3 * audio::SAMPLE_RATE / 2, "from 1 s for 1.5 s");
+    assert!(!stray());
+}
+
+/// The fake yt-dlp writes a download as it comes, to a part file beside
+/// it, as yt-dlp does: held partway, the part file is there and no file
+/// yet (`fetch::part_files` finds it); stopped there, it's left; let go,
+/// it's renamed into place, whole.
+#[test]
+fn a_fake_yt_dlps_download_is_a_part_file_till_its_whole() {
+    let dir = TempDir::new("kit-yt-dlp-part");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    fake.serves(yt_dlp::details("youtube", "noa29qsTc4g", url, "The test video", 600.0));
+    let yt_dlp = std::sync::Arc::new(tools::YtDlp { path: fake.path().into(), js_runtime: None });
+    let info_path = dir.join("info.json");
+    fetch::probe(&yt_dlp, url, &info_path, &never()).unwrap();
+    let download = |out: std::path::PathBuf, stop: std::sync::Arc<AtomicBool>| {
+        let (yt_dlp, info_path) = (yt_dlp.clone(), info_path.clone());
+        std::thread::spawn(move || fetch::download(&yt_dlp, &info_path, &out, fetch::Wanted::Audio, &stop, |_| {}))
+    };
+    let gate = Gate::new();
+    fake.holds(&gate);
+    // Stopped while held: its part is left.
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let stopped = download(dir.join("stopped"), stop.clone());
+    gate.reached();
+    let parts = fetch::part_files(&dir.join("stopped"));
+    assert_eq!(parts.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(), [dir.join("stopped.m4a.part")]);
+    assert!(parts[0].1 > 0, "nothing written yet");
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(stopped.join().unwrap().is_err());
+    assert!(dir.join("stopped.m4a.part").is_file(), "a stopped download's part file");
+    assert!(!dir.join("stopped.m4a").exists());
+    // Let go: renamed into place, whole.
+    let whole = download(dir.join("whole"), std::sync::Arc::new(never()));
+    eventually("held again", || fetch::part_files(&dir.join("whole")).len() == 1);
+    gate.open();
+    assert_eq!(whole.join().unwrap().unwrap(), dir.join("whole.m4a"));
+    assert!(fetch::part_files(&dir.join("whole")).is_empty(), "its part file left");
+    assert_eq!(Media::read(&dir.join("whole.m4a")).map(|m| m.duration), Some(600.0));
+}
+
+/// The fake ffmpeg held at a file's details has read the file and answers
+/// once let go, as a probe of a slow disk does (`local::probe`, the
+/// player's open).
+#[test]
+fn a_fake_ffmpeg_held_at_a_files_details_answers_once_let_go() {
+    let dir = TempDir::new("kit-details-hold");
+    let ffmpeg = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let path = a_minute(&dir);
+    let gate = Gate::new();
+    ffmpeg.holds_details(&gate);
+    let probing = std::thread::spawn({
+        let (ffmpeg, path) = (ffmpeg.path().to_path_buf(), path.clone());
+        move || local::probe(&ffmpeg, &path).map(|info| info.duration)
+    });
+    gate.reached();
+    assert!(!probing.is_finished(), "answered while held");
+    gate.open();
+    assert_eq!(probing.join().unwrap().unwrap(), Some(60.0));
+}
+
+/// The fake worker says words at the times of what its file is cut from:
+/// a file cut from second 60 says the word at 70 ten seconds in. Told it
+/// works again, it no longer fails, and hears what it heard.
+#[test]
+fn a_fake_worker_says_words_where_its_files_source_says_them() {
+    let dir = TempDir::new("kit-worker-cut");
+    let fake = Worker::at(dir.join("vodscribe-worker"));
+    fake.hears(said(70.0, "In the section").into_iter().chain(said(10.0, "Before it")).collect());
+    let mut section = Media::sound(60.0);
+    section.cut_from = Some(("https://www.youtube.com/watch?v=noa29qsTc4g".into(), 60.0));
+    let audio = dir.join("section.m4a");
+    section.write(&audio);
+    let words = |fake: &Worker| -> Result<Vec<(String, f64)>, String> {
+        let mut cmd = tools::command(fake.path());
+        cmd.arg(&audio);
+        let out = tools::output(&mut cmd).unwrap();
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        let lines = String::from_utf8(out.stdout).unwrap();
+        let lines = lines.lines().map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap());
+        Ok(lines
+            .flat_map(|l| l["words"].as_array().unwrap().clone())
+            .map(|w| (w["text"].as_str().unwrap().to_string(), w["start"].as_f64().unwrap()))
+            .collect())
+    };
+    assert_eq!(words(&fake).unwrap(), [("In".to_string(), 10.0), ("the".into(), 10.5), ("section".into(), 11.0)]);
+    fake.fails_at(5.0, "Error: the model couldn't be read");
+    assert!(words(&fake).unwrap_err().contains("couldn't be read"));
+    fake.works();
+    assert_eq!(words(&fake).unwrap().len(), 3);
+}
+
+/// A look-up of a link's details held at the fake yt-dlp's gate answers
+/// once let go, and a cancel meanwhile stops it, as an add's does.
+#[test]
+fn a_fake_yt_dlps_details_held_answer_once_let_go() {
+    let dir = TempDir::new("kit-yt-dlp-details");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    fake.serves(yt_dlp::details("youtube", "noa29qsTc4g", url, "The test video", 600.0));
+    let gate = Gate::new();
+    fake.holds_details(&gate);
+    let yt_dlp = tools::YtDlp { path: fake.path().into(), js_runtime: None };
+    let info_path = dir.join("info.json");
+    let probing = std::thread::spawn(move || fetch::probe(&yt_dlp, url, &info_path, &never()).map(|i| i.title));
+    gate.reached();
+    assert!(!probing.is_finished(), "answered while held");
+    gate.open();
+    assert_eq!(probing.join().unwrap().unwrap(), "The test video");
+}
+
+/// A gate no run reached fails its test, and can still be opened after,
+/// as a test's end opens what it held: the test fails, not the process.
+#[test]
+fn a_gate_never_reached_fails_its_test_and_still_opens() {
+    let gate = Gate::new();
+    let missed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| gate.reached()));
+    assert!(missed.is_err(), "reached with no run at it");
+    gate.open();
+    gate.wait();
 }

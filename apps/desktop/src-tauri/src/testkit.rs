@@ -10,6 +10,10 @@
 //! (`Clock`), and the variables it was started with are the test's own
 //! (`Env`). The window has no screen for the player to draw on till the
 //! test gives it one (`Screen`), and the player's sound goes to no device.
+//! The transcription worker, a sidecar, is faked once a test asks for it
+//! (`TestApp::worker`), with its model installed. A test holds the app's own
+//! code at a gate where a fake can't (`Held`): an erasure between its
+//! parts, a plan worked out, a settings file read or saved, a search asked.
 //! An app that quit or was killed leaves its folder (`Folder`) to the test,
 //! which starts the app on it again.
 //!
@@ -23,13 +27,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tauri::{Listener, Manager};
 use vodscribe_core::db::{Clip, ClipStatus, Db, Vod};
-use vodscribe_core::testkit::{Ffmpeg, Gate, Media, TempDir, YtDlp, eventually, library, yt_dlp};
+use vodscribe_core::testkit::tools::{self as fakes, At, Fake, Run};
+use vodscribe_core::testkit::{Ffmpeg, Gate, Media, TempDir, Worker, YtDlp, eventually, library, yt_dlp};
 
 use crate::{AppHandle, AppState, CmdResult, Rt, WebviewWindow};
 
@@ -71,6 +76,8 @@ pub(crate) struct TestApp {
     /// The yt-dlp the app finds, faked: it serves each site's VOD added with
     /// `add_site_vod`.
     pub(crate) yt_dlp: YtDlp,
+    /// The transcription worker the app runs, faked once asked for (`worker`).
+    worker: OnceLock<Worker>,
     heard: Arc<Mutex<HashMap<String, Vec<Value>>>>,
     /// Where the test's own files go (a VOD's file on this computer),
     /// outside the library's folder.
@@ -125,6 +132,14 @@ impl Drop for TestApp {
         crate::player::close(self.handle());
         self.ffmpeg.end();
         self.yt_dlp.end();
+        if let Some(worker) = self.worker.get() {
+            worker.end();
+            let model = self.paths().model_dir();
+            routes().retain(|(m, _)| *m != model);
+        }
+        // What the library's own code was held at lets go, as the app's below.
+        vodscribe_core::testkit::tools::let_go(&self.paths().root);
+        self.state().searches.lets_go();
         no_links().retain(|dir| *dir != self.paths().clips());
         held().retain(|(_, dir, gate)| {
             let ours = *dir == self.paths().clips();
@@ -133,6 +148,8 @@ impl Drop for TestApp {
             }
             !ours
         });
+        // The threads its commands started end before the state they read goes.
+        self.threads_done();
         let state = self.state();
         state.clips.close();
         state.sweeper.close();
@@ -192,6 +209,13 @@ impl TestApp {
         app.manage(crate::recovery::Problem::none(paths.db()));
         app.manage(crate::screen::Screen::default());
         app.manage(Screen::default());
+        app.manage(Started::default());
+        // A library whose model a test installed (`worker`) has its worker
+        // from the start, for a transcription its queue takes up again.
+        let worker = OnceLock::new();
+        if vodscribe_core::model::is_installed(&paths.model_dir(), &vodscribe_core::model::CPU_MODEL) {
+            let _ = worker.set(fake_worker(&paths));
+        }
         // The player's sound plays out in time on a stand-in, not the
         // computer's speakers (every player opened from now, in any test).
         vodscribe_player::sound::stand_in::choose();
@@ -199,8 +223,7 @@ impl TestApp {
         vodscribe_core::library::settle(&db).unwrap();
         // The site still has the VODs added before, for what's left to make.
         for vod in db.vods().unwrap().iter().filter(|v| v.info.platform != vodscribe_core::local::PLATFORM) {
-            let (info, duration) = (&vod.info, vod.info.duration.unwrap_or_default());
-            yt_dlp.serves(yt_dlp::details(&info.platform, &info.platform_id, &info.url, &info.title, duration));
+            yt_dlp.serves(details(vod));
         }
         let store = paths.leftovers();
         let chats = crate::open_library(app.handle(), paths, db).unwrap();
@@ -210,6 +233,7 @@ impl TestApp {
             window,
             ffmpeg,
             yt_dlp,
+            worker,
             heard,
             files,
             dragged: AtomicU64::new(0),
@@ -267,7 +291,7 @@ impl TestApp {
     /// before the library is taken to record it (`clipboard::copy_file`), as
     /// on a slow disk the copy itself would take a while.
     pub(crate) fn holds_copies(&self, gate: &Gate) {
-        held().push((Held::Copies, self.paths().clips(), gate.clone()));
+        self.holds(Held::Copies, gate);
     }
 
     /// A clip's cut, or an edit's render, once its encode is over (ffmpeg
@@ -275,14 +299,89 @@ impl TestApp {
     /// to record it (`clips::cut`, `edits::render_edit`): the moment between
     /// a clip made and its job's end.
     pub(crate) fn holds_cut_ends(&self, gate: &Gate) {
-        held().push((Held::CutEnds, self.paths().clips(), gate.clone()));
+        self.holds(Held::CutEnds, gate);
+    }
+
+    /// Each erasure from now (`vods::erase_unused`) waits at `gate` after
+    /// each part of a VOD's chat and transcript it erases, the library let
+    /// go of: between its parts, when the commands have their turn.
+    pub(crate) fn holds_erasures(&self, gate: &Gate) {
+        self.holds(Held::BetweenParts, gate);
+    }
+
+    /// Each part of an erasure from now waits at `gate` once it's erased,
+    /// the library still held, as a slow disk's delete keeps it: what reads
+    /// on a connection of its own (the views, search) goes on meanwhile.
+    pub(crate) fn holds_erasure_parts(&self, gate: &Gate) {
+        self.holds(Held::InAPart, gate);
+    }
+
+    /// Each plan of an edit the page asks for from now (`player_plan`) waits
+    /// at `gate` once it's worked out, before it's played: one that takes
+    /// longer than the next asked for.
+    pub(crate) fn holds_plans(&self, gate: &Gate) {
+        self.holds(Held::Planned, gate);
+    }
+
+    /// Each search from now (`search`) waits at `gate` once it's asked, a
+    /// typed one numbered, before it has its connection: as one does behind
+    /// a search of seconds (`vodscribe_core::searcher`).
+    pub(crate) fn holds_searches(&self, gate: &Gate) {
+        self.state().searches.holds(gate);
+    }
+
+    /// Each read of the settings file from now that finds it unreadable
+    /// (`Settings::load`) waits at `gate` before it sets the file aside.
+    pub(crate) fn holds_settings_reads(&self, gate: &Gate) {
+        fakes::hold_at(At::SettingsRead, &self.paths().settings(), gate);
+    }
+
+    /// Each save of the settings from now (`Settings::save`) waits at `gate`
+    /// before it takes its turn and writes: a save asked later can go first.
+    pub(crate) fn holds_settings_saves(&self, gate: &Gate) {
+        fakes::hold_at(At::SettingsSave, &self.paths().settings(), gate);
+    }
+
+    /// The app's own code waits at `gate` at `at` from now, in place of any
+    /// gate it waited at there before (`Gate::opened()` to hold no more).
+    fn holds(&self, at: Held, gate: &Gate) {
+        let dir = self.paths().clips();
+        let mut held = held();
+        held.retain(|(h, d, _)| !(*h == at && *d == dir));
+        held.push((at, dir, gate.clone()));
+    }
+
+    /// Waits for the threads the app's commands started of their own
+    /// (`started`: an added file's picture asked for) to end. The app's end
+    /// waits for them too, before its state goes.
+    pub(crate) fn threads_done(&self) {
+        let threads = std::mem::take(&mut *self.app.state::<Started>().lock());
+        for thread in threads {
+            // One that panicked has said so on its own.
+            let _ = thread.join();
+        }
+    }
+
+    /// How many of the threads the app's commands started (`started`) are
+    /// still running.
+    pub(crate) fn threads_running(&self) -> usize {
+        self.app.state::<Started>().lock().iter().filter(|t| !t.is_finished()).count()
+    }
+
+    /// The transcription worker the app runs, faked (`Worker`), and its
+    /// model installed: from the first call on, the app's queue transcribes
+    /// what's asked, each file saying what the worker `hears`. A start on a
+    /// library whose model is installed (`on`) has it from the start,
+    /// hearing nothing till told.
+    pub(crate) fn worker(&self) -> &Worker {
+        self.worker.get_or_init(|| fake_worker(&self.paths()))
     }
 
     /// `forget_gone_clips`, once it has looked at the clips' files (without
     /// the library held), waits at `gate` before it takes the library to
     /// take those it found gone.
     pub(crate) fn holds_gone_looks(&self, gate: &Gate) {
-        held().push((Held::GoneLooks, self.paths().clips(), gate.clone()));
+        self.holds(Held::GoneLooks, gate);
     }
 
     /// The app's clock (`Clock`): it stands still till the test moves it.
@@ -424,13 +523,47 @@ impl TestApp {
     /// seconds long, added to the library; the fake site serves it.
     pub(crate) fn add_site_vod(&self, platform: &str, id: &str, title: &str, duration: f64) -> Vod {
         let vod = library::add_site_vod(&self.db(), platform, id, title, duration);
-        self.yt_dlp.serves(yt_dlp::details(platform, id, &vod.info.url, title, duration));
+        self.yt_dlp.serves(details(&vod));
+        vod
+    }
+
+    /// `add_site_vod`, the VOD streamed on `channel`.
+    pub(crate) fn add_site_vod_of(&self, platform: &str, id: &str, title: &str, duration: f64, channel: &str) -> Vod {
+        let vod = library::add_site_vod_of(&self.db(), platform, id, title, duration, Some(channel));
+        self.yt_dlp.serves(details(&vod));
         vod
     }
 
     /// `text` is said in VOD `vod_id` from `start` seconds (`library::said`).
     pub(crate) fn says(&self, vod_id: i64, start: f64, text: &str) {
         library::says(&mut self.db(), vod_id, library::said(start, text));
+    }
+
+    /// `says`, by `speaker`, as an imported VODscription names who says a line.
+    pub(crate) fn says_as(&self, vod_id: i64, start: f64, text: &str, speaker: &str) {
+        library::says_as(&mut self.db(), vod_id, library::said(start, text), speaker);
+    }
+
+    /// Clip `clip` dragged out of the window and let go on an editor that
+    /// takes the file itself (`drag_clip`, through the kit's drag), the drag
+    /// waited out: the file it was given.
+    pub(crate) fn dragged_out(&self, clip: &Clip) -> PathBuf {
+        self.drag_out(&[clip.id]).unwrap();
+        let drag = self.drags().last();
+        drag.let_go(LetGo::On(Receiver::taking_files("Kdenlive")));
+        self.drag_ended();
+        let given = drag.given();
+        assert_eq!(given.len(), 1, "clip {} not handed out", clip.id);
+        given[0].clone()
+    }
+
+    /// Waits till the list of jobs (`list_jobs`) shows no VOD being erased,
+    /// nor waiting to be.
+    pub(crate) fn erasures_done(&self) {
+        eventually("the erasures done", || {
+            let jobs = self.invoke("list_jobs", serde_json::json!({})).unwrap();
+            jobs.as_array().unwrap().iter().all(|job| job["kind"] != "erase")
+        });
     }
 
     /// Makes a clip of VOD `vod_id` from `from` to `to` ("0:10", "1:02:03.5")
@@ -490,6 +623,116 @@ pub(crate) fn refuses_links(at: &Path) -> bool {
     no_links().iter().any(|dir| at.starts_with(dir))
 }
 
+/// The threads the app's commands start of their own and don't wait for
+/// (`started`), for the test's app to wait for (`TestApp::threads_done`):
+/// one still reading the state as the app ends would read freed memory.
+#[derive(Default)]
+pub(crate) struct Started(Mutex<Vec<std::thread::JoinHandle<()>>>);
+
+impl Started {
+    /// The threads, though a test failed holding them.
+    fn lock(&self) -> MutexGuard<'_, Vec<std::thread::JoinHandle<()>>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// A command of `app`'s started `thread`, which it doesn't wait for: the
+/// test's app waits for it before it ends.
+pub(crate) fn started(app: &AppHandle, thread: std::thread::JoinHandle<()>) {
+    // An app the kit didn't start has no list: the thread is its test's.
+    if let Some(started) = app.try_state::<Started>() {
+        started.lock().push(thread);
+    }
+}
+
+/// The details the fake site serves of site VOD `vod` (`yt_dlp::details`),
+/// its channel among them.
+fn details(vod: &Vod) -> Value {
+    let info = &vod.info;
+    let mut details =
+        yt_dlp::details(&info.platform, &info.platform_id, &info.url, &info.title, info.duration.unwrap_or_default());
+    if let Some(channel) = &info.channel {
+        details["channel"] = channel.as_str().into();
+    }
+    details
+}
+
+/// The app's worker, a sidecar beside the app (`tools::sidecar`), is at one
+/// path for every test in this process, so one fake there passes each run
+/// on to its test's own (`Worker`), found by the model folder the app gives
+/// it, which is in its library.
+fn routes() -> MutexGuard<'static, Vec<(PathBuf, PathBuf)>> {
+    static ROUTES: Mutex<Vec<(PathBuf, PathBuf)>> = Mutex::new(Vec::new());
+    ROUTES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A fake worker for the library at `paths`, its model installed and each
+/// run of the sidecar for it passed on to it (`relay`).
+fn fake_worker(paths: &vodscribe_core::Paths) -> Worker {
+    static SIDECAR: OnceLock<Fake> = OnceLock::new();
+    SIDECAR.get_or_init(|| {
+        let exe = std::env::current_exe().unwrap();
+        fakes::fake(exe.with_file_name(format!("vodscribe-worker{}", std::env::consts::EXE_SUFFIX)), relay)
+    });
+    install_model(&paths.model_dir());
+    let worker = Worker::at(paths.root.with_file_name("worker").join("vodscribe-worker"));
+    routes().push((paths.model_dir(), worker.path().to_path_buf()));
+    worker
+}
+
+/// The model the CPU worker reads, as installed (`model::is_installed`
+/// goes by each file's size): its files hard links to one set of empty
+/// files that size, made once in the system's temporary folder.
+fn install_model(dir: &Path) {
+    use vodscribe_core::model::{CPU_MODEL, is_installed};
+    static FILES: OnceLock<PathBuf> = OnceLock::new();
+    if is_installed(dir, &CPU_MODEL) {
+        return;
+    }
+    let files = FILES.get_or_init(|| {
+        let files = std::env::temp_dir().join(format!("vodscribe-test-model-{}", std::process::id()));
+        std::fs::create_dir_all(&files).unwrap();
+        for file in CPU_MODEL.files {
+            std::fs::File::create(files.join(file.name)).unwrap().set_len(file.size).unwrap();
+        }
+        files
+    });
+    std::fs::create_dir_all(dir).unwrap();
+    for file in CPU_MODEL.files {
+        std::fs::hard_link(files.join(file.name), dir.join(file.name)).unwrap();
+    }
+}
+
+/// Runs the test's own worker with the arguments the app gave, passing on
+/// what it writes, and stops it when the app stops this run.
+fn relay(run: &mut Run) -> i32 {
+    let model = run.after("--model").map(PathBuf::from);
+    let Some(to) = routes().iter().find(|(m, _)| Some(m) == model.as_ref()).map(|(_, w)| w.clone()) else {
+        run.err("Error: no test's worker for this library\n");
+        return 1;
+    };
+    let mut cmd = vodscribe_core::tools::command(&to);
+    cmd.args(run.args());
+    let mut child = vodscribe_core::tools::spawn(&mut cmd).unwrap();
+    let errors = vodscribe_core::tools::drain(child.stderr.take().unwrap());
+    let (tx, rx) = mpsc::channel();
+    vodscribe_core::tools::send_lines(child.stdout.take().unwrap(), tx);
+    loop {
+        match rx.recv_timeout(Duration::from_millis(2)) {
+            Ok(line) => run.out(&format!("{line}\n")),
+            Err(mpsc::RecvTimeoutError::Timeout) if run.stopped() => {
+                child.kill_tree();
+                return 255;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let status = child.wait().unwrap();
+    run.err(&errors.join().unwrap_or_default());
+    status.code().unwrap_or(255)
+}
+
 /// Where in the app's own code a test holds it at a gate.
 #[derive(Clone, Copy, PartialEq)]
 enum Held {
@@ -499,6 +742,12 @@ enum Held {
     CutEnds,
     /// `forget_gone_clips`, its files looked at (`TestApp::holds_gone_looks`).
     GoneLooks,
+    /// An erasure between its parts (`TestApp::holds_erasures`).
+    BetweenParts,
+    /// An erasure's part erased, the library held (`TestApp::holds_erasure_parts`).
+    InAPart,
+    /// An edit's plan worked out, not yet played (`TestApp::holds_plans`).
+    Planned,
 }
 
 /// The gates the app's own code waits at, each with where (`Held`) and the
@@ -534,6 +783,24 @@ pub(crate) fn cut_ended(out: &Path) {
 /// its test holds those looks (`TestApp::holds_gone_looks`).
 pub(crate) fn gone_looked(clips: &Path) {
     hold(Held::GoneLooks, clips);
+}
+
+/// An erasure has erased a part and let go of the library: it waits there
+/// if its test holds erasures (`TestApp::holds_erasures`).
+pub(crate) fn between_parts(app: &AppHandle) {
+    hold(Held::BetweenParts, &app.state::<AppState>().paths.clips());
+}
+
+/// An erasure has erased a part, the library still held: it waits there if
+/// its test holds erasures' parts (`TestApp::holds_erasure_parts`).
+pub(crate) fn in_a_part(app: &AppHandle) {
+    hold(Held::InAPart, &app.state::<AppState>().paths.clips());
+}
+
+/// An edit's plan is worked out: it waits there if its test holds plans
+/// (`TestApp::holds_plans`).
+pub(crate) fn planned(app: &AppHandle) {
+    hold(Held::Planned, &app.state::<AppState>().paths.clips());
 }
 
 /// The app's clock in a test (`TestApp::clock`): it stands still till the

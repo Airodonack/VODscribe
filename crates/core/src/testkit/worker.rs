@@ -1,8 +1,10 @@
 //! A fake transcription worker that answers as the worker does
 //! (`pipeline`'s `WorkerLine`s): the words the test says are spoken in the
-//! file it's given, from `--start` to `--end`, in batches of a minute. It
-//! fails as the worker does when the file isn't there, and on request
-//! partway; or holds partway at a `Gate`.
+//! file it's given, from `--start` to `--end`, in batches of a minute. The
+//! words are said in what the file is cut from (its `cut_from`): a file cut
+//! from second 60 of a VOD says the word at 70 ten seconds in. It fails as
+//! the worker does when the file isn't there, and on request partway; or
+//! holds partway at a `Gate`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -19,7 +21,7 @@ pub struct Worker {
 
 #[derive(Clone, Default)]
 struct Plan {
-    /// What's said in every file, in the file's own seconds.
+    /// What's said, in the seconds of what each file is cut from.
     words: Vec<Word>,
     /// Fails once it reaches this second, saying this.
     fail: Option<(f64, String)>,
@@ -48,9 +50,17 @@ impl Worker {
         self.fake.path()
     }
 
-    /// From now every file it's given says `words` (`said`).
+    /// From now every file it's given says `words` (`said`), at their
+    /// times in what the file is cut from, or in the file made whole.
     pub fn hears(&self, words: Vec<Word>) {
         self.plan.lock().unwrap().words = words;
+    }
+
+    /// From now it works as it should: no failure or hold. What it hears
+    /// stays.
+    pub fn works(&self) {
+        let mut plan = self.plan.lock().unwrap();
+        (plan.fail, plan.hold) = (None, None);
     }
 
     /// From now it fails once it reaches second `at`, with `message` as the
@@ -76,6 +86,10 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     };
     let start = run.after("--start").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let end = run.after("--end").and_then(|s| s.parse::<f64>().ok()).unwrap_or(media.duration).min(media.duration);
+    // The words in the file's own seconds: a section of a VOD starts where it was cut.
+    let from = media.cut_from.as_ref().map_or(0.0, |(_, at)| *at);
+    let words: Vec<Word> =
+        plan.words.iter().map(|w| Word { text: w.text.clone(), start: w.start - from, end: w.end - from }).collect();
     let mut at = start;
     let mut first = true;
     while at < end {
@@ -86,7 +100,7 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
             run.err(&format!("{message}\n"));
             return 1;
         }
-        let words: Vec<&Word> = plan.words.iter().filter(|w| w.start >= at && w.start < to).collect();
+        let words: Vec<&Word> = words.iter().filter(|w| w.start >= at && w.start < to).collect();
         let line = serde_json::json!({ "end": to, "words": words });
         run.out(&format!("{line}\n"));
         if std::mem::take(&mut first)

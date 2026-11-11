@@ -31,33 +31,10 @@ fn user_files(names: &[&str], media: &Media) -> (TempDir, Vec<PathBuf>) {
     (dir, paths)
 }
 
-/// `add_files`'s answer for `paths`, as the page gets it, once each VOD's
-/// picture is asked for (`pictures_asked_for`).
+/// `add_files`'s answer for `paths`, as the page gets it. The thread it
+/// starts to ask for each VOD's picture is waited for by the kit.
 fn add_files(app: &TestApp, paths: &[PathBuf]) -> AddedFiles {
-    let added = app.run(crate::vods::add_files(app.handle().clone(), as_strings(paths))).unwrap();
-    pictures_asked_for(app, &added.vods.iter().map(|v| v.id).collect::<Vec<_>>());
-    added
-}
-
-/// Waits till the picture of each file's VOD in `ids`, just added, has
-/// been asked for: its storyboard begun, or the VOD known to have no
-/// picture. The add asks on a thread of its own (vods.rs `announce_file`,
-/// `thumbnails::cache_thumbnail`) that reads the app's state, so the app
-/// mustn't end before it has (the kit ends the app's queues, not that thread).
-fn pictures_asked_for(app: &TestApp, ids: &[i64]) {
-    let boards = app.paths().storyboards();
-    for &id in ids {
-        let begun = || {
-            let named = format!("{id}-");
-            std::fs::read_dir(&boards)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .any(|f| f.file_name().to_string_lossy().starts_with(&named))
-        };
-        let none = || app.db().vod(id).unwrap().is_some_and(|v| v.thumb.is_some());
-        eventually(&format!("VOD {id}'s picture asked for"), || begun() || none());
-    }
+    app.run(crate::vods::add_files(app.handle().clone(), as_strings(paths))).unwrap()
 }
 
 fn as_strings(paths: &[PathBuf]) -> Vec<String> {
@@ -194,7 +171,6 @@ fn several_files_added_at_once_are_all_added() {
     });
     for answer in &answers {
         assert_eq!(answer.errors, Vec::<String>::new());
-        pictures_asked_for(&app, &answer.vods.iter().map(|v| v.id).collect::<Vec<_>>());
     }
     assert_eq!(answers.iter().map(|a| a.vods.len()).sum::<usize>(), 12);
     let titles = vods(&app).into_iter().map(|v| v.info.title).collect::<std::collections::BTreeSet<_>>();
@@ -271,7 +247,6 @@ fn a_file_of_the_apps_own_data_is_added_only_if_it_was_received() {
     }
     assert!(crate::vods::add_received(app.handle(), &clip).is_err(), "a clip's file taken as received");
     let id = crate::vods::add_received(app.handle(), &arrived).unwrap();
-    pictures_asked_for(&app, &[id]);
     let vod = app.db().vod(id).unwrap().unwrap();
     assert!(vod.received && vod.listed);
     assert_eq!(vods(&app).len(), 1);

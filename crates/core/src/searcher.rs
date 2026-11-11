@@ -21,11 +21,35 @@ pub struct Searcher {
     db: Mutex<Db>,
     /// The newest typed search, by number.
     newest: Arc<AtomicU64>,
+    /// Where a test holds each search, asked and not yet on the connection (`holds`).
+    #[cfg(any(test, feature = "testkit"))]
+    hold: Mutex<Option<crate::testkit::Gate>>,
 }
 
 impl Searcher {
     pub fn new(db: Db) -> Searcher {
-        Searcher { db: Mutex::new(db), newest: Arc::default() }
+        Searcher {
+            db: Mutex::new(db),
+            newest: Arc::default(),
+            #[cfg(any(test, feature = "testkit"))]
+            hold: Mutex::default(),
+        }
+    }
+
+    /// Each search from now waits at `gate` once it's asked (a typed one
+    /// numbered), before it has the connection, as one does behind a
+    /// search of seconds: for a test to type another meanwhile.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn holds(&self, gate: &crate::testkit::Gate) {
+        *self.hold.lock().unwrap() = Some(gate.clone());
+    }
+
+    /// Lets go of the searches held (`holds`), and holds no more: a test's end.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn lets_go(&self) {
+        if let Some(gate) = self.hold.lock().unwrap().take() {
+            gate.open();
+        }
     }
 
     /// Runs `f` with the search's connection. One `typed` into the search
@@ -34,6 +58,13 @@ impl Searcher {
     pub fn run<T>(&self, typed: bool, f: impl FnOnce(&Db) -> Result<T>) -> Result<Option<T>> {
         // Numbered as it's asked, before the wait for the connection.
         let mine = typed.then(|| self.newest.fetch_add(1, Ordering::SeqCst) + 1);
+        #[cfg(any(test, feature = "testkit"))]
+        {
+            let held = self.hold.lock().unwrap().clone();
+            if let Some(gate) = held {
+                gate.wait();
+            }
+        }
         let db = self.db.lock().unwrap();
         let Some(mine) = mine else { return f(&db).map(Some) };
         let newest = self.newest.clone();

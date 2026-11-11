@@ -195,8 +195,13 @@ fn announce_file(app: &AppHandle, vod: &Vod, created: bool) {
     if created {
         // A file has no chat; the queue records that.
         app.state::<AppState>().chat.push(vod.id);
-        let (app, id) = (app.clone(), vod.id);
-        std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
+        let (handle, id) = (app.clone(), vod.id);
+        let thread = std::thread::spawn(move || thumbnails::cache_thumbnail(&handle, id));
+        // A test's app waits for it before it ends.
+        #[cfg(test)]
+        crate::testkit::started(app, thread);
+        #[cfg(not(test))]
+        drop(thread);
     }
 }
 
@@ -632,6 +637,10 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
             return Ok(());
         }
         let n = db.delete_some_of(id, ERASE_PART)?;
+        #[cfg(test)]
+        if n > 0 {
+            crate::testkit::in_a_part(app);
+        }
         drop(db);
         if n == 0 {
             break;
@@ -640,6 +649,8 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
         // The files are the rest.
         let progress = 0.95 * (done as f64 / total.max(1) as f64).min(1.0);
         crate::job_list::progressed_on(app, crate::job_list::Queue::Erase, id, progress);
+        #[cfg(test)]
+        crate::testkit::between_parts(app);
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }

@@ -24,19 +24,6 @@ use vodscribe_core::testkit::Media;
 
 use crate::testkit::{TestApp, at};
 
-/// Clip `clip` dragged out of the window and let go on an editor that takes
-/// the file itself (`drag_clip`, through the kit's drag): the file it was given.
-fn dragged_out(app: &TestApp, clip: &Clip) -> PathBuf {
-    use crate::testkit::{LetGo, Receiver};
-    app.drag_out(&[clip.id]).unwrap();
-    let drag = app.drags().last();
-    drag.let_go(LetGo::On(Receiver::taking_files("Kdenlive")));
-    app.drag_ended();
-    let given = drag.given();
-    assert_eq!(given.len(), 1, "clip {} not handed out", clip.id);
-    given[0].clone()
-}
-
 fn file_of(clip: &Clip) -> PathBuf {
     PathBuf::from(clip.file_path.clone().expect("a made clip's file"))
 }
@@ -102,7 +89,7 @@ fn a_clip_dragged_out_where_the_disk_takes_no_links_keeps_that_file_when_deleted
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     assert_eq!(given, file_of(&clip), "a drag here hands out the clip's own file");
     app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
     assert!(app.clip(clip.id).is_none());
@@ -120,7 +107,7 @@ fn a_clip_deleted_and_undone_is_made_again_beside_the_file_another_app_took() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     let was = as_given(&given);
     app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
     app.invoke("undo", json!({ "view": { "kind": "vod", "id": vod.id } })).unwrap();
@@ -136,7 +123,7 @@ fn a_clip_dragged_out_where_the_disk_takes_links_keeps_only_its_name() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     assert!(given.starts_with(app.paths().clip_names(clip.id)), "handed out as {given:?}");
     app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
     assert!(given.is_file(), "the name another app took");
@@ -188,7 +175,7 @@ fn a_clip_made_only_for_a_drag_keeps_the_file_it_handed_out_at_the_next_start() 
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.run(crate::clips::add_clip(app.handle().clone(), vod.id, at("0:10"), at("0:20"), Some(false)));
     let clip = app.made(clip.unwrap().id);
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     let app = TestApp::on(app.quit());
     assert!(app.clip(clip.id).is_none(), "forgotten at the start");
     assert!(given.is_file(), "the file another app took was deleted at the next start");
@@ -203,7 +190,7 @@ fn clips_deleted_together_keep_the_file_another_app_was_given() {
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let a = app.make_clip(vod.id, "0:10", "0:20");
     let b = app.make_clip(vod.id, "0:30", "0:40");
-    let given = dragged_out(&app, &a);
+    let given = app.dragged_out(&a);
     app.invoke("delete_clips", json!({ "ids": [a.id, b.id] })).unwrap();
     assert!(app.clips(vod.id).is_empty());
     assert!(given.is_file(), "the file another app took was deleted with its clip");
@@ -218,7 +205,7 @@ fn a_vod_removed_keeps_the_clip_file_another_app_was_given() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     app.invoke("delete_vod", json!({ "id": vod.id, "anyway": true })).unwrap();
     assert!(app.clip(clip.id).is_none(), "its clip is still there");
     assert!(given.is_file(), "the file another app took was deleted with its VOD");
@@ -235,7 +222,7 @@ fn a_clip_made_again_in_another_format_keeps_the_file_another_app_was_given() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     let mut settings = vodscribe_core::settings::Settings::load(&app.paths().settings());
     settings.clip_codec = Some(ClipCodec::Prores);
     settings.normalized().save(&app.paths().settings()).unwrap();
@@ -261,7 +248,7 @@ fn a_file_another_app_was_given_is_never_left_to_delete_later() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     // A folder that can't be written to holds its files, as Windows holds one open.
     let clips = app.paths().clips();
     let mode = |m| std::fs::set_permissions(&clips, std::fs::Permissions::from_mode(m)).unwrap();
@@ -305,7 +292,7 @@ fn a_clip_made_again_in_the_same_format_keeps_the_file_another_app_was_given() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     let before = as_given(&given);
     let again = resized(&app, &clip, "0:30", "0:35");
     assert_eq!(as_given(&given), before, "the file another app took was written over");
@@ -330,7 +317,7 @@ fn a_clip_made_again_as_a_mov_and_back_keeps_the_file_another_app_was_given() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     let before = as_given(&given);
     codec(&app, ClipCodec::Prores);
     let mov = resized(&app, &clip, "0:10", "0:20");
@@ -436,7 +423,7 @@ fn a_name_handed_out_after_the_clip_s_own_file_keeps_that_file() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     app.invoke("show_clip", json!({ "id": clip.id })).unwrap();
     let shown = app.desktop().shown().pop().unwrap();
     assert!(shown.starts_with(app.paths().clip_names(clip.id)), "a copy: {shown:?}");
@@ -569,7 +556,7 @@ fn a_clip_deleted_as_its_cut_ends_and_undone_keeps_the_file_another_app_took() {
     app.takes_no_hard_links();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     deleted_as_its_remake_ends_and_undone(&app, vod.id, clip.id, &given, || {
         app.invoke("set_clip_range", json!({ "id": clip.id, "start": at("0:10"), "end": at("0:25") })).unwrap();
     });
@@ -585,7 +572,7 @@ fn a_clip_deleted_as_its_render_ends_and_undone_keeps_the_file_another_app_took(
     let clip = app.make_clip(vod.id, "0:10", "0:20");
     app.invoke("remove_stretch", json!({ "id": clip.id, "from": 2.0, "to": 3.0 })).unwrap();
     let clip = app.made(clip.id);
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     deleted_as_its_remake_ends_and_undone(&app, vod.id, clip.id, &given, || {
         app.invoke("remove_stretch", json!({ "id": clip.id, "from": 5.0, "to": 6.0 })).unwrap();
     });
@@ -700,7 +687,7 @@ fn a_name_another_app_took_stays_when_its_clip_is_made_again_and_deleted() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
-    let given = dragged_out(&app, &clip);
+    let given = app.dragged_out(&clip);
     let before = as_given(&given);
     resized(&app, &clip, "0:30", "0:35");
     assert_eq!(as_given(&given), before, "the name another app took went with the remake");
