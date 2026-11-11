@@ -466,6 +466,22 @@ fn a_librarys_file_is_a_vod_read_where_it_is_with_what_is_said() {
     assert_eq!(site.info.url, "https://www.twitch.tv/videos/2901646294");
 }
 
+/// A test's library is written without waiting on the disk (README.md:
+/// the kit is there "so a unit or integration test does no slow I/O"):
+/// nothing is flushed at a commit, so a test's time isn't the disk's (CI's
+/// Windows runners stalled seconds on it, and a test's five seconds ran
+/// out). What the app sees is the same: a commit is there at once for
+/// another connection.
+#[test]
+fn a_librarys_commits_wait_on_no_flush_to_the_disk() {
+    let library = Library::new();
+    let synchronous: i64 = library.db.conn.query_row("PRAGMA synchronous", [], |r| r.get(0)).unwrap();
+    assert_eq!(synchronous, 0, "OFF");
+    let vod = library.add_file("Day 3.mp4", &Media::video(60.0));
+    let reader = crate::db::Db::open_reader(&library.paths).unwrap();
+    assert_eq!(reader.vod(vod.id).unwrap().map(|v| v.id), Some(vod.id), "seen at once by another connection");
+}
+
 /// A fake writing more than a pipe holds to an app that has stopped
 /// reading it still ends when the app stops it, as a killed program does.
 #[test]

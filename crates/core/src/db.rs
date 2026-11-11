@@ -1510,6 +1510,12 @@ impl Db {
         // then writes fails "database is locked" at once if another connection
         // (the worker's) has written since its read.
         conn.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
+        // A test's library is never flushed to the disk: a flush is what
+        // survives a power cut, which no test has, and with one at each
+        // commit every test waited on the disk, so a disk that stalled for
+        // seconds (CI's Windows runners) failed what was waiting then.
+        #[cfg(any(test, feature = "testkit"))]
+        conn.execute_batch("PRAGMA synchronous = OFF;")?;
         // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
