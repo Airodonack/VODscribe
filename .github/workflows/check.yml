@@ -56,6 +56,9 @@ jobs:
       # The version being worked on has a CHANGELOG.md entry, and the parsing works.
       - run: python3 -I scripts/release.py --check
       - run: python3 -I scripts/test_release.py
+      # The unreleased changelog entry's shape: short headlines, fixes last under "- Fixes:".
+      - run: python3 -I scripts/changelog-check.py
+      - run: python3 -I scripts/test_changelog_check.py
 
       - run: pnpm install --frozen-lockfile
       # The workflow files parse as workflows (after pnpm install: the checker needs the yaml package; a dropped indent ran no Checks job at all once).

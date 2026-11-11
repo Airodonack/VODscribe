@@ -16,6 +16,8 @@ Builds, release packaging and checks, run by hand and by CI.
 - `release.py`: names the build's files, writes `latest.json` and the winget manifests; `--version` prints the version a commit carries.
 - `verify-release.py`: checks a published release as the app and the website see it.
 - `test_release.py`: tests of the two release scripts.
+- `changelog-check.py`: checks the shape of `CHANGELOG.md`'s unreleased entries.
+- `test_changelog_check.py`: its tests.
 
 ## Releasing
 

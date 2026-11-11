@@ -1,5 +1,7 @@
 #!/bin/sh
-# Refuses a commit whose Rust or frontend code isn't formatted.
+# Refuses a commit whose Rust or frontend code isn't formatted, a workflow
+# file that doesn't parse, or a staged CHANGELOG.md whose unreleased entry is
+# out of shape.
 # Enable once per clone: git config core.hooksPath .githooks
 # Fix with: cargo fmt --all && pnpm format
 root=$(git rev-parse --show-toplevel)
@@ -13,5 +15,9 @@ if git diff --cached --name-only | grep -q '^apps/[^/]*/src/'; then
 fi
 if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
   node scripts/check-workflows.mjs >/dev/null 2>&1 || { echo "A workflow file doesn't parse as a workflow: node scripts/check-workflows.mjs" >&2; ok=1; }
+fi
+# The staged CHANGELOG.md, not the working copy: that is what gets committed.
+if git diff --cached --name-only --diff-filter=d | grep -qx 'CHANGELOG.md'; then
+  git show :CHANGELOG.md | python3 -I scripts/changelog-check.py - >&2 || ok=1
 fi
 exit $ok
