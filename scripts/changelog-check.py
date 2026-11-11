@@ -13,7 +13,7 @@ colon, dash or parenthesis, then one sentence of detail", and the fixes go
 What this checks, in every entry whose heading says "(unreleased)":
 
 - each bullet's headline, its first sentence, has eight words or fewer and
-  no colon or parenthesis;
+  no colon, dash or parenthesis;
 - the fixes come last, as sub-bullets ("  - ") under one "- Fixes:" bullet,
   with nothing else under it (no heading, no other kind of bullet, no
   prose), and no sub-bullet sits above it;
@@ -62,6 +62,10 @@ def headline_problem(text: str) -> str:
         return f"opens with {words} words before its first full stop (at most {HEADLINE_WORDS})"
     if ":" in first or "(" in first:
         return "has a colon or a parenthesis in its headline"
+    # A dash between words (an em or en dash, or a hyphen with spaces round
+    # it); a hyphen inside a word, as in "drag-out", is no dash.
+    if "\u2014" in first or "\u2013" in first or " - " in first:
+        return "has a dash in its headline"
     return ""
 
 

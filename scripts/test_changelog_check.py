@@ -124,6 +124,13 @@ class Headline(unittest.TestCase):
         # In the detail they are fine, and so is a full stop inside `code`.
         self.assertEqual(check.entry_problems("- Search learns more words. Such as `from:a. B` (or `in:chat`)."), [])
 
+    def test_a_headline_with_a_dash(self):
+        self.assertIn("dash", check.headline_problem("Clips come back \u2014 at once. Detail."))
+        self.assertIn("dash", check.headline_problem("Clips come back \u2013 at once. Detail."))
+        self.assertIn("dash", check.headline_problem("Clips come back - at once. Detail."))
+        # A hyphen inside a word is no dash, and a dash in the detail is fine.
+        self.assertEqual(check.headline_problem("Drag-out works on Wayland. Detail \u2014 here."), "")
+
     def test_headline_problem(self):
         self.assertEqual(check.headline_problem("Eight words is the most it takes. Detail."), "")
         self.assertIn("9 words", check.headline_problem("Nine words is one more than it can take. Detail."))
