@@ -236,6 +236,7 @@ fn tidy_at_start(paths: &Paths, db: &Db) {
     embed::clear(&paths.temp_embed());
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
     footage::tidy_work(&paths.work());
+    storyboards::tidy(&paths.storyboards());
     // Only tidying from here, so a library that can't be read isn't a
     // reason not to start.
     let vods = db.vods();

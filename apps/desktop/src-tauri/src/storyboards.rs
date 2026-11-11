@@ -249,26 +249,33 @@ pub(crate) fn sweep(app: &AppHandle) {
     let state = app.state::<AppState>();
     let Ok(vods) = state.db.lock().unwrap().vods() else { return };
     let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
-    let dir = dir(app);
-    delete(&dir, |vod, board| {
+    delete(&dir(app), |vod, board| {
         let gone = |b: &Storyboard| {
             let path = Path::new(&b.fingerprint.path);
             !path.exists() && path.parent().is_some_and(Path::is_dir)
         };
-        !library.contains(&vod) || board.is_none_or(gone)
+        // A VOD not in the library as it was at the start may have been
+        // added since: asked again now. Ids are never used again, so one
+        // not there now is gone for good.
+        let erased = || !library.contains(&vod) && matches!(state.db.lock().unwrap().vod(vod), Ok(None));
+        board.is_none_or(gone) || erased()
     });
-    // Leftovers of a header being written.
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().ends_with(".sb-new") {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
     for id in library {
         let files = files_of(app, &state.db.lock().unwrap(), id);
         if files.iter().any(|f| !made(&file(app, id, f), f)) {
             state.storyboards.push(id);
+        }
+    }
+}
+
+/// At startup, before the storyboards' queue runs: deletes the leftovers
+/// of a header being written (`.sb-new`) that a quit or a crash left.
+/// Later, the queue may be writing one.
+pub(crate) fn tidy(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().ends_with(".sb-new") {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -479,6 +486,110 @@ mod tests {
         assert!(!deleted_under_it, "deleted while its storyboard's ffmpeg read it");
         assert!(!left, "left behind, its record gone");
         assert_eq!(db.lock().unwrap().media_path(id).unwrap(), None);
+    }
+
+    /// The header of a storyboard of `source` with no slot made yet, as
+    /// `vodscribe_player::storyboard` writes it (its module doc has the
+    /// layout): the tests' ffmpeg is a fake the storyboards can't run.
+    fn begun(source: &Path) -> Vec<u8> {
+        let fingerprint = Fingerprint::of(source).unwrap();
+        let mut head = b"VSSB".to_vec();
+        head.extend(1u32.to_le_bytes());
+        head.extend((fingerprint.path.len() as u32).to_le_bytes());
+        head.extend(fingerprint.path.as_bytes());
+        head.extend(fingerprint.size.to_le_bytes());
+        head.extend(fingerprint.modified.to_le_bytes());
+        head.extend(160u32.to_le_bytes());
+        head.extend(90u32.to_le_bytes());
+        head.extend(2.0f64.to_le_bytes());
+        head.extend(30u32.to_le_bytes());
+        head.extend(60.0f64.to_le_bytes());
+        head
+    }
+
+    /// A VOD added while the startup sweep runs keeps its storyboard
+    /// (`sweep`: "deletes the storyboards of VODs and files no longer
+    /// here"; this VOD is here). The sweep is held partway at a FIFO among
+    /// the storyboards, which it blocks opening till the test lets it go.
+    #[cfg(unix)]
+    #[test]
+    fn a_vod_added_during_the_startup_sweep_keeps_its_storyboard() {
+        use crate::testkit::TestApp;
+
+        let app = TestApp::new();
+        let first = app.add_video_file("Day 1.mp4", 60.0);
+        let source = PathBuf::from(first.source_path.clone().unwrap());
+        let dir = app.paths().storyboards();
+        std::fs::create_dir_all(&dir).unwrap();
+        let control = app.paths().source_storyboard(first.id, &source);
+        std::fs::write(&control, begun(&source)).unwrap();
+
+        // The next VOD's storyboard, ready for the moment its row is added
+        // (the sweep goes by the VOD its name says and what the library
+        // has, not by which came first), and a FIFO the sweep opens before
+        // it. A directory lists its files in an order of the filesystem's
+        // own (by creation, newest first, or by a hash of the name), so
+        // the two are made in either order, under names of their own,
+        // till the FIFO is listed first.
+        let next = first.id + 1;
+        let board = app.paths().source_storyboard(next, &source);
+        let listed = || -> Vec<PathBuf> { std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect() };
+        let fifo = (0..64)
+            .find_map(|i| {
+                let fifo = dir.join(format!("{}-held{i}.sb", first.id));
+                let mkfifo = || assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+                let _ = std::fs::remove_file(&board);
+                if i % 2 == 0 {
+                    mkfifo();
+                    std::fs::write(&board, begun(&source)).unwrap();
+                } else {
+                    std::fs::write(&board, begun(&source)).unwrap();
+                    mkfifo();
+                }
+                let order = listed();
+                let at = |p: &Path| order.iter().position(|o| o == p);
+                if at(&fifo) < at(&board) {
+                    return Some(fifo);
+                }
+                std::fs::remove_file(&fifo).unwrap();
+                None
+            })
+            .expect("a FIFO listed before the storyboard");
+
+        let handle = app.handle().clone();
+        let sweep = std::thread::spawn(move || sweep(&handle));
+        // Opening the FIFO to write waits till the sweep opens it to read:
+        // it's held there, the library as it began read already.
+        let writer = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+        let added = app.add_video_file("Day 2.mp4", 60.0);
+        assert_eq!(added.id, next);
+        drop(writer);
+        sweep.join().unwrap();
+
+        assert!(control.exists(), "the storyboard of a VOD in the library when the sweep began was deleted");
+        assert!(board.exists(), "the storyboard of VOD {next}, added during the sweep, was deleted");
+    }
+
+    /// A storyboard's header being written aside (`.sb-new`, then renamed)
+    /// while the startup sweep runs is left to be written: the sweep runs
+    /// beside the storyboards' queue. One a quit or crash left is gone at
+    /// the next start.
+    #[test]
+    fn a_storyboard_begun_during_the_startup_sweep_is_left_to_be_made() {
+        use crate::testkit::TestApp;
+
+        let app = TestApp::new();
+        let vod = app.add_video_file("Day 1.mp4", 60.0);
+        let source = PathBuf::from(vod.source_path.clone().unwrap());
+        let aside = app.paths().source_storyboard(vod.id, &source).with_extension("sb-new");
+        std::fs::create_dir_all(aside.parent().unwrap()).unwrap();
+        std::fs::write(&aside, begun(&source)).unwrap();
+        sweep(app.handle());
+        assert!(aside.exists(), "a header being written was deleted under the queue");
+
+        let app = TestApp::on(app.quit());
+        assert!(!aside.exists(), "a header a quit left was kept");
+        drop(app);
     }
 
     #[test]
