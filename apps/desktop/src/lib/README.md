@@ -115,6 +115,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `TranscriptHead.svelte`: the switch between transcript and chapters on a narrow window.
 - `rows.ts`: the transcript's rows, each line with its chat.
 - `transcriptGroups.ts`: a speaker's lines grouped under one head.
+- `transcriptReads.ts`: the transcript read whole or by range, one read at a time.
 - `pinned.ts`: headings pinned at the top while their lines show.
 - `follow.ts`: the transcript following the playhead.
 - `ChatMessage.svelte`: one chat message.

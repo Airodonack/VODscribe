@@ -38,6 +38,7 @@
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import { load, save } from "./stored";
+  import { transcriptReads } from "./transcriptReads";
   import Icon from "./Icon.svelte";
   import { annotated } from "./annotated.svelte";
   import { castIndex, isVoice, speakerColor } from "./annotated";
@@ -131,35 +132,35 @@
   // An edit's lines are asked for again at each change to it.
   let revision = $derived(edit !== null && edits.open?.id === edit ? edits.open.revision : null);
   let duration = $derived(edit !== null ? edits.length : (vod?.duration ?? 0));
-  // Only the latest request's answer counts, so a slow older reload can't win;
-  // reading everything again makes any stretch's read under way stale too.
-  let seq = 0;
-  let rangeSeq = 0;
+  // One read at a time, the latest asked counting (transcriptReads.ts), so a
+  // slow older read can't land over the lines a newer one brought.
+  const reads = transcriptReads({
+    lines: () => lines,
+    show: (r, whole) => {
+      lines = r.lines;
+      if (r.stretches) stretches = r.stretches;
+      if (whole) {
+        error = null;
+        read = true;
+      }
+    },
+    failed: (e, whole) => {
+      error = String(e);
+      if (whole) read = true;
+    },
+  });
   $effect(() => {
     const id = vodId;
     void asked;
     void revision;
     // Annotations imported bring a transcript of their own.
     void annotated.imports(vod?.id);
-    const mine = ++seq;
-    rangeSeq++;
-    if (edit !== null) {
-      api.editLines(edit).then(
-        (l) => mine === seq && ((lines = l), (error = null), (read = true)),
-        (e) => mine === seq && ((error = String(e)), (read = true)),
-      );
-      return;
-    }
-    Promise.all([api.transcript(id), api.transcriptStretches(id)]).then(
-      ([l, s]) => {
-        if (mine !== seq) return;
-        lines = l;
-        stretches = s;
-        error = null;
-        read = true;
-      },
-      (e) => mine === seq && ((error = String(e)), (read = true)),
-    );
+    const of = edit;
+    reads.whole(async () => {
+      if (of !== null) return { lines: await api.editLines(of) };
+      const [l, s] = await Promise.all([api.transcript(id), api.transcriptStretches(id)]);
+      return { lines: l, stretches: s };
+    });
   });
 
   // A stretch being transcribed replaces the lines in its range as it goes
@@ -174,18 +175,12 @@
       const stretch = stretches.find((s) => s.id === id);
       // Not read yet: everything is being read, it with it.
       if (!stretch) return;
-      const mine = ++rangeSeq;
+      const of = vodId;
       const { start, end } = stretch;
-      Promise.all([api.transcriptRange(vodId, start, end), api.transcriptStretches(vodId)]).then(
-        ([l, s]) => {
-          if (mine !== rangeSeq) return;
-          const before = lines.filter((line) => line.start < start);
-          const after = end === null ? [] : lines.filter((line) => line.start >= end);
-          lines = [...before, ...l, ...after];
-          stretches = s;
-        },
-        (e) => mine === rangeSeq && (error = String(e)),
-      );
+      reads.range(start, end, async () => {
+        const [l, s] = await Promise.all([api.transcriptRange(of, start, end), api.transcriptStretches(of)]);
+        return { lines: l, stretches: s };
+      });
     });
   });
 
