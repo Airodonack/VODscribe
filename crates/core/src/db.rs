@@ -1904,9 +1904,11 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Puts a mark on VOD `vod_id`'s own clip at `start` seconds of the VOD.
+    /// Puts a mark on VOD `vod_id`'s own clip at `start` seconds of the VOD,
+    /// if that's within it (`clips::check_mark`).
     pub fn add_mark(&self, vod_id: i64, kind: &str, start: f64, text: Option<&str>) -> Result<Mark> {
         let clip = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
+        crate::clips::check_mark(start, self.vod_duration(vod_id)?).map_err(anyhow::Error::msg)?;
         let at = Flicks::from_seconds(start);
         let id = self.change(clip, None, |db| db.insert_mark(clip, vod_id, kind, at, text))?;
         Ok(Mark {
@@ -1982,8 +1984,12 @@ impl Db {
         })
     }
 
-    /// Moves mark `id` to `start` seconds; false if it's gone.
+    /// Moves mark `id` to `start` seconds of its VOD, if that's within it
+    /// (`clips::check_mark`); false if it's gone.
     pub fn move_mark(&self, id: i64, start: f64) -> Result<bool> {
+        let vod = self.conn.query_row("SELECT vod_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let Some(vod) = vod else { return Ok(false) };
+        crate::clips::check_mark(start, self.vod_duration(vod)?).map_err(anyhow::Error::msg)?;
         self.change_mark(id, |db| {
             let at = Flicks::from_seconds(start).0;
             db.conn.execute("UPDATE marks SET at = ?2, source = ?3 WHERE id = ?1", params![id, at, USER_MARK])?;

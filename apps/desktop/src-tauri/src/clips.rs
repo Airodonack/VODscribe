@@ -1389,6 +1389,7 @@ fn mark_text(text: Option<String>) -> Option<String> {
 
 /// Puts a mark on VOD `vod_id`'s timeline at `time` seconds: a cut (between
 /// two frames) unless `kind` says a chapter or a highlight, with its `text`.
+/// A time outside the VOD is refused (`clips::check_mark`).
 #[tauri::command]
 pub(crate) async fn add_mark(
     app: AppHandle,
@@ -1398,9 +1399,6 @@ pub(crate) async fn add_mark(
     kind: Option<String>,
     text: Option<String>,
 ) -> CmdResult<Mark> {
-    if !(time.is_finite() && time >= 0.0) {
-        return Err("A mark has to be within the video.".into());
-    }
     let kind = kind.unwrap_or_else(|| "cut".into());
     if !MARK_KINDS.contains(&kind.as_str()) {
         return Err("That isn't a kind of mark.".into());
@@ -1435,11 +1433,10 @@ fn marking(
     history::change(app, &db, doc, label, work).map_err(err)
 }
 
+/// Moves mark `id` to `time` seconds of its VOD (`clips::check_mark`), or of
+/// its edit's timeline.
 #[tauri::command]
 pub(crate) async fn move_mark(app: AppHandle, id: i64, time: f64) -> CmdResult<()> {
-    if !(time.is_finite() && time >= 0.0) {
-        return Err("A mark has to be within the video.".into());
-    }
     // In an edit, `time` is of its timeline: the mark goes to the moment playing there.
     marking(&app, id, "Mark moved", |db, doc| match doc {
         Doc::Vod(_) => db.move_mark(id, time),

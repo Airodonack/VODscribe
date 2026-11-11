@@ -129,20 +129,66 @@ fn a_mark_before_the_start_or_at_no_real_time_is_refused() {
 }
 
 /// A mark past the video's end is refused too, the same words: "A mark has to
-/// be within the video." (app clips.rs:951, :990; plan disagreement 5: only a
-/// negative or unreal time is refused today, so a mark at 9,999 s of a 60 s
-/// VOD is recorded.)
+/// be within the video." (crates/core/src/clips.rs `check_mark`; plan
+/// disagreement 5, a bug: "Marks past the end are a bug, fix it", owner,
+/// 2026-11-11.) A file's and a site's VOD alike, added or moved there.
 #[test]
-#[ignore = "disagreement: a mark past the VOD's end is accepted"]
 fn a_mark_past_the_video_s_end_is_refused() {
     let app = TestApp::new();
+    let file = app.add_video_file("Day 3.mp4", 60.0).id;
+    let site = app.add_site_vod("twitch", "2901646294", "Day 4", 60.0).id;
+    for vod in [file, site] {
+        for time in [9999.0, 60.001] {
+            is(app.add_mark(vod, time, Some("chapter"), None), "A mark has to be within the video.");
+        }
+        let early = app.add_mark(vod, 10.0, None, None).unwrap();
+        is(
+            app.invoke("move_mark", json!({ "id": mark_id(&early), "time": 9999.0 })).map(|_| Value::Null),
+            "A mark has to be within the video.",
+        );
+        assert_eq!(app.marks(vod), [("cut".to_string(), 10.0, None)], "where it was");
+        assert_eq!(app.steps(history::Doc::Vod(vod)), 1, "only the mark at 10 s");
+    }
+}
+
+/// A mark at the video's very end is in it: the timeline reaches it, and a
+/// mark nudged a frame on stops there (media.ts `nudge`).
+#[test]
+fn a_mark_at_the_video_s_very_end_is_taken() {
+    let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
-    is(app.add_mark(vod, 9999.0, None, None), "A mark has to be within the video.");
-    let early = app.add_mark(vod, 10.0, None, None).unwrap();
-    is(
-        app.invoke("move_mark", json!({ "id": mark_id(&early), "time": 9999.0 })).map(|_| Value::Null),
-        "A mark has to be within the video.",
-    );
+    app.add_mark(vod, 60.0, Some("highlight"), None).unwrap();
+    let cut = app.add_mark(vod, 10.0, None, None).unwrap();
+    app.invoke("move_mark", json!({ "id": mark_id(&cut), "time": 60.0 })).unwrap();
+    assert_eq!(app.marks(vod).iter().map(|m| m.1).collect::<Vec<_>>(), [60.0, 60.0]);
+}
+
+/// A VOD whose length isn't known (a site that didn't say, or gave 0) has no
+/// end a mark can be past: the page goes by its player's length then. Its
+/// start still bounds it.
+#[test]
+fn a_mark_on_a_vod_of_no_known_length_is_bounded_only_by_its_start() {
+    let app = TestApp::new();
+    for (id, duration) in [("1", None), ("2", Some(0.0))] {
+        let info = vodscribe_core::fetch::VodInfo {
+            platform: "example".into(),
+            platform_id: id.into(),
+            url: format!("https://example.example/{id}"),
+            title: "No length".into(),
+            channel: None,
+            channel_login: None,
+            channel_url: None,
+            duration,
+            thumbnail: None,
+            published: None,
+            started_at: None,
+        };
+        let vod = app.db().add_vod(&info).unwrap().0.id;
+        let mark = app.add_mark(vod, 9999.0, None, None).unwrap();
+        app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": 12345.0 })).unwrap();
+        assert_eq!(app.marks(vod), [("cut".to_string(), 12345.0, None)], "{duration:?}");
+        is(app.add_mark(vod, -1.0, None, None), "A mark has to be within the video.");
+    }
 }
 
 /// A mark on a VOD that is gone says so: "That VOD is gone." (app
@@ -241,17 +287,21 @@ fn a_mark_moved_in_an_edit_goes_to_the_moment_playing_there() {
     assert_eq!(app.edit_marks(edit)[0].1, 15.0, "of the edit");
 }
 
-/// A mark moved outside its edit is refused: "A mark has to be within the
-/// edit." (app clips.rs:998).
+/// A mark moved outside its edit, before its start or past its end, is
+/// refused: "A mark has to be within the edit." (app clips.rs:998).
 #[test]
 fn a_mark_moved_outside_its_edit_is_refused() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
     let edit = app.edit_of(vod, &[(0.0, 10.0), (30.0, 40.0)]);
     let mark = app.invoke("add_edit_mark", json!({ "editId": edit, "time": 2.0, "kind": "highlight" })).unwrap();
-    let moved = app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": 25.0 })).map(|_| Value::Null);
-    is(moved, "A mark has to be within the edit.");
+    for time in [25.0, 20.5, -3.0] {
+        let moved = app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": time })).map(|_| Value::Null);
+        is(moved, "A mark has to be within the edit.");
+    }
     assert_eq!(app.edit_marks(edit)[0].1, 2.0, "where it was");
+    // Its very end is in it.
+    app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": 20.0 })).unwrap();
 }
 
 /// A mark moved before the start is refused (app clips.rs:990: "A mark has

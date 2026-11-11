@@ -52,6 +52,22 @@ pub fn check_span(start: f64, end: f64, end_of: Option<f64>) -> Result<(), &'sta
     Ok(())
 }
 
+/// Said of a mark at no real time, or outside its video.
+pub const MARK_OUTSIDE: &str = "A mark has to be within the video.";
+
+/// Whether a mark can go at `time` seconds of a video `end_of` seconds long,
+/// if that's known: a real time from its start to its very end, which the
+/// timeline reaches. A length of 0 (as a site or ffmpeg may give one it
+/// doesn't know) isn't one, and an unknown length bounds nothing, as the
+/// page then goes by its player's.
+pub fn check_mark(time: f64, end_of: Option<f64>) -> Result<(), &'static str> {
+    let past_the_end = end_of.is_some_and(|d| d > 0.0 && time > d);
+    if !(time.is_finite() && time >= 0.0) || past_the_end {
+        return Err(MARK_OUTSIDE);
+    }
+    Ok(())
+}
+
 /// A title or note as written for a clip, an edit, a piece or a mark:
 /// trimmed, at most 200 characters; None if nothing's left.
 pub fn written_title(text: &str) -> Option<String> {
