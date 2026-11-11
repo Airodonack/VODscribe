@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use vodscribe_core::db::{Clip, ClipStatus};
 use vodscribe_core::settings::ClipCodec;
 use vodscribe_core::testkit::{Gate, Media, eventually};
+use vodscribe_core::transcript::Segment;
 
 use crate::testkit::TestApp;
 
@@ -398,6 +399,68 @@ fn deleting_a_vods_video_keeps_its_transcript() {
     assert!(!Path::new(&file).exists(), "its video is still there");
     assert!(!app.db().vod(vod.id).unwrap().unwrap().media, "it says its video is kept");
     assert_eq!(transcript(&app, vod.id), ["The Eagle has landed"]);
+}
+
+/// Deleting a VOD's video while its transcription waits in the queue takes
+/// the transcription out, keeping the lines it wrote as Stop does, and
+/// deletes the video (sections-074.md, decided 2026-11-11 (owner): "deleting
+/// a transcribing vod is supposed to also cancel the transcription";
+/// vods.rs:842, `cancel_vod`: "Ends a VOD's requests, keeping the lines they
+/// wrote").
+#[test]
+fn deleting_a_vods_video_while_its_transcription_waits_cancels_it_keeping_its_lines() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    keep_video(&app, vod.id);
+    let file = app.db().playable_path(vod.id).unwrap().unwrap();
+    let asked = app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
+    let request = asked["id"].as_i64().unwrap();
+    // Its audio is the kept video: it's ready at once, and waits for the
+    // transcriber, which no test installs.
+    eventually("the request ready", || app.db().stretch(request).unwrap().unwrap().status == Status::Ready);
+    // What its transcription wrote before it was paused and resumed: the
+    // worker's first batch, through to 0:30.
+    let line = Segment { start: 12.0, end: 14.0, text: "The Eagle has landed".into(), words: Vec::new() };
+    app.db().replace_segments(vod.id, request, (0.0, Some(30.0)), &[line], 30.0).unwrap();
+    assert_eq!(app.invoke("delete_video", json!({ "id": vod.id })), Ok(Value::Null));
+    assert!(!Path::new(&file).exists(), "its video is still there");
+    assert!(!app.db().vod(vod.id).unwrap().unwrap().media, "it says its video is kept");
+    assert!(app.db().requests(vod.id).unwrap().is_empty(), "its transcription still waits");
+    let stretches = app.db().stretches(vod.id).unwrap();
+    assert_eq!(stretches.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(), [(0.0, Some(30.0))]);
+    assert_eq!(transcript(&app, vod.id), ["The Eagle has landed"]);
+}
+
+/// Deleting a VOD's video while it's being transcribed stops the
+/// transcription where it is and deletes the video, with nothing of it left
+/// running (sections-074.md, decided 2026-11-11 (owner): "deleting a
+/// transcribing vod is supposed to also cancel the transcription";
+/// CHANGELOG.md, 0.4.0 Fixes: "Removing a VOD, or deleting its downloaded
+/// video, didn't stop what was still using it."). The transcription is held
+/// downloading its audio, begun before the video was kept; the kit fakes no
+/// transcriber, so one held transcribing can't be reached yet.
+#[test]
+fn deleting_a_vods_video_while_it_is_transcribed_stops_the_transcription() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    let begun = Gate::new();
+    app.yt_dlp.holds(&begun);
+    app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
+    begun.reached();
+    // Its video kept meanwhile; only the transcription's download is held.
+    let open = Gate::new();
+    open.open();
+    app.yt_dlp.holds(&open);
+    keep_video(&app, vod.id);
+    let file = app.db().playable_path(vod.id).unwrap().unwrap();
+    assert_eq!(app.invoke("delete_video", json!({ "id": vod.id })), Ok(Value::Null));
+    assert!(!Path::new(&file).exists(), "its video is still there");
+    assert!(!app.db().vod(vod.id).unwrap().unwrap().media, "it says its video is kept");
+    // The gate stays shut: the download was stopped, not let go on.
+    assert!(app.db().requests(vod.id).unwrap().is_empty(), "its transcription is still there");
+    assert!(!app.paths().source_audio(vod.id, "m4a").exists(), "its download went on");
+    let status = app.invoke("list_vods", json!({})).unwrap()[0]["status"].clone();
+    assert!(!["queued", "downloading", "ready", "transcribing"].contains(&status.as_str().unwrap()), "{status}");
 }
 
 /// A VOD from a site without a player of its own, whose video was deleted,

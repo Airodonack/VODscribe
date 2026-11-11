@@ -675,9 +675,13 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
 
 /// Deletes the video kept for VOD `id`, keeping its transcript. It then
 /// plays in its site's player where the app shows one, and elsewhere is
-/// downloaded again when played (`pipeline::keeps_video`).
+/// downloaded again when played (`pipeline::keeps_video`). Its transcription,
+/// running or waiting, is canceled first, as Stop does (`cancel_vod`): its
+/// audio may be the video.
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || cancel_and_wait(&handle, id)).await.map_err(err)??;
     let remove = |paths: &Paths, id| remove_kept(&state.storyboards, paths, id);
     delete_kept_video(&state.db, &state.videos, &state.paths, id, remove)?;
     crate::storyboards::forget_gone(&app, id);
@@ -839,17 +843,36 @@ pub(crate) async fn resume_vod(app: AppHandle, state: State<'_, AppState>, id: i
 /// Retry then asks for the rest.
 #[tauri::command]
 pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    state
-        .worker
-        .control_vod(id, Stop::Cancel, |running| {
-            let db = state.db.lock().unwrap();
-            for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id)) {
-                worker::cancel(&db, &state.paths, stretch.id)?;
-            }
-            Ok(())
-        })
-        .map_err(err)?;
+    cancel_requests(&state, id, |_| true).map_err(err)?;
     emit_vod(&app, &state.db.lock().unwrap(), id)
+}
+
+/// `cancel_vod`'s work, on the requests `which` picks: the running ones are
+/// told to stop (their stage ends them), the rest ended now. Returns whether
+/// one was running.
+fn cancel_requests(state: &AppState, id: i64, which: impl Fn(&Stretch) -> bool) -> anyhow::Result<bool> {
+    state.worker.control_vod(id, Stop::Cancel, |running| {
+        let db = state.db.lock().unwrap();
+        for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id) && which(s)) {
+            worker::cancel(&db, &state.paths, stretch.id)?;
+        }
+        Ok(())
+    })
+}
+
+/// Cancels VOD `id`'s transcription, running or waiting (a paused or failed
+/// request stays as it is), and waits till none of it is running, so
+/// nothing reads its files once this returns.
+fn cancel_and_wait(app: &AppHandle, id: i64) -> CmdResult<()> {
+    let state = app.state::<AppState>();
+    let began = Instant::now();
+    while cancel_requests(&state, id, |s| busy(s.status)).map_err(err)? {
+        if began.elapsed() > WORK_STOPPING {
+            return Err("Its transcription is still stopping. Try again in a moment.".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
 }
 
 /// Ends request `id` alone (the transcript's Stop), keeping the lines it

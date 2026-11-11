@@ -73,14 +73,13 @@
     requestDetail(stretches.find((s) => s.id === vod.stretch) ?? null, vod.duration, vod.waiting, formatTime),
   );
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
+  // Being transcribed, or waiting to be.
+  const transcribing = $derived(active || vod.status === "queued" || vod.status === "ready");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(siteName(vod));
-  // A kept video can be deleted unless it's about to be used: done, paused or
-  // failed (a failed transcription still has its download).
-  const keptVideo = $derived(
-    !!vod.media &&
-      (vod.status === "done" || vod.status === "paused" || vod.status === "error" || vod.status === "none"),
-  );
+  // A kept video can be deleted at any time: a transcription running or
+  // waiting is canceled first (delete_video).
+  const keptVideo = $derived(!!vod.media);
 
   // The whole video of a YouTube, Twitch or Kick VOD, downloaded on request to
   // play and clip here (videos.svelte.ts); other sites keep theirs anyway.
@@ -168,8 +167,11 @@
     const after = hasSitePlayer(vod)
       ? `the video plays on ${platform} instead`
       : `the video plays here again once it's downloaded again (${platform} has no player VODscribe can show)`;
+    const transcript = transcribing
+      ? "Transcribing it stops, what's transcribed so far stays,"
+      : "The transcript stays,";
     const sure = await ask(
-      `Delete the video of “${vod.title}” to free up space? The transcript stays, and ${after}.${inEdits(
+      `Delete the video of “${vod.title}” to free up space? ${transcript} and ${after}.${inEdits(
         " Its clips in ",
         " stay as they are, but can't be made longer without downloading again.",
       )}`,
