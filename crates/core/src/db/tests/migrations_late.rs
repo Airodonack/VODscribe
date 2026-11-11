@@ -2,8 +2,12 @@
 
 use super::*;
 
-/// v22: VODs, clips and edits become clips of one table, in their order,
-/// with their pieces and marks in flicks.
+/// Spec 29, with 30 and 31 till each has a library of its own: VODs, clips
+/// and edits become documents, each VOD with its own clip listing it, "a
+/// VOD's own clip over the whole VOD (`whole_of`, with the VOD's place in
+/// the library's list, which `vods.position` held)"; "Clips keep their ids
+/// (their pictures are named by them)" (db.rs:517, `MIGRATE_V22`; 0.5.0:
+/// "VODs and edits open in one player").
 #[test]
 fn vods_clips_and_edits_become_clips() {
     let dir = crate::TempDir::new("migrate-v22");
@@ -102,6 +106,12 @@ fn vods_clips_and_edits_become_clips() {
     assert_eq!(db.edit_pieces(edit.id).unwrap().len(), 1, "the edit keeps its piece of the other VOD");
 }
 
+/// Spec 38: "Each VOD's transcription so far becomes stretches: a finished
+/// one, done from 0 to the end; one under way, waiting, paused or failed, a
+/// request for all of it in that state (queued ones were added when adding
+/// meant transcribing); a stopped one, done as far as its lines go, or
+/// nothing" (db.rs:640, `MIGRATE_V27`; 0.6.0: "Adding a VOD doesn't
+/// transcribe it."; e2e upgrade-0.5.0.mjs header).
 #[test]
 fn transcriptions_so_far_become_stretches() {
     let dir = crate::TempDir::new("migrate-v27");
@@ -173,6 +183,11 @@ fn transcriptions_so_far_become_stretches() {
     assert_eq!(db.stretches(1).unwrap()[0].model.as_deref(), Some(crate::model::CPU_MODEL.id));
 }
 
+/// Spec 39: chat from before is searchable by who wrote it: "Chat's authors
+/// indexed, any case, for `from:` and its suggestions" (db.rs:676,
+/// `MIGRATE_V28`; 0.6.0: "Search learns from, in, within, after, before.";
+/// tests/e2e/fixtures/upgrade-matrix.mjs header: "the author index of format
+/// 28 is filled from the old rows").
 #[test]
 fn search_reads_word_counts_and_chat_authors_after_upgrading() {
     let dir = crate::TempDir::new("migrate-v28");
@@ -245,6 +260,9 @@ fn search_reads_word_counts_and_chat_authors_after_upgrading() {
     assert_eq!(names, ["Bob", "bobby"]);
 }
 
+/// Spec 41: a highlight from before casts names nobody; V30 adds "who is in
+/// an imported highlight (`people`: its cast's names, as a JSON array), on
+/// its mark" (db.rs:703, `MIGRATE_V30`).
 #[test]
 fn marks_from_before_highlights_had_a_cast_read_with_none() {
     let dir = crate::TempDir::new("migrate-v29");
@@ -277,6 +295,9 @@ fn marks_from_before_highlights_had_a_cast_read_with_none() {
     assert_eq!(db.marks(vod).unwrap()[1].detail.cast, ["Marlowe", "Ada"]);
 }
 
+/// Spec 42: a chapter from before icons has none; V31 adds "what an imported
+/// chapter is about, as one emoji (`icon`), on its mark" (db.rs:708,
+/// `MIGRATE_V31`).
 #[test]
 fn marks_from_before_chapters_had_an_icon_read_with_none() {
     let dir = crate::TempDir::new("migrate-v30");
@@ -309,6 +330,9 @@ fn marks_from_before_chapters_had_an_icon_read_with_none() {
     assert_eq!(db.marks(vod).unwrap()[1].detail.icon.as_deref(), Some("🎮"));
 }
 
+/// Spec 43: a VOD from before look-ups is unknown to the file host: whether
+/// annotations are published for it is "unknown until asked" (db.rs:712,
+/// `MIGRATE_V32`).
 #[test]
 fn vods_from_before_annotations_were_looked_up_are_unknown() {
     let dir = crate::TempDir::new("migrate-v31");
@@ -334,6 +358,9 @@ fn vods_from_before_annotations_were_looked_up_are_unknown() {
     assert_eq!(listed[0].annotations, Availability::Unknown);
 }
 
+/// Spec 44: a VOD from before its start was kept has none till its chat
+/// says: "A chat always replaces the others ... Null when nothing says"
+/// (db.rs:721, `MIGRATE_V33`).
 #[test]
 fn vods_from_before_their_start_was_kept_have_none_till_their_chat_says() {
     let dir = crate::TempDir::new("migrate-v32");
@@ -357,6 +384,8 @@ fn vods_from_before_their_start_was_kept_have_none_till_their_chat_says() {
     assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
 }
 
+/// Spec 45: an import from before points of view has none: "Null for an
+/// import from before: none known" (db.rs:733, `MIGRATE_V34`).
 #[test]
 fn annotations_imported_before_povs_were_kept_have_none() {
     let dir = crate::TempDir::new("migrate-v33");
@@ -384,6 +413,9 @@ fn annotations_imported_before_povs_were_kept_have_none() {
     assert!(kept.povs.is_empty() && kept.cast.is_empty());
 }
 
+/// Spec 49: a VOD from before channel logins has none: "Null for a VOD
+/// added before: unknown" (db.rs:779, `MIGRATE_V37`; 0.7.2 Fixes: "Every
+/// Twitch channel shows its picture.").
 #[test]
 fn a_channels_login_is_kept_and_vods_from_before_have_none() {
     let dir = crate::TempDir::new("migrate-v36");
@@ -422,6 +454,11 @@ fn a_channels_login_is_kept_and_vods_from_before_have_none() {
     assert_eq!(json["channel_login"], "marlowe");
 }
 
+/// Spec 52: a VOD from before channel pages has its page filled from its
+/// info where kept: "Null for a VOD added before, filled from its info where
+/// that is still kept (`pipeline::fill_channels`)" (db.rs:789,
+/// `MIGRATE_V40`; 0.7.2: "Names open a streamer card.", "The channel over
+/// the player links to its page on every site").
 #[test]
 fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
     let root = crate::TempDir::new("channel-page");
@@ -462,11 +499,13 @@ fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
     );
 }
 
-/// A deleted clip's id is never given to a new one, as a VOD's isn't
-/// (`ids_are_never_reused`), or what still holds it (an undo step, the
-/// clipboard, the page, its picture) reaches the new clip. Edits and
-/// pasted clips are clips too. A library from before upgrades with all
-/// it had, as it had it.
+/// Spec 54: an upgraded library never gives a deleted clip's id again: "a
+/// deleted clip's id is never given to a new one, as a VOD's isn't (v14), so
+/// what still holds it (an undo step, the clipboard, the page, the clip's
+/// picture and files, all named by it) can't reach the new clip"
+/// (db.rs:808, `MIGRATE_V42`; 0.7.3 Fixes: "Undo no longer changes another
+/// clip."). Edits and pasted clips are clips too. A library from before
+/// upgrades with all it had, as it had it.
 #[test]
 fn clip_ids_are_never_reused() {
     use crate::clipboard::Paste;
@@ -568,4 +607,79 @@ fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
     assert_eq!(db.stretches(vod).unwrap(), before, "upgraded, the same stretches");
     assert_eq!(serde_json::to_value(db.vod(vod).unwrap().unwrap()).unwrap(), shown, "and the VOD shown the same");
     assert!(!columns(&db.conn).contains(&"note".to_string()), "upgraded: {:?}", columns(&db.conn));
+}
+
+/// Spec 47: "Where the VOD it was kept from is still in the library
+/// (keeping a later stretch failed, so the VOD stayed), those come back from
+/// its rows": who speaks each line, and what each chat message is, how much
+/// and when it happened (db.rs:746, `MIGRATE_V36`; 0.7.0 Fixes: "Kept
+/// stretches keep subs, gifts and tips."). Moved here from sources.rs.
+#[test]
+fn stretches_kept_while_their_vod_stays_get_back_their_speakers_and_chat_kinds() {
+    let dir = crate::TempDir::new("migrate-v36");
+    let path = dir.join("library.sqlite");
+    let (vod, kept) = {
+        let mut db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
+        let segments = [
+            Segment { start: 9.0, end: 11.0, text: " a".into(), words: vec![word(" a", 10.5, 11.0)] },
+            Segment { start: 11.0, end: 12.0, text: " hi".into(), words: vec![word(" hi", 11.0, 12.0)] },
+        ];
+        db.insert_segments(vod, &segments).unwrap();
+        db.conn.execute("UPDATE segments SET speaker = 'S' || id WHERE vod_id = ?1", [vod]).unwrap();
+        let message = |time: f64, text: &str, kind: Kind, amount: Option<f64>, event_time: Option<f64>| ChatMessage {
+            time,
+            author: "fan".into(),
+            color: None,
+            parts: vec![ChatPart::Text { text: text.into() }],
+            kind,
+            amount,
+            event_time,
+            at: None,
+        };
+        let chat = [
+            message(12.0, "hello", Kind::Message, None, None),
+            message(13.0, "resubbed", Kind::Sub, Some(2.0), Some(12.5)),
+            message(14.0, "gift", Kind::Gift, Some(5.0), None),
+        ];
+        crate::db::insert_chat(&db.conn, vod, &chat).unwrap();
+        // Kept with the copy that left columns out; its VOD stays, as when
+        // keeping the next stretch failed and nothing was removed.
+        let kept = db.add_realized(vod, 10.0, 15.0).unwrap();
+        db.conn
+            .execute_batch(&format!(
+                "UPDATE segments SET speaker = NULL WHERE vod_id = {kept};
+                 UPDATE chat SET kind = 'message', amount = NULL, event_time = NULL WHERE vod_id = {kept};"
+            ))
+            .unwrap();
+        // One whose VOD is gone: nothing to get back.
+        let other = db.add_vod(&info("y")).unwrap().0.id;
+        crate::db::insert_chat(&db.conn, other, &[message(1.0, "tip", Kind::Tip, Some(100.0), None)]).unwrap();
+        let orphan = db.add_realized(other, 0.0, 5.0).unwrap();
+        db.conn.execute("UPDATE chat SET kind = 'message', amount = NULL WHERE vod_id = ?1", [orphan]).unwrap();
+        db.delete_vod(other).unwrap();
+        (vod, kept)
+    };
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 35;",
+        )
+        .unwrap();
+    let db = Db::open(&path).unwrap();
+
+    let lines = db.lines(kept).unwrap();
+    let speakers: Vec<Option<String>> = db.lines(vod).unwrap().into_iter().map(|l| l.speaker).collect();
+    assert_eq!(lines.into_iter().map(|l| l.speaker).collect::<Vec<_>>(), speakers);
+    let events = |kind| {
+        db.chat_of_kind(kept, kind)
+            .unwrap()
+            .into_iter()
+            .map(|(_, m)| (m.time, m.amount, m.event_time))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(events(Kind::Sub), [(3.0, Some(2.0), Some(2.5))]);
+    assert_eq!(events(Kind::Gift), [(4.0, Some(5.0), None)]);
+    assert_eq!(events(Kind::Message).len(), 1);
 }
