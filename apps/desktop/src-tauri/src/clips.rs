@@ -121,20 +121,19 @@ impl Cutter {
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
-    /// clips left unfinished when the app last stopped.
+    /// clips left unfinished when the app last stopped, then the edits left
+    /// rendering.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let removing = self.removing.clone();
         let canceled = self.canceled.clone();
         let copies = self.copies.clone();
         let news = app.clone();
         self.jobs.watch(move || crate::job_list::changed(&news));
-        let unfinished = {
+        let (unfinished, renders) = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
             tidy_at_start(&state.paths, &db)?;
-            // Edits left rendering when the app stopped wait to be asked again.
-            db.reset_renders()?;
-            db.unfinished_clips()?
+            (db.unfinished_clips()?, db.unfinished_renders()?)
         };
         {
             // Pictures of clips no longer there (deleted with their VOD).
@@ -178,8 +177,8 @@ impl Cutter {
                 }
             },
         )?;
-        for clip in unfinished {
-            self.queue(clip.id);
+        for id in unfinished.iter().map(|c| c.id).chain(renders) {
+            self.queue(id);
         }
         Ok(())
     }

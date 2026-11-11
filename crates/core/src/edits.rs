@@ -1949,15 +1949,16 @@ impl Db {
         Ok(())
     }
 
-    /// Edits left rendering (or waiting to) when the app stopped: waiting
-    /// again, to be rendered when asked.
-    pub fn reset_renders(&self) -> Result<()> {
-        self.conn.execute(
-            "UPDATE renders SET status = 'waiting'
-             WHERE status = 'cutting' AND clip_id IN (SELECT id FROM clips WHERE position IS NOT NULL)",
-            [],
+    /// Edits left rendering (or asked to, `ClipStatus::Cutting`) when the app
+    /// stopped: rendered again at the start (`clips::Cutter::run`). Those
+    /// only waiting (changed since their file) are rendered when asked.
+    pub fn unfinished_renders(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT clip_id FROM renders
+             WHERE status = 'cutting' AND clip_id IN (SELECT id FROM clips WHERE position IS NOT NULL)
+             ORDER BY clip_id",
         )?;
-        Ok(())
+        Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 }
 

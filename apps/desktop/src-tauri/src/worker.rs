@@ -121,6 +121,20 @@ impl Worker {
         self.wake();
     }
 
+    /// `run`, once `gate` opens: for a test, the stages starting late, as
+    /// on a busy start (`testkit::Folder::holds_worker_start`).
+    #[cfg(test)]
+    pub(crate) fn run_at(&self, gate: vodscribe_core::testkit::Gate) {
+        let (queue, wakes) = (self.queue.clone(), self.wakes.lock().unwrap().clone());
+        std::thread::spawn(move || {
+            gate.wait();
+            queue.lock().unwrap().held = false;
+            for tx in wakes.iter() {
+                let _ = tx.send(());
+            }
+        });
+    }
+
     /// Ends both stages for good: nothing new starts, what's running is
     /// paused, and their threads end; returns once they have. For the tests'
     /// app (`testkit`), which ends with its test.

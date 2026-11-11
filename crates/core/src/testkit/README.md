@@ -52,10 +52,11 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `invoke("cancel_job", json!({ "kind": "clip", "id": id }))` calls a command as the page does, with its arguments in camelCase; `invoke_bytes` for one that answers in bytes (`player_still`). Call the command's Rust function through `app.run(...)` when the test needs its typed answer.
 - `heard("clip")` gives the events the page heard, in order.
 - `desktop()` tells what the file manager was asked to show or open.
-- `quit()` quits as closing the window does, and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's tidying, then the queues taking up what was left.
+- `quit()` quits as closing the window does, and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's tidying, then the queues taking up what was left, the storyboards' sweep among them.
 - `drag_out(&[ids])` drags clips out of the window as the page does, and `drags().last()` is the drag. No system drag begins. `drag_ended()` waits for what the page hears at its end.
 - `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
+- `folder.holds_worker_start(&gate)`, before `TestApp::on(folder)`: that start's transcription waits at the gate while the other queues take up what was left, as on a busy start.
 - `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
 - `holds_erasures(&gate)` holds each erasure of a removed VOD between its parts, the library let go of; `holds_erasure_parts(&gate)` holds it in a part, the library still held.
 - `holds_plans(&gate)` holds each plan of an edit the page asks for once it's worked out, before it's played.

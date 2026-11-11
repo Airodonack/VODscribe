@@ -1021,6 +1021,29 @@ fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
     assert!(!columns(&db.conn).contains(&"note".to_string()), "upgraded: {:?}", columns(&db.conn));
 }
 
+/// A library from before video heights were kept (`MIGRATE_V45`) has no
+/// video download for a start to carry on, "Null for a VOD from before:
+/// nothing was asked that a start could know of", and its VODs read as they
+/// were; one asked for after the upgrade is kept with its height (owner,
+/// 2026-11-11, plans/sections-074.md 2C: the migration for videos'
+/// downloads; testing.md, "Order after the pilot" 1).
+#[test]
+fn a_library_from_before_video_heights_has_no_video_download_to_carry_on() {
+    let (_dir, path) = library("video-height");
+    let (vod, shown) = {
+        let db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("a")).unwrap().0.id;
+        db.set_video_wanted(vod, Some(720)).unwrap();
+        (vod, serde_json::to_value(db.vod(vod).unwrap().unwrap()).unwrap())
+    };
+    back_to(&path, 44);
+    let db = upgraded(&path);
+    assert_eq!(db.wanted_videos().unwrap(), [], "a download asked for before is known of");
+    assert_eq!(serde_json::to_value(db.vod(vod).unwrap().unwrap()).unwrap(), shown, "the VOD shown otherwise");
+    db.set_video_wanted(vod, Some(480)).unwrap();
+    assert_eq!(db.wanted_videos().unwrap(), [(vod, 480)]);
+}
+
 /// Spec 56: each library a release left (tests/e2e/fixtures, `Released`)
 /// opens in this version with every row it kept: "the library is at this
 /// version's format, a copy of the old one kept beside it …; the library

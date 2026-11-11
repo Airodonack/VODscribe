@@ -34,22 +34,51 @@ pub(crate) struct Storyboards {
     boards: Mutex<HashMap<PathBuf, Storyboard>>,
     /// Edits' timelines, by edit, as `storyboard_frame` last made them.
     edits: Mutex<HashMap<i64, Planned>>,
+    /// The start's `sweep`, for the tests' app to wait for.
+    #[cfg(test)]
+    sweeping: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl Storyboards {
     pub(crate) fn new() -> Self {
-        Storyboards { jobs: Jobs::new(), boards: Mutex::default(), edits: Mutex::default() }
+        Storyboards {
+            jobs: Jobs::new(),
+            boards: Mutex::default(),
+            edits: Mutex::default(),
+            #[cfg(test)]
+            sweeping: Mutex::default(),
+        }
     }
 
-    /// Ends the queue for good (`Jobs::close`).
+    /// Ends the queue for good (`Jobs::close`), once the start's sweep has.
     #[cfg(test)]
     pub(crate) fn close(&self) {
+        self.swept();
         self.jobs.close();
     }
 
-    /// Starts the queue's thread; called once the app's state is in place.
+    /// Waits for the start's sweep to end: what it asks for is asked.
+    #[cfg(test)]
+    pub(crate) fn swept(&self) {
+        if let Some(sweep) = self.sweeping.lock().unwrap().take() {
+            let _ = sweep.join();
+        }
+    }
+
+    /// Starts the queue's thread, once the app's state is in place, and
+    /// beside it the start's `sweep`, which asks it for what a quit (or a
+    /// crash) left unmade.
     pub(crate) fn run(&self, app: AppHandle) -> anyhow::Result<()> {
-        self.jobs.run("storyboards", move |id, stop| make(&app, id, stop))
+        let sweeping = app.clone();
+        self.jobs.run("storyboards", move |id, stop| make(&app, id, stop))?;
+        let thread = std::thread::Builder::new().name("storyboards-sweep".into()).spawn(move || sweep(&sweeping))?;
+        #[cfg(test)]
+        {
+            *self.sweeping.lock().unwrap() = Some(thread);
+        }
+        #[cfg(not(test))]
+        drop(thread);
+        Ok(())
     }
 
     /// Makes VOD `id`'s storyboards, after those asked for already.

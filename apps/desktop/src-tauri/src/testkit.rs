@@ -116,6 +116,13 @@ impl Folder {
     fn files(&self) -> PathBuf {
         self.0.join("files")
     }
+
+    /// The next app started on it holds its transcription back till `gate`
+    /// opens (`Worker::run_at`), as a busy start does: the other queues
+    /// take up what was left first.
+    pub(crate) fn holds_worker_start(&self, gate: &Gate) {
+        held().push((Held::WorkerStart, self.paths().clips(), gate.clone()));
+    }
 }
 
 impl Drop for TestApp {
@@ -227,6 +234,8 @@ impl TestApp {
         }
         let store = paths.leftovers();
         let chats = crate::open_library(app.handle(), paths, db).unwrap();
+        // The storyboards' sweep, which runs beside the start, has asked for what's left.
+        app.state::<AppState>().storyboards.swept();
         let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
         TestApp {
             app,
@@ -748,6 +757,8 @@ enum Held {
     InAPart,
     /// An edit's plan worked out, not yet played (`TestApp::holds_plans`).
     Planned,
+    /// The worker's start (`Folder::holds_worker_start`).
+    WorkerStart,
 }
 
 /// The gates the app's own code waits at, each with where (`Held`) and the
@@ -801,6 +812,12 @@ pub(crate) fn in_a_part(app: &AppHandle) {
 /// (`TestApp::holds_plans`).
 pub(crate) fn planned(app: &AppHandle) {
     hold(Held::Planned, &app.state::<AppState>().paths.clips());
+}
+
+/// The gate the worker's start waits at in the library whose clips folder
+/// is `clips`, if its test holds it there (`Folder::holds_worker_start`).
+pub(crate) fn worker_start_held(clips: &Path) -> Option<Gate> {
+    held().iter().find(|(h, dir, _)| *h == Held::WorkerStart && dir == clips).map(|(_, _, gate)| gate.clone())
 }
 
 /// The app's clock in a test (`TestApp::clock`): it stands still till the

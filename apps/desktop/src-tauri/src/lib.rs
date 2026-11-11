@@ -208,8 +208,6 @@ fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Resu
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
     let handle = app.handle().clone();
-    std::thread::spawn(move || storyboards::sweep(&handle));
-    let handle = app.handle().clone();
     std::thread::spawn(move || chats::run(handle, chat_rx));
     annotations::check_library_at_start(app.handle());
     Ok(())
@@ -221,21 +219,22 @@ fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Resu
 /// what the chat queue's runner reads (`chats::run`). The tests' app starts
 /// on it too (testkit.rs), so it starts as the app does.
 fn open_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::sync::mpsc::Receiver<i64>> {
-    tidy_at_start(&paths, &db);
+    let sections = tidy_at_start(&paths, &db);
     let chat_rx = manage_library(app, paths, db)?;
-    start_queues(app)?;
+    start_queues(app, &sections)?;
     Ok(chat_rx)
 }
 
 /// What's left from before this start that nothing uses: tidied before
-/// anything runs on the library.
-fn tidy_at_start(paths: &Paths, db: &Db) {
+/// anything runs on the library. Returns the footage sections that were
+/// downloading (`footage::tidy_work`), for the queues to download again.
+fn tidy_at_start(paths: &Paths, db: &Db) -> Vec<(i64, f64, f64)> {
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
     let _ = std::fs::remove_dir_all(paths.temp_preview());
     embed::clear(&paths.temp_embed());
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
-    footage::tidy_work(&paths.work());
+    let sections = footage::tidy_work(&paths.work());
     storyboards::tidy(&paths.storyboards());
     // Only tidying from here, so a library that can't be read isn't a
     // reason not to start.
@@ -253,6 +252,7 @@ fn tidy_at_start(paths: &Paths, db: &Db) {
         vodscribe_core::pipeline::fill_channels(db, paths, &vods);
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);
     }
+    sections
 }
 
 /// The state the commands use (`AppState`), on the library `db` that
@@ -295,17 +295,30 @@ fn manage_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::
     Ok(chat_rx)
 }
 
-/// Starts the queues that work on the library (`manage_library`'s state).
-fn start_queues(app: &AppHandle) -> anyhow::Result<()> {
+/// Starts the queues that work on the library (`manage_library`'s state),
+/// each taking up what a quit (or a crash) left unfinished; `sections` are
+/// the footage sections that were downloading (`tidy_at_start`).
+fn start_queues(app: &AppHandle, sections: &[(i64, f64, f64)]) -> anyhow::Result<()> {
     // First, so the queues' first news (what's left from last time) is heard.
     app.state::<AppState>().job_list.run(app.clone())?;
+    // (A test may hold the worker's start, as a busy start would hold it.)
+    #[cfg(test)]
+    match crate::testkit::worker_start_held(&app.state::<AppState>().paths.clips()) {
+        Some(gate) => app.state::<AppState>().worker.run_at(gate),
+        None => app.state::<AppState>().worker.run(),
+    }
+    #[cfg(not(test))]
     app.state::<AppState>().worker.run();
     app.state::<AppState>().clips.run(app.clone())?;
     // What was left to erase of the VODs nothing uses any more (stopped, or the app quit first).
     app.state::<AppState>().sweeper.run(app.clone())?;
     app.state::<AppState>().videos.run(app.clone())?;
-    app.state::<AppState>().footage.run(app.clone())?;
+    app.state::<AppState>().footage.run(app.clone(), sections.to_vec())?;
+    // Beside its queue: the storyboards missing, of files changed since, or unfinished.
     app.state::<AppState>().storyboards.run(app.clone())?;
+    // Files received whole from a drop, not yet added.
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+    receive::take_up(app);
     Ok(())
 }
 

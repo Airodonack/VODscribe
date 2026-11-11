@@ -838,6 +838,15 @@ ALTER TABLE renders ADD COLUMN make INTEGER;";
 const MIGRATE_V44: &str = "
 ALTER TABLE stretches DROP COLUMN note;";
 
+/// Version 45: the height a VOD's whole video was asked to download at
+/// ("Keep video"), while that download is waiting or under way: set when
+/// it's asked for, cleared when it's done, stopped or failed. A quit stops
+/// the library's writes first, so it stays, and the next start carries the
+/// download on at that height (`Db::wanted_videos`). Null for a VOD from
+/// before: nothing was asked that a start could know of.
+const MIGRATE_V45: &str = "
+ALTER TABLE vods ADD COLUMN video_height INTEGER;";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -1218,6 +1227,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     MIGRATE_V42,
     MIGRATE_V43,
     MIGRATE_V44,
+    MIGRATE_V45,
 ];
 
 /// How many copies of the library from before upgrades are kept.
@@ -1559,6 +1569,14 @@ impl Db {
     pub fn stop_writes(&self) -> Result<()> {
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         Ok(())
+    }
+
+    /// Whether `stop_writes` has stopped the writes: the app is quitting.
+    /// A job stopped then leaves what it has of its work for the next start
+    /// to carry on from, as it does after a crash.
+    pub fn writes_stopped(&self) -> bool {
+        // Every other transaction ends before the library is let go of.
+        !self.conn.is_autocommit()
     }
 
     fn open_inner(path: &Path, files: crate::Paths) -> Result<Self> {
@@ -2143,8 +2161,33 @@ impl Db {
     pub fn set_media_path(&self, id: i64, path: Option<&str>) -> Result<()> {
         let ext = path.map(|p| built_ext(p, |ext| self.files.source_video(id, ext))).transpose()?;
         // The full path too, for 0.7.1 opening this library (`library`).
-        self.conn.execute("UPDATE vods SET video_ext = ?2, media_path = ?3 WHERE id = ?1", params![id, ext, path])?;
+        // Kept, it's no longer one to download (`set_video_wanted`).
+        self.conn.execute(
+            "UPDATE vods SET video_ext = ?2, media_path = ?3,
+                 video_height = CASE WHEN ?2 IS NULL THEN video_height END WHERE id = ?1",
+            params![id, ext, path],
+        )?;
         Ok(())
+    }
+
+    /// VOD `id`'s whole video is asked to download at most `height` tall
+    /// ("Keep video"); None: that download is over (done, stopped or
+    /// failed). A quit leaves it asked, for the next start (`wanted_videos`).
+    pub fn set_video_wanted(&self, id: i64, height: Option<u32>) -> Result<()> {
+        self.conn.execute("UPDATE vods SET video_height = ?2 WHERE id = ?1", params![id, height])?;
+        Ok(())
+    }
+
+    /// The VODs whose whole video was asked for and isn't kept yet, each with
+    /// the height asked (`set_video_wanted`), in the library's order: only
+    /// those in its list, and not gone (one taken out of it is erased).
+    pub fn wanted_videos(&self) -> Result<Vec<(i64, u32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT v.id, v.video_height FROM vods v JOIN vod_order o ON o.vod_id = v.id
+             WHERE v.video_height IS NOT NULL AND v.video_ext IS NULL AND v.gone = 0
+             ORDER BY o.position, v.id DESC",
+        )?;
+        Ok(stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// VOD `id`'s whole audio: downloaded to transcribe it, or else the file

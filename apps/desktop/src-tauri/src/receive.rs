@@ -9,8 +9,9 @@
 //! ("Receiving", how far, and Cancel). Canceled or failed, nothing is left.
 //! The page hears ("received") the first file of each drop to be added, which
 //! it opens, as it opens the first file of a drop with paths; and each file
-//! that failed, which it says. A crash's leftovers go at the next start
-//! (`tidy`).
+//! that failed, which it says. At the next start a crash's leftovers go
+//! (`tidy`), and a file received whole but not yet added is added
+//! (`take_up`); one still being received can't be carried on, its drop gone.
 //!
 //! On Windows the window's drops are all taken here (`Window`, for
 //! `drop_target`): those with paths reach the page as Tauri's own drag-drop
@@ -128,15 +129,48 @@ fn part_of(path: &std::path::Path) -> std::path::PathBuf {
 /// Removes from `received` (the kept videos' folder's) and `incoming` (`Paths::received_incoming`)
 /// what a crash or a quit left being received: part files, the folders an
 /// archive manager saved into first (Linux), and, when the library's files
-/// are known (`kept`, every VOD's file), a file received whole that no VOD
-/// has (a crash before it was added). Called at start, after
-/// `library::settle` has moved 0.7.1's received files, and before any drop.
+/// are known (`kept`, every VOD's file), a file in `received` that no VOD
+/// has (a crash as its VOD was erased). One received whole in `incoming`
+/// that no VOD has (a quit or a crash before it was added) is left for
+/// `take_up`. Called at start, after `library::settle` has moved 0.7.1's
+/// received files, and before any drop.
 pub(crate) fn tidy(received: &std::path::Path, incoming: &std::path::Path, kept: Option<&[String]>) {
-    // Compared as found on disk, as the paths rows keep may be spelled otherwise.
-    let kept: Option<std::collections::HashSet<std::path::PathBuf>> =
-        kept.map(|kept| kept.iter().filter_map(|p| std::fs::canonicalize(p).ok()).collect());
-    tidy_in(received, kept.as_ref());
-    tidy_in(incoming, kept.as_ref());
+    tidy_in(received, kept_files(kept).as_ref());
+    tidy_in(incoming, None);
+}
+
+/// The files `kept` names, as found on disk: the paths rows keep may be spelled otherwise.
+fn kept_files(kept: Option<&[String]>) -> Option<std::collections::HashSet<std::path::PathBuf>> {
+    kept.map(|kept| kept.iter().filter_map(|p| std::fs::canonicalize(p).ok()).collect())
+}
+
+/// At start, once the app's state is in place: adds each file received
+/// whole that a quit (or a crash) stopped before it was added (left in
+/// `incoming` by `tidy`), as its drop would have (`vods::add_received`).
+/// One that can't be added goes, as then. Not while ffmpeg is missing,
+/// which reads it: they wait for a start with it.
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+pub(crate) fn take_up(app: &crate::AppHandle) {
+    use tauri::Manager;
+    let state = app.state::<crate::AppState>();
+    if vodscribe_core::tools::find_ffmpeg(&state.paths.bin()).is_none() {
+        return;
+    }
+    let Ok(vods) = state.db.lock().unwrap().vods() else { return };
+    let files: Vec<String> = vods.into_iter().filter_map(|v| v.source_path).collect();
+    let Some(kept) = kept_files(Some(&files)) else { return };
+    let Ok(entries) = std::fs::read_dir(state.paths.received_incoming()) else { return };
+    for entry in entries.flatten() {
+        let (name, path) = (entry.file_name().to_string_lossy().into_owned(), entry.path());
+        let whole = !name.starts_with('.') && !name.ends_with(".part") && path.is_file();
+        if !whole || std::fs::canonicalize(&path).is_ok_and(|p| kept.contains(&p)) {
+            continue;
+        }
+        if let Err(e) = crate::vods::add_received(app, &path) {
+            eprintln!("{name} was received but couldn't be added: {e:#}");
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 fn tidy_in(dir: &std::path::Path, kept: Option<&std::collections::HashSet<std::path::PathBuf>>) {
@@ -559,7 +593,8 @@ mod tests {
         tidy(&dir, &dir.join("incoming"), None);
         assert_eq!(left(), [".hidden.mp4", "7.mp4", "a.mp4", "c.part", "video.mp4"]);
         // A file a VOD has stays (moved for it, or where it arrived); one
-        // received whole that none has goes, here or in `incoming`.
+        // that none has goes here, and stays in `incoming`, received whole
+        // and not yet added (`take_up` adds it).
         let waiting = dir.join("incoming");
         std::fs::create_dir_all(&waiting).unwrap();
         for file in ["kept.mp4", "left.mp4", "d.mp4.part"] {
@@ -569,8 +604,9 @@ mod tests {
             [dir.join("7.mp4"), dir.join("a.mp4"), waiting.join("kept.mp4")].map(|p| p.to_string_lossy().into_owned());
         tidy(&dir, &dir.join("incoming"), Some(&kept));
         assert_eq!(left(), [".hidden.mp4", "7.mp4", "a.mp4", "c.part", "incoming"]);
-        let waits: Vec<_> = std::fs::read_dir(&waiting).unwrap().map(|e| e.unwrap().file_name()).collect();
-        assert_eq!(waits, ["kept.mp4"]);
+        let mut waits: Vec<_> = std::fs::read_dir(&waiting).unwrap().map(|e| e.unwrap().file_name()).collect();
+        waits.sort();
+        assert_eq!(waits, ["kept.mp4", "left.mp4"]);
         std::fs::remove_dir_all(&dir).unwrap();
         tidy(&dir, &dir.join("incoming"), Some(&kept));
     }

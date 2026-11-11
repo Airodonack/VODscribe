@@ -35,7 +35,7 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 const INFO_FOR: Duration = Duration::from_secs(20 * 60);
 
 /// A stretch to fetch: VOD, start, end.
-type Ask = (i64, f64, f64);
+pub(crate) type Ask = (i64, f64, f64);
 
 #[derive(Default)]
 pub(crate) struct Footage {
@@ -228,11 +228,15 @@ pub(crate) async fn vod_frame(
 }
 
 impl Footage {
-    /// Starts fetching what's asked, once the app's state is in place; first, tidies the folder.
-    pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
+    /// Starts fetching what's asked, once the app's state is in place;
+    /// first, tidies the folder, then asks for what it was fetching when the
+    /// app last stopped (`left`: the sections the start found downloading,
+    /// `tidy_work`).
+    pub(crate) fn run(&self, app: AppHandle, left: Vec<Ask>) -> Result<()> {
         let thread = std::thread::Builder::new().name("footage".into()).spawn(move || {
             let state = app.state::<AppState>();
             tidy(&app, false);
+            state.footage.ask(left_unfinished(&app, &left));
             // And now and then, so what's unused goes though nothing more is fetched.
             let every = app.clone();
             let tidying = std::thread::Builder::new().name("footage-tidy".into()).spawn(move || {
@@ -505,9 +509,39 @@ pub(crate) fn ensure_as(
     if result.as_ref().is_err_and(|e| !vodscribe_core::is_canceled(e)) {
         let _ = std::fs::remove_file(&info);
     }
-    // Whatever was downloaded goes, done or not.
-    vodscribe_core::pipeline::remove_work_prefix(&work, &prefix);
+    // Whatever was downloaded goes, done or not; unless the app is
+    // quitting, which stopped it: left as after a crash, for the next start
+    // (`tidy_work`). Asked under the library's lock, which a quit holds
+    // till the app ends.
+    if !state.db.lock().unwrap().writes_stopped() {
+        vodscribe_core::pipeline::remove_work_prefix(&work, &prefix);
+    }
     result
+}
+
+/// What the queue was fetching when the app last stopped: the footage
+/// missing of each edit with a piece in a section that was downloading
+/// (`left`), as opening the edit asks for it (`player::edit_timeline`).
+/// Clips, renders, transcriptions and videos fetch their own as their
+/// queues take them up again.
+fn left_unfinished(app: &AppHandle, left: &[Ask]) -> Vec<Ask> {
+    if left.is_empty() {
+        return Vec::new();
+    }
+    let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
+    let Ok(edits) = db.edits(crate::edits::made_now(app)) else { return Vec::new() };
+    let mut asks = Vec::new();
+    for edit in edits {
+        let Ok(pieces) = crate::edits::pieces(app, &db, edit.id) else { continue };
+        let in_left = |p: &vodscribe_core::edits::EditPiece| {
+            left.iter().any(|&(vod, from, to)| vod == p.vod_id && p.start < to && p.end > from)
+        };
+        if pieces.iter().any(in_left) {
+            asks.extend(crate::edits::missing(app, &db, &pieces));
+        }
+    }
+    asks
 }
 
 /// Deletes section `path`, no longer needed (its VOD's video is kept now).
@@ -524,14 +558,27 @@ pub(crate) fn drop_section(path: &std::path::Path) {
 
 /// Removes footage sections' files from `work`: a section downloads there,
 /// and moves to the footage folder once done, so at startup any there are
-/// left by a quit or a crash mid-download (and are fetched again if needed).
-pub(crate) fn tidy_work(work: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(work) else { return };
+/// left by a quit or a crash mid-download. They're of no use to the next
+/// download, which ffmpeg writes afresh. Returns the sections they were
+/// of, which the footage queue downloads again (`Footage::run`).
+pub(crate) fn tidy_work(work: &std::path::Path) -> Vec<Ask> {
+    let mut sections = Vec::new();
+    let Ok(entries) = std::fs::read_dir(work) else { return sections };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with("footage-") && entry.path().is_file() {
-            let _ = std::fs::remove_file(entry.path());
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(file) = name.strip_prefix("footage-") else { continue };
+        if !entry.path().is_file() {
+            continue;
         }
+        // (What the site said of a VOD, `footage-<id>.info.json`, is no section.)
+        if let Some(section) = footage::section_of(std::path::Path::new(file))
+            && !sections.contains(&section)
+        {
+            sections.push(section);
+        }
+        let _ = std::fs::remove_file(entry.path());
     }
+    sections
 }
 
 /// The file a section downloads into (yt-dlp's part file, under `prefix` in `work`), once it's begun.
