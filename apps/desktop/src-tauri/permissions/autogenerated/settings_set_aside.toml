@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-settings-set-aside"
+description = "Enables the settings_set_aside command without any pre-configured scope."
+commands.allow = ["settings_set_aside"]
+
+[[permission]]
+identifier = "deny-settings-set-aside"
+description = "Denies the settings_set_aside command without any pre-configured scope."
+commands.deny = ["settings_set_aside"]

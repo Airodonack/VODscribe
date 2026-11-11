@@ -158,6 +158,7 @@ permissions = [
   "allow-kept-choices",
   "allow-keep-choice",
   "allow-set-settings",
+  "allow-settings-set-aside",
   "allow-missing-clip-codecs",
   "allow-reset-settings",
   "allow-gpu-status",

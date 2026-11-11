@@ -96,6 +96,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   transcript_stretches: ({ vodId }) => backend.transcriptStretches(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
+  settings_set_aside: () => null,
   // The page's small choices (the app keeps them in its data folder: crates/core
   // choices.rs), in this browser's storage, as the page kept them before.
   kept_choices: () => {

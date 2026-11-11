@@ -263,6 +263,14 @@ pub(crate) async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settin
     Ok(Settings::load(&state.paths.settings()))
 }
 
+/// The name of the settings file set aside since this was last asked, as
+/// it couldn't be read (`Settings::load`), for the page to say so once.
+#[tauri::command]
+pub(crate) async fn settings_set_aside(state: State<'_, AppState>) -> CmdResult<Option<String>> {
+    let aside = Settings::taken_aside(&state.paths.settings());
+    Ok(aside.and_then(|aside| aside.file_name().map(|n| n.to_string_lossy().into_owned())))
+}
+
 /// Puts every setting back as it starts (the settings file goes), keeping
 /// everything else; returns them as they are now.
 #[tauri::command]

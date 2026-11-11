@@ -413,6 +413,19 @@
     // window may never get one.)
     await settings.load();
     theme.apply(settings.value?.theme ?? "system");
+    // Settings that couldn't be read start over, the file kept, as a library's is (LibraryProblem.svelte).
+    void api
+      .settingsSetAside()
+      .then(
+        (name) =>
+          name &&
+          // One line, as toasts are: Open folder shows the old file (`name`).
+          toast.error("Your settings couldn't be read, so they're back to the defaults.", {
+            label: "Open folder",
+            run: () => void api.openDataDir().catch(() => {}),
+          }),
+      )
+      .catch(() => {});
     void getCurrentWindow()
       .show()
       .catch(() => {});

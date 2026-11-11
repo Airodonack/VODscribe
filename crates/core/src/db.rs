@@ -1575,7 +1575,9 @@ impl Db {
             conn.execute_batch(&format!("PRAGMA user_version = {latest}; COMMIT;"))?;
         } else if version as usize > migrations.len() {
             // A newer VODscribe made this library (the user went back a version).
-            // Migrations so far only add, or drop what nothing reads, so carry on rather than refuse to start.
+            // The migrations after 0.5.0's only add, or drop what no version reads (V44, the
+            // stretches' `note`), so carry on rather than refuse to start. Going back to a version
+            // before 0.5.0 isn't supported: V20, V22 and V23 drop tables and columns it reads.
             eprintln!("{}: library format {version} is newer than this version knows", path.display());
         }
         tidy_copies(path, COPIES_KEPT_FOR);

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -310,23 +311,42 @@ impl Settings {
         self
     }
 
-    /// Missing or unreadable settings fall back to defaults.
+    /// Missing settings are the defaults. Unreadable ones (a damaged file,
+    /// or one edited by hand into what isn't settings) are the defaults too,
+    /// and the file is set aside (`set_aside`), so the next change doesn't
+    /// save the defaults over it; `taken_aside` says where it went. A key
+    /// binding in the wrong shape loses only itself (`bindings`).
     pub fn load(path: &Path) -> Self {
-        let Ok(text) = fs::read_to_string(path) else { return Self::default().normalized() };
-        serde_json::from_str::<Self>(&text)
-            .unwrap_or_else(|e| {
-                eprintln!("{}: unreadable, using the defaults: {e}", path.display());
-                Self::default()
-            })
-            .normalized()
+        let read = match fs::read(path) {
+            Ok(bytes) => Ok(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default().normalized(),
+            Err(e) => Err(e.to_string()),
+        };
+        let unreadable = match &read {
+            Ok(bytes) => match serde_json::from_slice::<Self>(bytes) {
+                Ok(settings) => return settings.normalized(),
+                Err(e) => e.to_string(),
+            },
+            Err(e) => e.clone(),
+        };
+        match set_aside(path, read.as_deref().ok()) {
+            Ok(Some(aside)) => {
+                eprintln!("{}: unreadable ({unreadable}), set aside as {}", path.display(), aside.display())
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("{}: unreadable ({unreadable}), using the defaults: {e}", path.display()),
+        }
+        Self::default().normalized()
+    }
+
+    /// Where the settings file at `path` was set aside as unreadable (`load`)
+    /// since this was last asked, for the user to be told once.
+    pub fn taken_aside(path: &Path) -> Option<PathBuf> {
+        lock(&ASIDE).remove(path)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        // One at a time: two saves at once (quick toggles in Settings) would
-        // write the same temporary file, which could keep the older one or
-        // leave unreadable JSON, and the next launch would fall back to defaults.
-        static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _turn = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+        let _turn = lock(&SAVING);
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, serde_json::to_string_pretty(&self.clone().normalized())?)?;
         fs::rename(tmp, path)?;
@@ -334,147 +354,47 @@ impl Settings {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Taken by each save, and by setting a file aside: two saves at once (quick
+/// toggles in Settings) would write the same temporary file, which could keep
+/// the older one or leave unreadable JSON, and the next launch would fall
+/// back to defaults; and a file is set aside only while no save can replace it.
+static SAVING: Mutex<()> = Mutex::new(());
 
-    #[test]
-    fn emote_providers_start_off_and_stay_known() {
-        let fresh: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(fresh.emote_providers.enabled(), Vec::<&str>::new());
-        assert_eq!(fresh.emote_providers.0.len(), crate::word_emotes::PROVIDER_IDS.len());
-        let saved: Settings = serde_json::from_str(
-            r#"{"emote_providers": [{"id": "ffz", "on": true}, {"id": "nope", "on": true}, {"id": "ffz", "on": false}, {"id": "7tv", "on": true}]}"#,
-        )
-        .unwrap();
-        assert_eq!(saved.emote_providers.enabled(), ["ffz", "7tv"]);
-        let order: Vec<_> = saved.emote_providers.0.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(order, ["ffz", "7tv", "bttv"]);
-    }
+/// The settings files set aside (`set_aside`) and not yet told of
+/// (`Settings::taken_aside`), by the path they were read from.
+static ASIDE: Mutex<BTreeMap<PathBuf, PathBuf>> = Mutex::new(BTreeMap::new());
 
-    #[test]
-    fn key_bindings_start_empty_and_keep_what_they_are_given() {
-        // A settings.json as 0.5.x wrote it: no key bindings.
-        let old: Settings = serde_json::from_str(
-            r#"{"device": "cpu", "theme": "dark", "emote_providers": [], "video_height": 720, "clip_format": "mov"}"#,
-        )
-        .unwrap();
-        assert!(old.key_bindings.is_empty());
-        assert_eq!(old.video_height, Some(720));
-        let saved: Settings =
-            serde_json::from_str(r#"{"key_bindings": {"play.toggle": ["p"], "mute.toggle": [], "gone.away": ["x"]}}"#)
-                .unwrap();
-        let again: Settings = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
-        assert_eq!(again.key_bindings["play.toggle"], ["p"]);
-        assert!(again.key_bindings["mute.toggle"].is_empty());
-        assert_eq!(again.key_bindings["gone.away"], ["x"]);
-    }
-
-    #[test]
-    fn clip_codecs_follow_old_formats_and_lead_new_ones() {
-        // A settings.json as 0.7.1 wrote it: a format, no codec or quality.
-        let read = |json: &str| serde_json::from_str::<Settings>(json).unwrap().normalized();
-        let mov = read(r#"{"clip_format": "mov"}"#);
-        assert_eq!(mov.clip_encoding(), ClipEncoding { codec: ClipCodec::Dnxhr, quality: ClipQuality::Proxy });
-        assert_eq!(read(r#"{"clip_format": "mp4"}"#).clip_encoding(), ClipEncoding::default());
-        assert_eq!(read("{}").clip_encoding(), ClipEncoding::default());
-        assert_eq!(read("{}").clip_format, ClipFormat::Mp4);
-        // The codec decides the format, whatever the page sent with it.
-        let prores = read(r#"{"clip_format": "mp4", "clip_codec": "prores", "clip_quality": "high"}"#);
-        assert_eq!((prores.clip_format, prores.clip_quality), (ClipFormat::Mov, Some(ClipQuality::High)));
-        assert_eq!(read(r#"{"clip_format": "mov", "clip_codec": "h265"}"#).clip_format, ClipFormat::Mp4);
-        let again = read(&serde_json::to_string(&prores).unwrap());
-        assert_eq!(again.clip_encoding(), ClipEncoding { codec: ClipCodec::Prores, quality: ClipQuality::High });
-    }
-
-    #[test]
-    fn the_keyboard_legend_starts_closed_and_stays_as_left() {
-        // A settings.json as 0.5.x wrote it: no word of the legend.
-        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "video_height": 720}"#).unwrap();
-        assert!(!old.show_keys);
-        let open = Settings { show_keys: true, ..old };
-        let again: Settings = serde_json::from_str(&serde_json::to_string(&open).unwrap()).unwrap();
-        assert!(again.show_keys);
-        assert_eq!(again.video_height, Some(720));
-    }
-
-    #[test]
-    fn asking_for_annotations_starts_on_and_stays_as_left() {
-        // A settings.json as 0.6.0 wrote it: no word of annotations.
-        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "show_keys": true}"#).unwrap();
-        assert!(old.ask_for_annotations);
-        assert!(Settings::default().ask_for_annotations);
-        let off = Settings { ask_for_annotations: false, ..old };
-        let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
-        assert!(!again.ask_for_annotations);
-        assert!(again.show_keys);
-    }
-
-    #[test]
-    fn loading_cast_pictures_starts_on_and_stays_as_left() {
-        // A settings.json as 0.6.0 wrote it: no word of pictures.
-        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "ask_for_annotations": false}"#).unwrap();
-        assert!(old.load_cast_pictures);
-        assert!(Settings::default().load_cast_pictures);
-        let off = Settings { load_cast_pictures: false, ..old };
-        let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
-        assert!(!again.load_cast_pictures);
-        assert!(!again.ask_for_annotations);
-    }
-
-    #[test]
-    fn the_notes_start_shown_and_stay_as_left() {
-        // A settings.json as 0.7.0 wrote it: no word of the notes.
-        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "load_cast_pictures": false}"#).unwrap();
-        assert!(old.ask_before_downloading && old.suggest_mov_for_resolve && old.ask_to_use_vodscription);
-        let fresh = Settings::default();
-        assert!(fresh.ask_before_downloading && fresh.suggest_mov_for_resolve && fresh.ask_to_use_vodscription);
-        let off = Settings {
-            ask_before_downloading: false,
-            suggest_mov_for_resolve: false,
-            ask_to_use_vodscription: false,
-            ..old
-        };
-        let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
-        assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve && !again.ask_to_use_vodscription);
-        assert!(again.ask_for_annotations, "the offer's own switch, apart from looking up");
-        assert!(!again.load_cast_pictures);
-    }
-
-    #[test]
-    fn a_vodscription_found_is_used_as_last_answered() {
-        let read =
-            |json: &str| serde_json::to_value(serde_json::from_str::<Settings>(json).unwrap().normalized()).unwrap();
-        // A settings.json from before the three answers: the offer's switch alone.
-        assert_eq!(read(r#"{"ask_to_use_vodscription": false}"#)["use_vodscription"], "never");
-        assert_eq!(read(r#"{"ask_to_use_vodscription": true}"#)["use_vodscription"], "ask");
-        assert_eq!(read("{}")["use_vodscription"], "ask");
-        // The answer decides, and the switch is written to match, for an app
-        // that reads only that: on only while the offer is asked.
-        for (answer, asks) in [("ask", true), ("always", false), ("never", false)] {
-            let saved = read(&format!(r#"{{"use_vodscription": "{answer}", "ask_to_use_vodscription": {}}}"#, !asks));
-            assert_eq!(saved["use_vodscription"], answer);
-            assert_eq!(saved["ask_to_use_vodscription"], asks, "{answer}");
-            assert_eq!(read(&saved.to_string())["use_vodscription"], answer, "{answer}, read again");
-        }
-    }
-
-    /// A key binding written by hand in the wrong shape (a string for a
-    /// list, a number in one) made the whole file unreadable, so every
-    /// setting fell back to its default, and the next change saved those
-    /// over the file. Only the bindings that aren't lists of keys go.
-    #[test]
-    fn a_misshapen_key_binding_loses_only_itself() {
-        let loaded: Settings = serde_json::from_str(
-            r#"{"theme": "dark", "video_height": 720, "key_bindings":
-                {"undo": "Ctrl+q", "redo": ["Ctrl+y", 5], "mute.toggle": [], "play.toggle": ["p", "k"], "x": null}}"#,
-        )
-        .unwrap();
-        assert_eq!((loaded.theme, loaded.video_height), (Theme::Dark, Some(720)));
-        assert_eq!(loaded.key_bindings.keys().collect::<Vec<_>>(), ["mute.toggle", "play.toggle"]);
-        assert_eq!(loaded.key_bindings["play.toggle"], ["p", "k"]);
-        let loaded: Settings = serde_json::from_str(r#"{"theme": "light", "key_bindings": ["undo"]}"#).unwrap();
-        assert_eq!(loaded.theme, Theme::Light);
-        assert!(loaded.key_bindings.is_empty());
-    }
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// Moves the unreadable settings file at `path` out of the way, as an
+/// unreadable library is (`db::set_aside`): to `settings-broken-<date>.json`
+/// beside it (`-2`… if taken), never deleted, for recovering or sending with
+/// a bug report. Only if it still holds what was read (`read`, none if it
+/// couldn't be): a save made since, or another load that set it aside
+/// first, is left alone (`None`). Returns where it went.
+fn set_aside(path: &Path, read: Option<&[u8]>) -> Result<Option<PathBuf>> {
+    let _turn = lock(&SAVING);
+    if read.is_some_and(|read| fs::read(path).ok().as_deref() != Some(read)) || !path.exists() {
+        return Ok(None);
+    }
+    let date = &crate::db::utc_time(crate::db::now() as f64)[..10];
+    let aside = (1..)
+        .map(|n| {
+            let name = if n == 1 {
+                format!("settings-broken-{date}.json")
+            } else {
+                format!("settings-broken-{date}-{n}.json")
+            };
+            path.with_file_name(name)
+        })
+        .find(|aside| !aside.exists())
+        .context("no free name")?;
+    fs::rename(path, &aside)?;
+    lock(&ASIDE).insert(path.to_path_buf(), aside.clone());
+    Ok(Some(aside))
+}
+
+#[cfg(test)]
+mod tests;

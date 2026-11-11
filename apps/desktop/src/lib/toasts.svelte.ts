@@ -50,10 +50,10 @@ class Toasts {
 
   /** Shows what went wrong, until it's dismissed or replaced (or `drop`ped);
    *  returns which it is, for `drop`. */
-  error(message: string): number {
+  error(message: string, action?: Shown["action"]): number {
     clearTimeout(this.#timer);
     const seq = ++this.#seq;
-    this.shown = { message, seq, error: true };
+    this.shown = { message, action, seq, error: true };
     return seq;
   }
 

@@ -980,6 +980,8 @@ export const api = {
   /** The clip codecs the ffmpeg in use can't make (Settings › Encoding greys them out), and whether it's VODscribe's own. */
   missingClipCodecs: () => invoke<FfmpegCodecs>("missing_clip_codecs"),
   resetSettings: () => invoke<Settings>("reset_settings"),
+  /** The name of the settings file set aside since this was last asked, as it couldn't be read; told once. */
+  settingsSetAside: () => invoke<string | null>("settings_set_aside"),
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
   installGpuPack: () => invoke<void>("install_gpu_pack"),
   /** Stops the GPU add-on's download (its pack starts over next time); `gpuDone` then fires with null. */
