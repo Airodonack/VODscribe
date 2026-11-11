@@ -48,6 +48,8 @@ pub mod linux;
 pub mod macos;
 #[cfg(unix)]
 mod placeholder;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod promises;
 #[cfg(windows)]
 pub mod windows;
 

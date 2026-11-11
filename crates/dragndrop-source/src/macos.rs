@@ -51,6 +51,7 @@ use objc2_foundation::{
 };
 
 use crate::placeholder::Placeholder;
+use crate::promises::{Counts, Promises};
 use crate::{Ending, Event, Failure, Item, Outcome, State, trace};
 
 /// How often a promise waiting for its file looks at it.
@@ -78,9 +79,7 @@ struct Hand {
     on: Box<dyn Fn(Event) + Send + Sync>,
     kept: Mutex<Option<Kept>>,
     /// Promises asked for, being written, and written.
-    asked: AtomicUsize,
-    writing: AtomicUsize,
-    written: AtomicUsize,
+    promises: Promises,
     /// Addresses asked for and given (the file was made).
     addressed: AtomicUsize,
     /// An address asked for while its file wasn't made (and none given):
@@ -107,10 +106,10 @@ impl Hand {
     /// promise asked for is settled.
     fn settle(&self) {
         let Some((ending, receiver, made)) = self.ended.lock().unwrap().clone() else { return };
-        if self.writing.load(Ordering::SeqCst) > 0 || self.told.swap(true, Ordering::SeqCst) {
+        let Some(Counts { asked, written, .. }) = self.promises.settled() else { return };
+        if self.told.swap(true, Ordering::SeqCst) {
             return;
         }
-        let asked = self.asked.load(Ordering::SeqCst);
         let unanswered = self.unanswered.load(Ordering::SeqCst);
         let failure = match self.failed.lock().unwrap().clone() {
             Some(why) => Some(Failure::Failed(why)),
@@ -124,7 +123,7 @@ impl Hand {
         let given = if self.ready {
             ending == Ending::Elsewhere
         } else if asked > 0 {
-            failure.is_none() && self.written.load(Ordering::SeqCst) == asked
+            failure.is_none() && written == asked
         } else {
             self.addressed.load(Ordering::SeqCst) > 0 && !unanswered
         };
@@ -299,18 +298,19 @@ define_class!(
         #[unsafe(method(filePromiseProvider:writePromiseToURL:completionHandler:))]
         fn write(&self, provider: &NSFilePromiseProvider, url: &NSURL, done: &DynBlock<dyn Fn(*mut NSError)>) {
             let Of { index, hand } = of(provider);
-            hand.asked.fetch_add(1, Ordering::SeqCst);
-            hand.writing.fetch_add(1, Ordering::SeqCst);
+            // Asked for and being written in one step (`Promises`), so no
+            // settle sees it asked for and not being written.
+            hand.promises.asked();
             let name = hand.items[*index].name();
             trace(&format!(
                 "{name}: its promise asked for, at {}",
                 url.path().map(|p| p.to_string()).unwrap_or_default()
             ));
-            match hand.write(*index, url) {
+            let written = match hand.write(*index, url) {
                 Ok(()) => {
                     trace(&format!("{name}: written"));
-                    hand.written.fetch_add(1, Ordering::SeqCst);
                     done.call((std::ptr::null_mut(),));
+                    true
                 }
                 Err(why) => {
                     trace(&format!("{name}: not written: {}", why.as_deref().unwrap_or("called off")));
@@ -319,9 +319,10 @@ define_class!(
                     }
                     let error = NSError::new(1, &NSString::from_str("dragndrop-source"));
                     done.call((Retained::as_ptr(&error) as *mut NSError,));
+                    false
                 }
-            }
-            hand.writing.fetch_sub(1, Ordering::SeqCst);
+            };
+            hand.promises.done(written);
             hand.settle();
         }
 
@@ -427,9 +428,7 @@ impl Drag {
             ready,
             on: Box::new(on),
             kept: Mutex::new(None),
-            asked: AtomicUsize::new(0),
-            writing: AtomicUsize::new(0),
-            written: AtomicUsize::new(0),
+            promises: Promises::default(),
             addressed: AtomicUsize::new(0),
             unanswered: AtomicBool::new(false),
             refused: AtomicBool::new(false),

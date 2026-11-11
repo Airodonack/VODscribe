@@ -721,14 +721,23 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     }
     if recorded && result.is_ok() && !vod.audio_only {
         drop(db);
-        if let Err(e) = clips::thumbnail(&ffmpeg, &out, &thumb_path(app, id)) {
+        let made = clips::thumbnail(&ffmpeg, &out, &thumb_path(app, id));
+        // Under the library's lock again, which a delete holds through
+        // `after_delete`: a clip deleted while its picture was made (one
+        // made only for a drag, forgotten by the page once it's handed
+        // over) had its picture deleted already, so the one ffmpeg wrote
+        // since goes too, and a run that failed on its file gone is no error.
+        let db = state.db.lock().unwrap();
+        if db.clip(id).ok().flatten().is_none() {
+            let _ = std::fs::remove_file(thumb_path(app, id));
+        } else if let Err(e) = made {
             eprintln!("clip {id}: its picture: {e:#}");
             // None rather than one of what it was before: its drag shows the
             // app's icon, and its picture is tried again when it's next
             // shown (`picture_again`).
             let _ = std::fs::remove_file(thumb_path(app, id));
         }
-        emit(app, &state.db.lock().unwrap(), id);
+        emit(app, &db, id);
     } else if recorded {
         emit(app, &db, id);
     }

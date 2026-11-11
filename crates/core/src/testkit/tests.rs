@@ -122,6 +122,26 @@ fn a_fake_ffmpegs_file_is_there_as_it_is_written_and_media_once_whole() {
     assert!(!part.exists());
 }
 
+/// A still the fake ffmpeg is held at has its input read already, as
+/// ffmpeg has the file open while it decodes: the file deleted then, the
+/// picture is still written once the gate opens.
+#[test]
+fn a_fake_ffmpegs_still_held_at_a_gate_has_read_its_input() {
+    let dir = TempDir::new("kit-still");
+    let ffmpeg = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let gate = Gate::new();
+    ffmpeg.holds_stills(&gate);
+    let (path, source, out) = (ffmpeg.path().to_path_buf(), a_minute(&dir), dir.join("clip.png"));
+    let (done, result) = mpsc::channel();
+    let (input, made) = (source.clone(), out.clone());
+    std::thread::spawn(move || done.send(clips::thumbnail(&path, &input, &made)).unwrap());
+    gate.reached();
+    std::fs::remove_file(&source).unwrap();
+    gate.open();
+    result.recv_timeout(std::time::Duration::from_secs(5)).unwrap().unwrap();
+    assert!(out.is_file(), "no picture written");
+}
+
 /// What a file is made with, as ffmpeg was asked (its quality step,
 /// profile, pixel format and tag), is in the fake's file; a picture copied
 /// keeps its source's.

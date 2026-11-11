@@ -7,10 +7,10 @@
 //! app could meet it: a file that isn't there or isn't media, a stream map
 //! that matches nothing, an encoder this build lacks (and its list of
 //! encoders, `-encoders`, says so); and on request partway, or holds
-//! partway at a `Gate`. A file it makes is there from the run's start, as
-//! ffmpeg's is, but isn't media till the run's end; what it's made with
-//! (`-crf`, `-profile:v`, `-pix_fmt`, `-tag:v`) is kept in it. It keeps what
-//! each run was asked (`runs`).
+//! partway (a still once its input is read) at a `Gate`. A file it makes is
+//! there from the run's start, as ffmpeg's is, but isn't media till the
+//! run's end; what it's made with (`-crf`, `-profile:v`, `-pix_fmt`,
+//! `-tag:v`) is kept in it. It keeps what each run was asked (`runs`).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -37,6 +37,8 @@ struct Plan {
     lacks: Vec<String>,
     /// Its list of encoders waits at this gate.
     list_hold: Option<Gate>,
+    /// A still waits at this gate, its input read.
+    still_hold: Option<Gate>,
 }
 
 impl Ffmpeg {
@@ -92,6 +94,13 @@ impl Ffmpeg {
     /// opens, or the app stops it, as a first run under a virus scan waits.
     pub fn holds_list(&self, gate: &Gate) {
         self.plan.lock().unwrap().list_hold = Some(gate.clone());
+    }
+
+    /// Each still it makes from now (a clip's picture) waits, its input
+    /// read, until `gate` opens, or the app stops it: as ffmpeg has the
+    /// file open while it decodes the frame.
+    pub fn holds_stills(&self, gate: &Gate) {
+        self.plan.lock().unwrap().still_hold = Some(gate.clone());
     }
 
     /// From now it works as it should: no failure, hold or missing encoder.
@@ -207,6 +216,11 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
         if first.video.is_none() {
             run.err("Output file does not contain any stream\n");
             return 1;
+        }
+        if let Some(gate) = &plan.still_hold
+            && !run.hold(gate)
+        {
+            return 255;
         }
         if last == "pipe:1" {
             run.out_bytes(JPEG);

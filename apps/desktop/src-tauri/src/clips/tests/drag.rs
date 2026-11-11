@@ -249,3 +249,35 @@ fn a_batch_of_pictures_stopped_makes_no_more() {
     let pictured = made.iter().filter(|c| app.paths().clip_thumb(c.id).exists()).count();
     assert_eq!(pictured, 0, "pictures made after the stop");
 }
+
+/// A clip made only for a drag, let go on an app that takes copies
+/// (Finder, Explorer), is forgotten once its copy is written (dragout.ts
+/// `forgetHidden`), and its picture goes with it (`after_delete`: "its files
+/// and its thumbnail deleted"), even when the forget comes while the picture
+/// is being made, ffmpeg having the file open already (the 0.7.4 quality
+/// pass, item 5: macOS logged the picture job running after the file was
+/// gone).
+#[test]
+fn a_drag_only_clip_forgotten_while_its_picture_is_made_leaves_no_picture() {
+    use crate::testkit::Receiver;
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    // The cut held at its end, so the drag begins while it's being made.
+    let cut_end = Gate::new();
+    app.ffmpeg.holds_at(1.0, &cut_end);
+    let clip = app.run(crate::clips::add_clip(app.handle().clone(), vod.id, 10.0, 20.0, Some(false))).unwrap();
+    cut_end.reached();
+    let picture = Gate::new();
+    app.ffmpeg.holds_stills(&picture);
+    app.drag_out(&[clip.id]).unwrap();
+    app.drags().last().let_go(LetGo::On(Receiver::taking_copies("Finder")));
+    cut_end.open();
+    picture.reached();
+    assert_eq!(app.drag_ended()["delivered"], json!(true));
+    assert!(!app.clip(clip.id).unwrap().shown, "on its clip bar");
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    picture.open();
+    eventually("the clips queue idle", || app.state().clips.listed().0.is_none());
+    let thumb = app.paths().clip_thumb(clip.id);
+    assert!(!thumb.exists(), "a picture left for the deleted clip: {}", thumb.display());
+}

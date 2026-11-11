@@ -70,6 +70,7 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.ffmpeg.fails_at(0.5, "message")`: each file it makes fails halfway, as ffmpeg does when a source breaks off.
 - `app.ffmpeg.lacks("libx265")`: a build without that encoder, left out of its `-encoders` list too.
 - `app.ffmpeg.holds_list(&gate)`: its list of encoders waits at the gate, as a slow first run does.
+- `app.ffmpeg.holds_stills(&gate)`: each still it makes (a clip's picture) waits at the gate, its input read, as ffmpeg has the file open while it decodes.
 - `app.ffmpeg.updated()`: its file replaced, as an update does, so the app sees a new ffmpeg at the same path.
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
 - `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is.
