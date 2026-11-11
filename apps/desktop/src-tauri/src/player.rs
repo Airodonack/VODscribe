@@ -380,7 +380,10 @@ async fn open_with(
             if state.player.asked.load(Ordering::Acquire) != asked {
                 return Err(CLOSED.into());
             }
-            *open = Some(Open { player, doc, embed });
+            // The one it replaces is let go of after the lock, as in `close`.
+            let replaced = open.replace(Open { player, doc, embed });
+            drop(open);
+            drop(replaced);
             opened
         }
     };
@@ -622,7 +625,10 @@ pub(crate) fn player_close(app: AppHandle) {
 fn close(app: &AppHandle) {
     let state = app.state::<AppState>();
     state.player.asked.fetch_add(1, Ordering::AcqRel);
-    drop(state.player.open.lock().unwrap().take());
+    // Let go of after the lock: a player stopping isn't waited for by every
+    // other player command (this runs on the main thread).
+    let closed = state.player.open.lock().unwrap().take();
+    drop(closed);
     crate::screen::show(app, None);
 }
 

@@ -249,6 +249,10 @@ struct Inner {
     /// The preview decoder (`Player::preview`), and what wakes its thread to read on.
     preview: Mutex<Option<Decoder>>,
     preview_wake: Condvar,
+    /// Held by a preview from start to end, so previews come one at a time
+    /// (the next may use the decoder the last one started), while `preview`
+    /// itself is let go of during a decode, which closing mustn't wait for.
+    previewing: Mutex<()>,
     /// What plays.
     timeline: Mutex<Timeline>,
     /// What each file holds, as probed when first needed (None: couldn't be read).
@@ -356,6 +360,7 @@ impl Player {
             ffmpeg: ffmpeg.to_path_buf(),
             preview: Mutex::new(None),
             preview_wake: Condvar::new(),
+            previewing: Mutex::new(()),
             timeline: Mutex::new(timeline),
             sources: Mutex::default(),
             volume: Mutex::new(Arc::new(AtomicU32::new(1f32.to_bits()))),
@@ -735,6 +740,7 @@ impl Previewer {
         let source = stretch.source.as_ref()?;
         let picture = self.inner.info(&source.path)?.picture?;
         let file_time = stretch.file_time(time);
+        let _one_at_a_time = self.inner.previewing.lock().unwrap();
         let mut slot = self.inner.preview.lock().unwrap();
         if let Some(decoder) = slot.as_mut()
             && let Some(at) = decoder.holds(&stretch, picture, file_time)
@@ -744,19 +750,28 @@ impl Previewer {
             self.inner.preview_wake.notify_all();
             return Some(Preview { time: stretch.time(frame.pts), frame, exact: true });
         }
-        // The one there stops before another starts.
-        *slot = None;
+        // The one there stops before another starts. The new one's start
+        // and first frame take as long as ffmpeg takes (a long GOP's worth
+        // of decoding), so they're done without the slot held: closing the
+        // player takes it, and closes on the app's main thread.
+        let old = slot.take();
+        drop(slot);
+        drop(old);
         let mut decoder = Decoder::start(&self.inner.ffmpeg, &stretch, picture, file_time)?;
         decoder.kept = f64::INFINITY;
         let frame = decoder.stream.recv()?;
         decoder.hold(frame.clone());
         decoder.until = frame.pts + PREVIEW_AHEAD;
         let exact = (frame.pts - file_time).abs() < 0.5 / picture.fps;
-        // Closed meanwhile: its thread no longer clears the slot.
-        if !self.inner.quit.load(Ordering::Acquire) {
-            *slot = Some(decoder);
-        }
+        let mut slot = self.inner.preview.lock().unwrap();
+        // Closed meanwhile: its thread no longer clears the slot, so this
+        // one stops here. Else it takes the place of one the player's thread
+        // left there meanwhile (`keep_for_preview`): the preview asked for
+        // wins, as when it held the slot throughout.
+        let gone = if self.inner.quit.load(Ordering::Acquire) { Some(decoder) } else { slot.replace(decoder) };
         self.inner.preview_wake.notify_all();
+        drop(slot);
+        drop(gone);
         Some(Preview { time: stretch.time(frame.pts), frame, exact })
     }
 }

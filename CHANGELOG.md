@@ -6,6 +6,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 - Fixes:
   - Marks can't go past the end. A cut, chapter or highlight placed or moved past the end of a video is refused, as one before its start already was.
+  - Closing the player no longer stalls. Closing a VOD or switching to another while a timeline thumbnail loaded froze the window briefly, about a quarter second on some videos.
 
 ## 0.7.3 — 2026-11-08
 

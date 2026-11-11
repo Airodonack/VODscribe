@@ -6,6 +6,7 @@ Each test makes its videos with ffmpeg and reads back what the compositor drew. 
 - `colours.rs`: every common kind of YUV and RGB comes out the right colour.
 - `media.rs`: awkward files, such as long GOPs, variable frame rates, rotation and odd sizes.
 - `preview.rs`: the preview decoder shows a frame without seeking, then plays on.
+- `preview_close.rs`: closing the player doesn't wait for a preview being decoded.
 - `growing.rs`: footage still downloading plays as far as it's in, and on.
 - `waiting.rs`: footage not here yet waits for a site's VOD and plays black in an edit.
 - `shown_later.rs`: a site's first segment, whose first frame is shown later than it's decoded.
