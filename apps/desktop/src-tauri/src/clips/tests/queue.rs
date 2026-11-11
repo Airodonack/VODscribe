@@ -448,3 +448,120 @@ fn a_drag_clip_stays_listed_till_its_last_drag_out_is_over() {
     cutter.dragged_out(&[hidden], false);
     assert!(listed(hidden).is_none(), "listed once both were over");
 }
+
+/// The part files in the clips' folder (`.<name>.part`, core clips.rs `cut`).
+fn part_files(app: &TestApp) -> Vec<PathBuf> {
+    let entries = std::fs::read_dir(app.paths().clips()).unwrap().map(|e| e.unwrap().path());
+    entries.filter(|p| p.to_string_lossy().ends_with(".part")).collect()
+}
+
+/// D10. A clip canceled while it's made leaves no part file (app
+/// clips.rs:276, `cancel_job`: "stopped if it's being made (its ffmpeg ended
+/// and its part file deleted: `tools::encode`)"; jobs.mjs: "Cancel on the
+/// one being made ends it: its part file goes").
+#[test]
+fn a_clip_canceled_while_it_is_made_leaves_no_part_file() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    halfway.reached();
+    assert_eq!(part_files(&app).len(), 1, "no part file while it's made");
+    cancel(&app, "clip", clip.id);
+    halfway.open();
+    assert_eq!(app.made(clip.id).error.as_deref(), Some(CANCELED));
+    assert_eq!(part_files(&app), Vec::<PathBuf>::new());
+}
+
+/// D12. A clip whose file is made just as it's canceled stays made: the
+/// cancel finds it running and marks it, and as its job ends the mark finds
+/// it made (app clips.rs:355, `settle_canceled`: "What a clip or edit
+/// canceled from the list of jobs shows, unless it was made meanwhile";
+/// the comment at app clips.rs:171: "a cancel as it ends either finds it
+/// running and marks it, or doesn't").
+#[test]
+fn a_clip_made_just_as_it_is_canceled_stays_made() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let ended = Gate::new();
+    app.holds_cut_ends(&ended);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    ended.reached();
+    cancel(&app, "clip", clip.id);
+    ended.open();
+    app.made(clip.id);
+    // Asked for after it: once it's made, the queue is past the first's end.
+    app.make_clip(vod.id, "0:30", "0:35");
+    let clip = app.clip(clip.id).unwrap();
+    assert_eq!((clip.status, clip.error.as_deref()), (ClipStatus::Ready, None));
+    assert!((app.clip_media(&clip).duration - 10.0).abs() < 0.001);
+    let said = app.heard("clip").into_iter().rfind(|c| c["id"] == clip.id);
+    assert_eq!(said.map(|c| c["status"].clone()), Some(json!("ready")), "the clip bar told");
+}
+
+/// How far clip `id` was, each time the page was told (`clip-progress`).
+fn progress_of(app: &TestApp, id: i64) -> Vec<f64> {
+    let heard = app.heard("clip-progress").into_iter().filter(|p| p["id"] == id);
+    heard.map(|p| p["progress"].as_f64().unwrap()).collect()
+}
+
+/// Whether `seen` is `wanted`, each to a millionth.
+fn about(seen: &[f64], wanted: &[f64]) -> bool {
+    seen.len() == wanted.len() && seen.iter().zip(wanted).all(|(s, w)| (s - w).abs() < 1e-6)
+}
+
+/// D24. A clip's progress is sent at most every quarter second: none before
+/// a quarter second has gone by since its cut began, and once one has, the
+/// next only a quarter second after that (app clips.rs:37, `PROGRESS_EVERY`:
+/// "How often a cut's progress is sent."; 0.7.1: "A list shows what's being
+/// made.": "how far the current one is"). ffmpeg says how far it is at each
+/// quarter of the clip, and once more at its end; the clock moves only
+/// while ffmpeg is held before the first.
+#[test]
+fn a_clip_s_progress_is_sent_at_most_every_quarter_second() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let made_while = |from: &str, to: &str, ms: u64| {
+        let first = Gate::new();
+        app.ffmpeg.holds_at(0.25, &first);
+        let clip = app.add_clip(vod.id, from, to).unwrap();
+        first.reached();
+        app.clock().advance(Duration::from_millis(ms));
+        first.open();
+        app.made(clip.id);
+        progress_of(&app, clip.id)
+    };
+    assert_eq!(made_while("0:10", "0:20", 0), [0.0; 0], "sent with no time gone by");
+    assert_eq!(made_while("0:20", "0:30", 249), [0.0; 0], "sent before a quarter second");
+    let quarter = made_while("0:30", "0:40", 250);
+    assert!(about(&quarter, &[0.25]), "a quarter second on, the first only: {quarter:?}");
+}
+
+/// D25. A site's clip's download is most of its progress: the download goes
+/// from 0 to 0.8, the cut after it from there to the end (the comment at
+/// app clips.rs:663: "Its footage downloaded first, if it isn't here: the
+/// bulk of the time, so most of the progress"). The fake site says it's a
+/// quarter through, then done; ffmpeg a quarter through, and so on; the
+/// clock moves a quarter second before each says its first.
+#[test]
+fn a_site_clip_s_download_is_most_of_its_progress() {
+    let app = TestApp::new();
+    let vod = app.add_site_vod("youtube", "noa29qsTc4g", "The test video", 600.0);
+    let (download, cut) = (Gate::new(), Gate::new());
+    app.yt_dlp.holds(&download);
+    app.ffmpeg.holds_at(0.25, &cut);
+    let quarter_second = Duration::from_millis(250);
+    let clip = app.add_clip(vod.id, "1:00", "1:10").unwrap();
+    download.reached();
+    app.clock().advance(quarter_second);
+    download.open();
+    cut.reached();
+    let downloading = progress_of(&app, clip.id);
+    assert!(about(&downloading, &[0.25 * 0.8]), "a quarter of the download: {downloading:?}");
+    app.clock().advance(quarter_second);
+    cut.open();
+    app.made(clip.id);
+    let all = progress_of(&app, clip.id);
+    assert!(about(&all, &[0.25 * 0.8, 0.8 + 0.25 * 0.2]), "then a quarter of the cut: {all:?}");
+}

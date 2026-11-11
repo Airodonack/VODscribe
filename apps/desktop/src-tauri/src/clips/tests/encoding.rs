@@ -249,6 +249,40 @@ fn switched_to_mov_a_clip_made_as_mp4_meanwhile_is_made_again_as_mov() {
     assert!(!mp4.exists(), "the MP4 is left");
 }
 
+/// Switch to MOV, as the Resolve dialog saves it (resolveDrop.svelte.ts
+/// `answer`): the settings as they are, with clips' codec DNxHR in MOV.
+fn switched_to_mov(app: &TestApp) {
+    let mut settings = app.invoke("get_settings", json!({})).unwrap();
+    settings["clip_codec"] = json!("dnxhr");
+    settings["clip_format"] = json!("mov");
+    app.invoke("set_settings", json!({ "settings": settings })).unwrap();
+}
+
+/// C8. Switched to MOV, clips are made as DNxHR at the quality the user
+/// chose, its profile in the file (handbook plans/0.7.2.md, resolve-drop:
+/// "Switch to MOV sets MOV DNxHR at the user's quality (the old note forced
+/// Proxy)"; core clips.rs:130, `output_args`: DNxHR's profile `dnxhr_lb`,
+/// `dnxhr_sq` or `dnxhr_hq` by quality).
+#[test]
+fn switched_to_mov_clips_are_dnxhr_at_the_quality_chosen() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let qualities = [
+        (PROXY, ("0:10", "0:20"), "dnxhr_lb"),
+        (STANDARD, ("0:20", "0:30"), "dnxhr_sq"),
+        (HIGH, ("0:30", "0:40"), "dnxhr_hq"),
+    ];
+    for (quality, (from, to), profile) in qualities {
+        clips_are(&app, H264, quality);
+        let clip = app.make_clip(vod.id, from, to);
+        switched_to_mov(&app);
+        let again = made_again(&app, &clip);
+        let picture = app.clip_media(&again).video.expect("a picture");
+        assert_eq!((picture.codec.as_str(), picture.profile.as_deref()), ("dnxhd", Some(profile)), "{quality:?}");
+        assert_eq!(again.encoding, Some(made_with(DNXHR, quality)));
+    }
+}
+
 /// C9. A clip of an edit's clip bar is made again after a change of codec or
 /// quality, as a VOD's is (handbook plans/0.7.2.md, "The owner's
 /// walkthrough": "an edit's clip bar and a rendered edit are remade after an

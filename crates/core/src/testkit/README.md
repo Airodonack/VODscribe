@@ -56,6 +56,9 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `drag_out(&[ids])` drags clips out of the window as the page does, and `drags().last()` is the drag. No system drag begins. `drag_ended()` waits for what the page hears at its end.
 - `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
+- `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
+- `clock()` is the app's clock. It stands still till the test moves it with `clock().advance(Duration::from_millis(250))`, so a cut's progress, sent at most every quarter second, is sent when the test says.
+- `started_with("VODSCRIBE_DRAG_WAITS", "1")` has the app see that variable, as if it had been started with it. Each test's variables are its own, and the process's aren't seen.
 - The app's queues end with the test, but a command that starts a thread of its own (looking up a VODscription after an add or a refresh, a site's player's picture let go, setup's and the GPU pack's installs) runs on: wait for what it does before the test ends.
 
 Times are written as a clock shows them (`"1:02:03.5"`), and `at` reads them. Run the tests with `cargo test` in `crates/core` and in `apps/desktop/src-tauri`; `cargo test clips::` runs one module's.
@@ -69,6 +72,7 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.ffmpeg.holds_list(&gate)`: its list of encoders waits at the gate, as a slow first run does.
 - `app.ffmpeg.updated()`: its file replaced, as an update does, so the app sees a new ffmpeg at the same path.
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
+- `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is.
 - `works()` puts ffmpeg back as it was.
 - `app.ffmpeg.runs()` gives the arguments of each run so far, in order.
 
@@ -81,6 +85,20 @@ let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
 halfway.reached(); // ffmpeg is halfway through the clip
 app.invoke("cancel_job", json!({ "kind": "clip", "id": clip.id })).unwrap();
 halfway.open();
+```
+
+A file ffmpeg makes is there from its run's start, as a part file beside the clip, but it's media only once the run is over. Its picture keeps what ffmpeg was asked to make it with: `crf`, `profile`, `pix_fmt` and `tag`.
+
+To see a cut's progress, hold ffmpeg before it says how far it is (`holds_at(0.25, …)`), move the clock on, then let it go. ffmpeg says a quarter, a half, three quarters and the end; the page hears the first that comes a quarter second or more after the last it heard:
+
+```rust
+let first = Gate::new();
+app.ffmpeg.holds_at(0.25, &first);
+let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+first.reached();
+app.clock().advance(Duration::from_millis(250));
+first.open();
+app.made(clip.id); // the page heard "clip-progress" once, at 0.25
 ```
 
 A restart, and a drag let go on an app:
@@ -109,7 +127,7 @@ Core tests use the same fakes without the app: `Library::new()` for the library,
 
 ## What's real and what isn't
 
-The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. These aren't faked, so a test can't reach them yet: the clock and the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), the GPU check (`gpu.rs`), and the player's decoders and storyboards (`crates/player`).
+The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), the GPU check (`gpu.rs`), and the player's decoders and storyboards (`crates/player`).
 
 Where the restart and the fake drag differ from the real ones:
 

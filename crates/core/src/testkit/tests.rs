@@ -98,6 +98,143 @@ fn a_fake_ffmpeg_held_at_a_gate_is_stopped_by_a_cancel() {
     assert!(!out.exists() && !dir.join(".clip.mp4.part").exists());
 }
 
+/// A file the fake ffmpeg makes is there from its start, as ffmpeg's is,
+/// but isn't media till it's whole: a cut held partway has its part file.
+#[test]
+fn a_fake_ffmpegs_file_is_there_as_it_is_written_and_media_once_whole() {
+    let dir = TempDir::new("kit-writes");
+    let ffmpeg = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let gate = Gate::new();
+    ffmpeg.holds_at(0.5, &gate);
+    let (path, source, out) = (ffmpeg.path().to_path_buf(), a_minute(&dir), dir.join("clip.mp4"));
+    let (done, result) = mpsc::channel();
+    let made = out.clone();
+    std::thread::spawn(move || {
+        done.send(clips::cut(&path, &source, &made, (0.0, 30.0), false, Default::default(), &never(), |_| {})).unwrap();
+    });
+    gate.reached();
+    let part = dir.join(".clip.mp4.part");
+    assert!(part.is_file(), "no part file while it's written");
+    assert_eq!(Media::read(&part), None, "media before it's whole");
+    gate.open();
+    result.recv_timeout(std::time::Duration::from_secs(5)).unwrap().unwrap();
+    assert!(Media::read(&out).is_some_and(|m| (m.duration - 30.0).abs() < 1e-3));
+    assert!(!part.exists());
+}
+
+/// What a file is made with, as ffmpeg was asked (its quality step,
+/// profile, pixel format and tag), is in the fake's file; a picture copied
+/// keeps its source's.
+#[test]
+fn a_fake_ffmpegs_file_keeps_what_it_was_made_with() {
+    use crate::settings::{ClipCodec, ClipQuality};
+    let dir = TempDir::new("kit-quality");
+    let ffmpeg = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let source = a_minute(&dir);
+    let made = |codec, quality, name: &str| {
+        let out = dir.join(name);
+        let encoding = ClipEncoding { codec, quality };
+        clips::cut(ffmpeg.path(), &source, &out, (0.0, 5.0), false, encoding, &never(), |_| {}).unwrap();
+        let v = Media::read(&out).unwrap().video.unwrap();
+        (v.crf, v.profile, v.pix_fmt, v.tag)
+    };
+    let said = |s: &str| Some(s.to_string());
+    assert_eq!(made(ClipCodec::H265, ClipQuality::High, "a.mp4"), (said("18"), None, said("yuv420p"), said("hvc1")));
+    assert_eq!(made(ClipCodec::Dnxhr, ClipQuality::Proxy, "b.mov"), (None, said("dnxhr_lb"), said("yuv422p"), None));
+    let copied = dir.join("copied.mp4");
+    clips::remux(ffmpeg.path(), &dir.join("a.mp4"), &copied, 5.0, &never(), |_| {}).unwrap();
+    assert_eq!(Media::read(&copied).unwrap().video.unwrap().crf, said("18"), "copied as it was");
+}
+
+/// The fake and the real ffmpeg, asked for H.265 and for DNxHR, make files
+/// of the same pixel format and tag: the real one's read back by ffprobe,
+/// the fake's from what it kept. Skipped where ffmpeg, ffprobe or either
+/// encoder isn't installed.
+#[test]
+fn the_fake_ffmpeg_keeps_the_pixel_format_and_tag_the_real_one_makes() {
+    use crate::settings::{ClipCodec, ClipQuality};
+    let (Ok(real), Ok(ffprobe)) = (which::which("ffmpeg"), which::which("ffprobe")) else {
+        eprintln!("skipped: no ffmpeg or ffprobe on PATH");
+        return;
+    };
+    let has = tools::encoders(&real).unwrap_or_default();
+    if !has.contains("libx265") || !has.contains("dnxhd") {
+        eprintln!("skipped: this ffmpeg lacks libx265 or dnxhd");
+        return;
+    }
+    let dir = TempDir::new("kit-real-quality");
+    let fake = Ffmpeg::at(dir.join("bin/ffmpeg"));
+    let sample = std::process::Command::new(&real)
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=2"])
+        .args(["-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-c:a", "aac", "-shortest"])
+        .arg(dir.join("real.mp4"))
+        .status();
+    assert!(sample.is_ok_and(|s| s.success()), "the sample");
+    Media::video(2.0).write(&dir.join("fake.mp4"));
+    // Each of what ffprobe says of the picture (`pix_fmt=yuv420p`), by name.
+    let probed = |file: &Path, key: &str| {
+        let out = std::process::Command::new(&ffprobe)
+            .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=pix_fmt,codec_tag_string"])
+            .args(["-of", "default=noprint_wrappers=1"])
+            .arg(file)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        text.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).map(str::to_string)
+    };
+    for (codec, ext) in [(ClipCodec::H265, "mp4"), (ClipCodec::Dnxhr, "mov")] {
+        let encoding = ClipEncoding { codec, quality: ClipQuality::Standard };
+        let cut = |ffmpeg: &Path, name: &str| {
+            let out = dir.join(format!("{name}-{ext}.{ext}"));
+            clips::cut(ffmpeg, &dir.join(format!("{name}.mp4")), &out, (0.0, 1.0), false, encoding, &never(), |_| {})
+                .unwrap();
+            out
+        };
+        let real_made = cut(&real, "real");
+        let fake_made = Media::read(&cut(fake.path(), "fake")).unwrap().video.unwrap();
+        assert_eq!(fake_made.pix_fmt, probed(&real_made, "pix_fmt"), "{codec:?}");
+        // Untagged, a stream has what its container gives it.
+        if let Some(asked) = fake_made.tag {
+            assert_eq!(Some(asked), probed(&real_made, "codec_tag_string"), "{codec:?}");
+        }
+    }
+}
+
+/// A download held at the fake yt-dlp's gate has said nothing of how far
+/// it is: what the app reads of its progress comes once it's let go.
+#[test]
+fn a_fake_yt_dlp_held_says_nothing_of_its_progress_till_let_go() {
+    let dir = TempDir::new("kit-yt-dlp-hold");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    fake.serves(yt_dlp::details("youtube", "noa29qsTc4g", url, "The test video", 600.0));
+    let yt_dlp = tools::YtDlp { path: fake.path().into(), js_runtime: None };
+    let info_path = dir.join("info.json");
+    fetch::probe(&yt_dlp, url, &info_path, &never()).unwrap();
+    let gate = Gate::new();
+    fake.holds(&gate);
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (done, result) = mpsc::channel();
+    let (heard, ffmpeg, out) = (seen.clone(), dir.join("bin/ffmpeg"), dir.join("section"));
+    std::thread::spawn(move || {
+        let wanted = fetch::Wanted::Section {
+            selector: "b",
+            ffmpeg: &ffmpeg,
+            start: 0.0,
+            end: 60.0,
+            matroska: true,
+            sound_only: false,
+        };
+        let report = |p| heard.lock().unwrap().push(p);
+        done.send(fetch::download(&yt_dlp, &info_path, &out, wanted, &never(), report).is_ok()).unwrap();
+    });
+    gate.reached();
+    assert!(seen.lock().unwrap().is_empty(), "progress before it was let go");
+    gate.open();
+    assert_eq!(result.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
+    assert_eq!(*seen.lock().unwrap(), [0.25, 1.0]);
+}
+
 #[test]
 fn a_fake_ffmpeg_refuses_what_ffmpeg_refuses() {
     let dir = TempDir::new("kit-refuse");

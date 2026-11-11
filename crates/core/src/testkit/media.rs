@@ -35,6 +35,18 @@ pub struct Video {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
+    /// How it was encoded, as ffmpeg was asked: the quality step (`-crf`),
+    /// the profile (`-profile:v`), the pixel format (`-pix_fmt`) and the tag
+    /// (`-tag:v`). None where nothing was said: a source the test made, or
+    /// one that wasn't asked for.
+    #[serde(default)]
+    pub crf: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub pix_fmt: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
 }
 
 impl Media {
@@ -43,7 +55,16 @@ impl Media {
     pub fn video(duration: f64) -> Self {
         Media {
             duration,
-            video: Some(Video { codec: "h264".into(), width: 1920, height: 1080, fps: 30.0 }),
+            video: Some(Video {
+                codec: "h264".into(),
+                width: 1920,
+                height: 1080,
+                fps: 30.0,
+                crf: None,
+                profile: None,
+                pix_fmt: None,
+                tag: None,
+            }),
             audio: Some("aac".into()),
             container: "mp4".into(),
             cut_from: None,

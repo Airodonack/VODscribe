@@ -7,7 +7,10 @@
 //! app could meet it: a file that isn't there or isn't media, a stream map
 //! that matches nothing, an encoder this build lacks (and its list of
 //! encoders, `-encoders`, says so); and on request partway, or holds
-//! partway at a `Gate`. It keeps what each run was asked (`runs`).
+//! partway at a `Gate`. A file it makes is there from the run's start, as
+//! ffmpeg's is, but isn't media till the run's end; what it's made with
+//! (`-crf`, `-profile:v`, `-pix_fmt`, `-tag:v`) is kept in it. It keeps what
+//! each run was asked (`runs`).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -222,12 +225,19 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
         Some("prores_ks") => Some("prores".into()),
         Some(other) => Some(other.to_string()),
     };
+    // Encoded again, its picture is as the options asked; copied, as it was.
+    let encoded = run.after("-c:v").is_some_and(|c| c != "copy");
+    let asked = |flag: &str, was: &Option<String>| if encoded { run.after(flag) } else { was.clone() };
     let video = first.video.as_ref().filter(|_| picture).map(|v| Video {
         codec: codec("-c:v", Some(&v.codec)).unwrap_or_default(),
         // Made even, as the app's scale asks.
         width: v.width / 2 * 2,
         height: v.height / 2 * 2,
         fps: v.fps,
+        crf: asked("-crf", &v.crf),
+        profile: asked("-profile:v", &v.profile),
+        pix_fmt: asked("-pix_fmt", &v.pix_fmt),
+        tag: asked("-tag:v", &v.tag),
     });
     let audio = if sound { codec("-c:a", first.audio.as_deref()) } else { None };
     let cut_from = match &first.cut_from {
@@ -239,6 +249,12 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
 
     let progress = run.after("-progress").as_deref() == Some("pipe:1");
     let us = |fraction: f64| (duration * fraction * 1e6).round() as u64;
+    // Its output is there from the start, not yet media, as ffmpeg's is
+    // while it writes: a run stopped or failed partway leaves it.
+    if let Some(dir) = Path::new(&last).parent() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(&last, BEING_WRITTEN).unwrap();
     let mut before = 0.0;
     for step in [0.25, 0.5, 0.75, 1.0] {
         // Due in this step: past the one before (or at the very start).
@@ -250,7 +266,6 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
         }
         if let Some((_, message)) = plan.fail.as_ref().filter(|(at, _)| due(*at)) {
             // What was written so far stays, as ffmpeg leaves it.
-            std::fs::write(&last, b"FAKE MEDIA (cut short)\n").unwrap();
             run.err(&format!("{message}\n"));
             return 1;
         }
@@ -268,6 +283,9 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
     }
     0
 }
+
+/// What a file it's making holds till it's whole: no media yet.
+const BEING_WRITTEN: &[u8] = b"FAKE MEDIA (being written)\n";
 
 /// What `ffmpeg -encoders` lists, as a full build does, but shorter: the
 /// encoders the app asks for, and a few beside.

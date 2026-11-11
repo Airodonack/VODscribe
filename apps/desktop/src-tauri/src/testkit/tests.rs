@@ -287,3 +287,58 @@ fn a_file_left_undeleted_goes_at_the_next_start() {
     assert!(!file.exists(), "left after the next start");
     assert!(!store.exists(), "still listed");
 }
+
+/// The app's clock stands still till the test moves it, and a cut's
+/// progress goes by it: a cut over in no time says nothing of its progress,
+/// and one the clock moved on for says how far it was then.
+#[test]
+fn the_apps_clock_stands_still_till_the_test_moves_it() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let before = app.clock().now();
+    let still = app.make_clip(vod.id, "0:10", "0:20");
+    assert_eq!(app.clock().now(), before, "moved by itself");
+    let progress = |id: i64| -> Vec<Value> {
+        app.heard("clip-progress").into_iter().filter(|p| p["id"] == id).map(|p| p["progress"].clone()).collect()
+    };
+    assert_eq!(progress(still.id), Vec::<Value>::new());
+    let first = vodscribe_core::testkit::Gate::new();
+    app.ffmpeg.holds_at(0.25, &first);
+    let moved = app.add_clip(vod.id, "0:30", "0:40").unwrap();
+    first.reached();
+    app.clock().advance(std::time::Duration::from_secs(1));
+    assert_eq!(app.clock().now() - before, std::time::Duration::from_secs(1));
+    first.open();
+    app.made(moved.id);
+    assert_eq!(progress(moved.id), [json!(0.25)]);
+}
+
+/// A cut held at its end has its file made and the library not yet told:
+/// the clip is still being made till the gate opens.
+#[test]
+fn a_cut_held_at_its_end_is_made_but_not_yet_recorded() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let ended = vodscribe_core::testkit::Gate::new();
+    app.holds_cut_ends(&ended);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    ended.reached();
+    let files: Vec<PathBuf> = std::fs::read_dir(app.paths().clips()).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert!(Media::read(&files[0]).is_some(), "not whole");
+    assert_eq!(app.clip(clip.id).unwrap().status, ClipStatus::Cutting);
+    ended.open();
+    let made = app.made(clip.id);
+    assert_eq!(made.file_path.map(PathBuf::from), Some(files[0].clone()));
+}
+
+/// The variables an app was started with are its test's own: another app
+/// running at once, and the process's, aren't seen.
+#[test]
+fn the_variables_an_app_was_started_with_are_its_tests_own() {
+    let (waits, other) = (TestApp::new(), TestApp::new());
+    waits.started_with("VODSCRIBE_DRAG_WAITS", "1");
+    assert_eq!(crate::system::var(waits.handle(), "VODSCRIBE_DRAG_WAITS").as_deref(), Some("1"));
+    assert_eq!(crate::system::var(other.handle(), "VODSCRIBE_DRAG_WAITS"), None);
+    assert_eq!(crate::system::var(waits.handle(), "PATH"), None, "the process's");
+}

@@ -27,7 +27,7 @@ struct Site {
     serves: HashMap<String, Value>,
     /// Links whose downloads the site refuses (403).
     refuses: Vec<String>,
-    /// Each download waits here once it's begun.
+    /// Each download waits here once it's begun, before its progress.
     hold: Option<Gate>,
 }
 
@@ -70,7 +70,8 @@ impl YtDlp {
         self.site.lock().unwrap().refuses.push(url.into());
     }
 
-    /// Each download from now waits at `gate` once it's begun.
+    /// Each download from now waits at `gate` once it's begun, before it
+    /// says how far it is.
     pub fn holds(&self, gate: &Gate) {
         self.site.lock().unwrap().hold = Some(gate.clone());
     }
@@ -144,12 +145,12 @@ fn answer(run: &mut Run, site: &Site) -> i32 {
     }
     let template = run.after("-o").unwrap_or_default();
     let file = template.replace("%(ext)s", ext);
-    run.out("[vodscribe] 1000 4000 NA NA NA\n");
     if let Some(gate) = &site.hold
         && !run.hold(gate)
     {
         return 255;
     }
+    run.out("[vodscribe] 1000 4000 NA NA NA\n");
     media.write(Path::new(&file));
     run.out("[vodscribe] 4000 4000 NA NA NA\n");
     run.out(&format!("[vodscribe-file]{file}\n"));

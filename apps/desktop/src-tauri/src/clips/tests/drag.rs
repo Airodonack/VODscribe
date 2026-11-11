@@ -2,7 +2,7 @@ use super::*;
 
 use crate::testkit::{LetGo, TestApp};
 use serde_json::json;
-use vodscribe_core::testkit::eventually;
+use vodscribe_core::testkit::{Gate, eventually};
 
 /// On Linux, macOS and Windows alike a drag out of the window begins before
 /// the clips' files are made: the page asks the app, and the app says so
@@ -16,6 +16,37 @@ use vodscribe_core::testkit::eventually;
 fn clips_drag_out_before_their_files_are_made_on_every_system() {
     let app = TestApp::new();
     assert_eq!(app.invoke("drag_before_made", json!({})), Ok(json!(true)));
+}
+
+/// F4. Where the system can't wait for a file (`VODSCRIBE_DRAG_WAITS=1`,
+/// the developer's fallback), the page waits for the clips at the window's
+/// edge, and a drag of one not made is refused, saying why; one made drags
+/// out (app clips.rs:1484, `drags_before_made`: "there VODSCRIBE_DRAG_WAITS=1
+/// goes back to waiting for the files at the window's edge before the drag
+/// begins"; app clips.rs:1613, `drag_clip`: "That clip's file isn't made
+/// yet.", "Couldn't make the clip: {why}").
+#[test]
+fn where_the_system_cannot_wait_a_clip_not_made_is_refused_saying_why() {
+    let app = TestApp::new();
+    app.started_with("VODSCRIBE_DRAG_WAITS", "1");
+    assert_eq!(app.invoke("drag_before_made", json!({})), Ok(json!(false)));
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let making = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    halfway.reached();
+    assert_eq!(app.drag_out(&[making.id]), Err(json!("That clip's file isn't made yet.")));
+    // The next file it makes fails; this one goes on.
+    app.ffmpeg.fails_at(0.5, "Invalid data found when processing input");
+    halfway.open();
+    app.made(making.id);
+    let failed = app.make_clip(vod.id, "0:30", "0:40");
+    assert_eq!(failed.status, ClipStatus::Error);
+    let refused = app.drag_out(&[failed.id]).unwrap_err();
+    let refused = refused.as_str().unwrap();
+    assert!(refused.starts_with("Couldn't make the clip: ") && refused.contains("Invalid data"), "{refused}");
+    assert_eq!(app.drags().begun(), 0, "a drag begun");
+    assert_eq!(app.drag_out(&[making.id]), Ok(json!(true)), "the one made");
 }
 
 /// What a drag out of the window comes to, by what was seen of it (app

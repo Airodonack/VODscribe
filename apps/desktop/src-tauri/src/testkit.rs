@@ -6,8 +6,10 @@
 //! kept (`TestApp::heard`), and what the system's desktop would be asked to
 //! do is heard by `Desktop` (system.rs). A drag out of the window begins
 //! no system's drag: `Drags` keeps it, and the test lets it go where it
-//! says (drag_source). An app that quit or was killed leaves its folder
-//! (`Folder`) to the test, which starts the app on it again.
+//! says (drag_source). The app's clock stands still till the test moves it
+//! (`Clock`), and the variables it was started with are the test's own
+//! (`Env`). An app that quit or was killed leaves its folder (`Folder`) to
+//! the test, which starts the app on it again.
 //!
 //! The helpers say what a test does in the words of its spec: "a file
 //! `Day 3.mp4` of a minute is added" (`add_video_file`), "a clip of
@@ -20,6 +22,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tauri::{Listener, Manager};
@@ -118,7 +121,7 @@ impl Drop for TestApp {
         self.ffmpeg.end();
         self.yt_dlp.end();
         no_links().retain(|dir| *dir != self.paths().clips());
-        held_copies().retain(|(dir, gate)| {
+        held().retain(|(_, dir, gate)| {
             let ours = *dir == self.paths().clips();
             if ours {
                 gate.open();
@@ -178,6 +181,8 @@ impl TestApp {
         }
         app.manage(Desktop::default());
         app.manage(Drags::default());
+        app.manage(Clock::default());
+        app.manage(Env::default());
         app.manage(crate::choices::Kept::load(paths.choices()));
         app.manage(crate::recovery::Problem::none(paths.db()));
         app.manage(crate::screen::Screen::default());
@@ -253,7 +258,25 @@ impl TestApp {
     /// before the library is taken to record it (`clipboard::copy_file`), as
     /// on a slow disk the copy itself would take a while.
     pub(crate) fn holds_copies(&self, gate: &Gate) {
-        held_copies().push((self.paths().clips(), gate.clone()));
+        held().push((Held::Copies, self.paths().clips(), gate.clone()));
+    }
+
+    /// A clip's cut, once its encode is over (ffmpeg done, failed or
+    /// stopped), waits at `gate` before the library is taken to record it
+    /// (`clips::cut`): the moment between a clip made and its job's end.
+    pub(crate) fn holds_cut_ends(&self, gate: &Gate) {
+        held().push((Held::CutEnds, self.paths().clips(), gate.clone()));
+    }
+
+    /// The app's clock (`Clock`): it stands still till the test moves it.
+    pub(crate) fn clock(&self) -> &Clock {
+        self.app.state::<Clock>().inner()
+    }
+
+    /// The app sees variable `name` as `value`, as if it had been started
+    /// with it (`system::var`). The test's own: the process's aren't seen.
+    pub(crate) fn started_with(&self, name: &str, value: &str) {
+        self.app.state::<Env>().vars.lock().unwrap().insert(name.into(), value.into());
     }
 
     /// The library, held until the guard is dropped (as a command holds it).
@@ -420,21 +443,89 @@ pub(crate) fn refuses_links(at: &Path) -> bool {
     no_links().iter().any(|dir| at.starts_with(dir))
 }
 
-/// The gates pasted clips' copies wait at (`TestApp::holds_copies`), each
-/// with the clips folder it's for.
-static HELD_COPIES: Mutex<Vec<(PathBuf, Gate)>> = Mutex::new(Vec::new());
+/// Where in the app's own code a test holds it at a gate.
+#[derive(Clone, Copy, PartialEq)]
+enum Held {
+    /// A pasted clip's copy of its file, written (`TestApp::holds_copies`).
+    Copies,
+    /// A clip's cut, its encode over (`TestApp::holds_cut_ends`).
+    CutEnds,
+}
 
-fn held_copies() -> MutexGuard<'static, Vec<(PathBuf, Gate)>> {
-    HELD_COPIES.lock().unwrap_or_else(|e| e.into_inner())
+/// The gates the app's own code waits at, each with where (`Held`) and the
+/// clips folder it's for: the tests run at once, in one process.
+static HELD: Mutex<Vec<(Held, PathBuf, Gate)>> = Mutex::new(Vec::new());
+
+fn held() -> MutexGuard<'static, Vec<(Held, PathBuf, Gate)>> {
+    HELD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Waits at the gate `at` is held at for file `file`'s clips folder, if its
+/// test holds it there.
+fn hold(at: Held, file: &Path) {
+    let gate = held().iter().find(|(h, dir, _)| *h == at && file.starts_with(dir)).map(|(_, _, gate)| gate.clone());
+    if let Some(gate) = gate {
+        gate.wait();
+    }
 }
 
 /// A pasted clip's file was just copied to `to`: it waits there if its
 /// test holds copies (`TestApp::holds_copies`).
 pub(crate) fn copied(to: &Path) {
-    let gate = held_copies().iter().find(|(dir, _)| to.starts_with(dir)).map(|(_, gate)| gate.clone());
-    if let Some(gate) = gate {
-        gate.wait();
+    hold(Held::Copies, to);
+}
+
+/// A clip's encode into `out` is over: it waits there if its test holds
+/// cuts' ends (`TestApp::holds_cut_ends`).
+pub(crate) fn cut_ended(out: &Path) {
+    hold(Held::CutEnds, out);
+}
+
+/// The app's clock in a test (`TestApp::clock`): it stands still till the
+/// test moves it, so what goes by the time (a cut's progress, sent at most
+/// every quarter second) happens when the test says. Each app's own.
+pub(crate) struct Clock(Mutex<Instant>);
+
+impl Default for Clock {
+    fn default() -> Self {
+        Clock(Mutex::new(Instant::now()))
     }
+}
+
+impl Clock {
+    /// The time now, as the app reads it.
+    pub(crate) fn now(&self) -> Instant {
+        *self.0.lock().unwrap()
+    }
+
+    /// Moves it on by `by`.
+    pub(crate) fn advance(&self, by: Duration) {
+        *self.0.lock().unwrap() += by;
+    }
+}
+
+/// The app's `Clock`.
+pub(crate) fn clock(app: &AppHandle) -> &Clock {
+    app.state::<Clock>().inner()
+}
+
+/// The variables the app was started with, in a test (`TestApp::started_with`):
+/// the test's own, none of the process's.
+#[derive(Default)]
+pub(crate) struct Env {
+    vars: Mutex<HashMap<String, String>>,
+}
+
+impl Env {
+    /// Variable `name`, if the test set it.
+    pub(crate) fn var(&self, name: &str) -> Option<String> {
+        self.vars.lock().unwrap().get(name).cloned()
+    }
+}
+
+/// The app's `Env` (system.rs).
+pub(crate) fn env(app: &AppHandle) -> &Env {
+    app.state::<Env>().inner()
 }
 
 /// `stamp` (`0:10`, `1:02:03.5`, `75`) in seconds.

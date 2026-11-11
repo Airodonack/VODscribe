@@ -650,11 +650,11 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         }
         emit(app, &db, id);
     }
-    let last = Mutex::new(Instant::now());
+    let last = Mutex::new(crate::system::now(app));
     let report = |progress: f64| {
         let mut last = last.lock().unwrap();
-        if last.elapsed() >= PROGRESS_EVERY {
-            *last = Instant::now();
+        if crate::system::now(app).duration_since(*last) >= PROGRESS_EVERY {
+            *last = crate::system::now(app);
             crate::page::emit(app, "clip-progress", Progress { id, progress });
             crate::job_list::progressed(app, id, progress);
         }
@@ -675,6 +675,9 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         let report = |p: f64| report(cut_from + p * (1.0 - cut_from));
         clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, encoding, stop, report)
     })();
+    // (A test holds it here, its encode over and the clip not yet recorded.)
+    #[cfg(test)]
+    crate::testkit::cut_ended(&out);
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     let recorded = match &result {
@@ -1483,16 +1486,16 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 /// files at the window's edge before the drag begins (dragout.ts). That
 /// switch is a developer's fallback, not a setting: no changelog, support
 /// page or dialog names it.
-pub(crate) fn drags_before_made() -> bool {
+pub(crate) fn drags_before_made(app: &AppHandle) -> bool {
     cfg!(any(target_os = "linux", target_os = "macos", windows))
-        && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
+        && crate::system::var(app, "VODSCRIBE_DRAG_WAITS").as_deref() != Some("1")
 }
 
 /// Whether the page may drag clips out before their files are made
 /// (`drags_before_made`); else it waits for them first.
 #[tauri::command]
-pub(crate) fn drag_before_made() -> bool {
-    drags_before_made()
+pub(crate) fn drag_before_made(app: AppHandle) -> bool {
+    drags_before_made(&app)
 }
 
 /// Where a file being dragged out is: made, at its path; still being made;
@@ -1603,7 +1606,7 @@ pub(crate) async fn drag_clip(
     for &id in &ids {
         match made_in(&app.state::<AppState>().db.lock().unwrap(), id) {
             Made::Ready(_) => {}
-            Made::Making | Made::Failed(_) if drags_before_made() => {}
+            Made::Making | Made::Failed(_) if drags_before_made(&app) => {}
             Made::Making => return Err("That clip's file isn't made yet.".into()),
             Made::Failed(why) => return Err(format!("Couldn't make the clip: {why}")),
         }
