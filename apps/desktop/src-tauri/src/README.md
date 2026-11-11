@@ -23,6 +23,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - `history.rs`: undo and redo, per document.
 - `clipboard.rs`: Ctrl+C, Ctrl+X and Ctrl+V: what was copied, and the clips a cut holds.
+- `clipboard/`: its tests (`tests.rs`, `tests/`).
 - `choices.rs`: the page's small choices, read at start and written as they change.
 - `files.rs`: deleting made files, later where Windows still has them open, or at the next start.
 - `player.rs`: the app's own player, driven by the page.

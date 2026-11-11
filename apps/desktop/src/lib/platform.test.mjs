@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   DEFAULT_HEIGHT,
   chaptersText,
+  copyLinkTitle,
   fromSite,
   HEIGHTS,
   hasSitePlayer,
@@ -13,6 +14,7 @@ import {
   formatTime,
   isTwitchClip,
   labelOf,
+  linksHaveTime,
   listed,
   siteName,
   twitchId,
@@ -121,22 +123,68 @@ test("things being added are called by their link or file name", () => {
   assert.equal(labelOf("talk.mp4"), "talk.mp4");
 });
 
-test("a link to a moment on a VOD's site: Twitch's time always with its hours, none on Kick", () => {
-  const vod = (/** @type {string} */ platform, /** @type {string} */ platform_id, /** @type {string} */ url) =>
-    /** @type {any} */ ({ platform, platform_id, url });
+/** A VOD of `platform` as much as a link needs. @param {string} platform @param {string} platform_id @param {string} url @returns {any} */
+const vodOf = (platform, platform_id, url) => ({ platform, platform_id, url });
+
+test("a Kick VOD's link says no time", () => {
+  // platform.ts:117 "not Kick's (none is documented; it ignores one)"; 0.7.0 Fixes: "Kick links copy without a time."
+  const kick = vodOf("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
+  assert.equal(linksHaveTime("kick"), false);
+  assert.equal(watchUrl(kick, 75), "https://kick.com/airodonack/videos/01a169a1");
+});
+
+test("a Twitch moment link always says its hours", () => {
+  // platform.ts:121: Twitch reads "?t=0h1m5s", so the hours are said even when there are none.
+  const twitch = vodOf("twitch", "v2901646294", "https://www.twitch.tv/videos/2901646294");
+  assert.equal(linksHaveTime("twitch"), true);
   assert.equal(twitchTime(3723), "1h2m3s");
   assert.equal(twitchTime(63.9), "0h1m3s");
   assert.equal(twitchTime(3), "0h0m3s");
   assert.equal(twitchTime(-2), "0h0m0s");
-  const twitch = vod("twitch", "v2901646294", "https://www.twitch.tv/videos/2901646294");
   assert.equal(watchUrl(twitch, 65.7), "https://www.twitch.tv/videos/2901646294?t=0h1m5s");
-  const youtube = vod("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
+  assert.equal(watchUrl(twitch, 3723), "https://www.twitch.tv/videos/2901646294?t=1h2m3s");
+});
+
+test("a YouTube moment link says its second", () => {
+  // platform.ts:126: "&t=<seconds>s".
+  const youtube = vodOf("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
+  assert.equal(linksHaveTime("youtube"), true);
   assert.equal(watchUrl(youtube, 75.2), "https://www.youtube.com/watch?v=noa29qsTc4g&t=75s");
-  // Kick's links name no time (none is documented): the VOD's own link.
-  const kick = vod("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
-  assert.equal(watchUrl(kick, 75), "https://kick.com/airodonack/videos/01a169a1");
-  const other = vod("rumble", "x", "https://rumble.com/v1-x.html");
+});
+
+test("a Twitch clip's link is its page with no time", () => {
+  // The comment at platform.ts:129: "A clip's page has no time to start from."
+  const clip = vodOf("twitch", "FunnyClipName-AbCd123", "https://clips.twitch.tv/FunnyClipName-AbCd123");
+  assert.equal(watchUrl(clip, 75), "https://clips.twitch.tv/FunnyClipName-AbCd123");
+});
+
+test("another site's link says its time as t", () => {
+  // platform.ts:121: "where its links can say one"; the VOD's own link with ?t=<seconds>.
+  const other = vodOf("rumble", "x", "https://rumble.com/v1-x.html");
+  assert.equal(linksHaveTime("rumble"), true);
   assert.equal(watchUrl(other, 75), "https://rumble.com/v1-x.html?t=75");
+  const timed = vodOf("rumble", "x", "https://rumble.com/v1-x.html?t=5&a=b");
+  assert.equal(watchUrl(timed, 75), "https://rumble.com/v1-x.html?t=75&a=b");
+});
+
+test("a moment link floors its time to the second and never goes below 0", () => {
+  // plans/sections-074.md "Decided" 2026-11-11, unstated 5 ("a moment link floors to the second: spec as is"); platform.ts:124.
+  const youtube = vodOf("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
+  assert.equal(watchUrl(youtube, 75.99), "https://www.youtube.com/watch?v=noa29qsTc4g&t=75s");
+  assert.equal(watchUrl(youtube, -5), "https://www.youtube.com/watch?v=noa29qsTc4g&t=0s");
+  const twitch = vodOf("twitch", "v2901646294", "https://www.twitch.tv/videos/2901646294");
+  assert.equal(watchUrl(twitch, 59.99), "https://www.twitch.tv/videos/2901646294?t=0h0m59s");
+  assert.equal(watchUrl(twitch, -1), "https://www.twitch.tv/videos/2901646294?t=0h0m0s");
+  const other = vodOf("rumble", "x", "https://rumble.com/v1-x.html");
+  assert.equal(watchUrl(other, 0.9), "https://rumble.com/v1-x.html?t=0");
+});
+
+test("the stamp's tooltip says when a site's links can't say a time", () => {
+  // platform.ts:142: "a link to the moment, or on a site whose links can't say one, the VOD's"; 0.7.0 Fixes: "Kick links copy without a time." (pointing at it says so).
+  const kick = vodOf("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
+  assert.equal(copyLinkTitle(kick), "Copy a link to this VOD (Kick's links can't say a time)");
+  const youtube = vodOf("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
+  assert.equal(copyLinkTitle(youtube), "Copy a link to this moment");
 });
 
 test("a Twitch id loses its v only before a number, never a clip's slug's", () => {
