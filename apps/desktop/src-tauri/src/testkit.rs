@@ -270,11 +270,19 @@ impl TestApp {
         held().push((Held::Copies, self.paths().clips(), gate.clone()));
     }
 
-    /// A clip's cut, once its encode is over (ffmpeg done, failed or
-    /// stopped), waits at `gate` before the library is taken to record it
-    /// (`clips::cut`): the moment between a clip made and its job's end.
+    /// A clip's cut, or an edit's render, once its encode is over (ffmpeg
+    /// done, failed or stopped), waits at `gate` before the library is taken
+    /// to record it (`clips::cut`, `edits::render_edit`): the moment between
+    /// a clip made and its job's end.
     pub(crate) fn holds_cut_ends(&self, gate: &Gate) {
         held().push((Held::CutEnds, self.paths().clips(), gate.clone()));
+    }
+
+    /// `forget_gone_clips`, once it has looked at the clips' files (without
+    /// the library held), waits at `gate` before it takes the library to
+    /// take those it found gone.
+    pub(crate) fn holds_gone_looks(&self, gate: &Gate) {
+        held().push((Held::GoneLooks, self.paths().clips(), gate.clone()));
     }
 
     /// The app's clock (`Clock`): it stands still till the test moves it.
@@ -489,6 +497,8 @@ enum Held {
     Copies,
     /// A clip's cut, its encode over (`TestApp::holds_cut_ends`).
     CutEnds,
+    /// `forget_gone_clips`, its files looked at (`TestApp::holds_gone_looks`).
+    GoneLooks,
 }
 
 /// The gates the app's own code waits at, each with where (`Held`) and the
@@ -518,6 +528,12 @@ pub(crate) fn copied(to: &Path) {
 /// cuts' ends (`TestApp::holds_cut_ends`).
 pub(crate) fn cut_ended(out: &Path) {
     hold(Held::CutEnds, out);
+}
+
+/// `forget_gone_clips` has looked at the files in `clips`: it waits there if
+/// its test holds those looks (`TestApp::holds_gone_looks`).
+pub(crate) fn gone_looked(clips: &Path) {
+    hold(Held::GoneLooks, clips);
 }
 
 /// The app's clock in a test (`TestApp::clock`): it stands still till the

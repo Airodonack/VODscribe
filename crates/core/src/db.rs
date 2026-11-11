@@ -805,6 +805,13 @@ ALTER TABLE vod_annotations ADD COLUMN contexts TEXT;";
 const MIGRATE_V41: &str = "
 ALTER TABLE renders ADD COLUMN encoding TEXT;";
 
+/// The last make of each clip deleted while the library is open
+/// (`Db::delete_clip`): undo, whose history lasts as long, may bring one back
+/// under its id (`Db::bring_back_bar_clip`), and its next make goes past it,
+/// so no make is ever at a path an earlier one had (`Paths::clip_make`). A
+/// temporary table: the connection's own, gone when it closes.
+const GONE_MAKES: &str = "CREATE TEMP TABLE gone_makes (id INTEGER PRIMARY KEY, make INTEGER NOT NULL);";
+
 /// Version 42: a deleted clip's id is never given to a new one, as a VOD's
 /// isn't (v14), so what still holds it (an undo step, the clipboard, the
 /// page, the clip's picture and files, all named by it) can't reach the new
@@ -1592,6 +1599,7 @@ impl Db {
             eprintln!("{}: library format {version} is newer than this version knows", path.display());
         }
         tidy_copies(path, COPIES_KEPT_FOR);
+        conn.execute_batch(GONE_MAKES)?;
         Ok(Self { conn, files })
     }
 
@@ -1890,6 +1898,12 @@ impl Db {
     /// shown there.
     pub fn delete_clip(&self, id: i64) -> Result<()> {
         let delete = |db: &Db| {
+            db.conn.execute(
+                "INSERT INTO temp.gone_makes (id, make) SELECT clip_id, make FROM renders
+                 WHERE clip_id = ?1 AND make IS NOT NULL
+                 ON CONFLICT (id) DO UPDATE SET make = max(make, excluded.make)",
+                [id],
+            )?;
             db.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
             Ok(())
         };

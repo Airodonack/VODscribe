@@ -109,6 +109,26 @@ fn a_clip_dragged_out_where_the_disk_takes_no_links_keeps_that_file_when_deleted
     assert!(given.is_file(), "the file another app took was deleted with its clip");
 }
 
+/// As above, then the delete undone: the clip comes back under its own id
+/// and is made again as a file of its own, never written over the one the
+/// other app took (`Paths::clip_make`: "every make writes a file of its
+/// own, so none rewrites the one before, which another app may have been
+/// given").
+#[test]
+fn a_clip_deleted_and_undone_is_made_again_beside_the_file_another_app_took() {
+    let app = TestApp::new();
+    app.takes_no_hard_links();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let given = dragged_out(&app, &clip);
+    let was = as_given(&given);
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    app.invoke("undo", json!({ "view": { "kind": "vod", "id": vod.id } })).unwrap();
+    let back = app.made(clip.id);
+    assert_ne!(file_of(&back), given, "made again at the path another app took");
+    assert!(as_given(&given) == was, "the file another app took was written over");
+}
+
 /// The same drag where the disk takes links hands out a name of its own,
 /// which stays; the clip's own file goes with it (`handed_out`).
 #[test]
@@ -520,6 +540,55 @@ fn a_clip_deleted_as_its_make_ends_leaves_no_file() {
     eventually("the clips' queue idle", || app.state().clips.listed() == (None, Vec::new()));
     let left = files_in(&app.paths().clips());
     assert!(!made.exists(), "the make of a clip deleted as it ended stays: {left:?}");
+}
+
+/// Clip `clip`, whose own file `given` another app took, made again by
+/// `remake`, then deleted as that make ends and the delete undone before the
+/// make is recorded: the make is recorded for the clip brought back (it's
+/// of what that clip is), and the file the other app took stays
+/// (`Db::hand_out_clip`: "it's someone else's now, so it stays when the clip
+/// goes"). The make let go of the file the clip had as it began, which the
+/// clip brought back never had.
+fn deleted_as_its_remake_ends_and_undone(app: &TestApp, vod: i64, clip: i64, given: &Path, remake: impl Fn()) {
+    use vodscribe_core::testkit::Gate;
+    let ended = Gate::new();
+    app.holds_cut_ends(&ended);
+    remake();
+    ended.reached();
+    app.invoke("delete_clip", json!({ "id": clip })).unwrap();
+    app.invoke("undo", json!({ "view": { "kind": "vod", "id": vod } })).unwrap();
+    ended.open();
+    app.made(clip);
+    assert!(given.is_file(), "the file another app took was deleted");
+}
+
+/// As above, for a clip cut (one piece as it came: `clips::cut`).
+#[test]
+fn a_clip_deleted_as_its_cut_ends_and_undone_keeps_the_file_another_app_took() {
+    let app = TestApp::new();
+    app.takes_no_hard_links();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let given = dragged_out(&app, &clip);
+    deleted_as_its_remake_ends_and_undone(&app, vod.id, clip.id, &given, || {
+        app.invoke("set_clip_range", json!({ "id": clip.id, "start": at("0:10"), "end": at("0:25") })).unwrap();
+    });
+}
+
+/// As above, for a clip rendered (a stretch taken out in the editor:
+/// `edits::render_edit`).
+#[test]
+fn a_clip_deleted_as_its_render_ends_and_undone_keeps_the_file_another_app_took() {
+    let app = TestApp::new();
+    app.takes_no_hard_links();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    app.invoke("remove_stretch", json!({ "id": clip.id, "from": 2.0, "to": 3.0 })).unwrap();
+    let clip = app.made(clip.id);
+    let given = dragged_out(&app, &clip);
+    deleted_as_its_remake_ends_and_undone(&app, vod.id, clip.id, &given, || {
+        app.invoke("remove_stretch", json!({ "id": clip.id, "from": 5.0, "to": 6.0 })).unwrap();
+    });
 }
 
 /// On a disk without hard links a drag hands out the clip's own file as the

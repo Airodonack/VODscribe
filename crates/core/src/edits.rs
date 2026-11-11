@@ -775,25 +775,42 @@ impl Db {
     /// never given before (`db::MIGRATE_V42`). Every clip, edit and VOD's
     /// own clip is made here.
     pub(crate) fn new_clip(&self, title: &str, place: Place) -> Result<i64> {
-        const ID: &str = "(SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM clips)) FROM clip_ids)";
-        match place {
-            Place::Listed => self.conn.execute(
-                &format!(
-                    "INSERT INTO clips (id, title, created_at, position)
-                     VALUES ({ID}, ?1, ?2, (SELECT coalesce(min(position), 0) - 1 FROM clips))"
-                ),
-                params![title, now()],
-            )?,
-            Place::Bar(bar_of) => self.conn.execute(
-                &format!(
-                    "INSERT INTO clips (id, title, created_at, bar_of, bar_position)
-                     VALUES ({ID}, ?1, ?2, ?3, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?3))"
-                ),
-                params![title, now(), bar_of],
+        self.new_clip_as(title, place, None)
+    }
+
+    /// `new_clip`, under id `old` if that's given and no clip has it: a
+    /// deleted clip brought back by undo keeps its id, so what still holds
+    /// it (the page, the clip's history) finds it. No other clip can have
+    /// been given it (`db::MIGRATE_V42`), and the counter stays past it.
+    fn new_clip_as(&self, title: &str, place: Place, old: Option<i64>) -> Result<i64> {
+        let free = |id: i64| -> Result<bool> {
+            Ok(self.conn.query_row("SELECT NOT EXISTS (SELECT 1 FROM clips WHERE id = ?1)", [id], |r| r.get(0))?)
+        };
+        let id: i64 = match old {
+            Some(id) if free(id)? => id,
+            _ => self.conn.query_row(
+                "SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM clips)) FROM clip_ids",
+                [],
+                |r| r.get(0),
             )?,
         };
-        let id = self.conn.last_insert_rowid();
-        self.conn.execute("INSERT INTO renders (clip_id) VALUES (?1)", [id])?;
+        match place {
+            Place::Listed => self.conn.execute(
+                "INSERT INTO clips (id, title, created_at, position)
+                 VALUES (?1, ?2, ?3, (SELECT coalesce(min(position), 0) - 1 FROM clips))",
+                params![id, title, now()],
+            )?,
+            Place::Bar(bar_of) => self.conn.execute(
+                "INSERT INTO clips (id, title, created_at, bar_of, bar_position)
+                 VALUES (?1, ?2, ?3, ?4, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?4))",
+                params![id, title, now(), bar_of],
+            )?,
+        };
+        // A clip brought back goes on from the last make it had (`GONE_MAKES`).
+        self.conn.execute(
+            "INSERT INTO renders (clip_id, make) VALUES (?1, (SELECT make FROM temp.gone_makes WHERE id = ?1))",
+            [id],
+        )?;
         Ok(id)
     }
 
@@ -1288,8 +1305,14 @@ impl Db {
     /// A clip on listed clip `bar`'s clip bar, made anew as `state` has it
     /// (undo bringing back one an edit's change took away); its id.
     pub fn add_bar_clip(&self, bar: i64, state: &EditState) -> Result<i64> {
+        self.bring_back_bar_clip(bar, None, state)
+    }
+
+    /// `add_bar_clip` for a clip undo brings back: under its own id, `old`,
+    /// if no clip has it (`new_clip_as`), else a new one; its id.
+    pub fn bring_back_bar_clip(&self, bar: i64, old: Option<i64>, state: &EditState) -> Result<i64> {
         self.change(bar, None, |db| {
-            let id = db.new_clip(&state.title, Place::Bar(bar))?;
+            let id = db.new_clip_as(&state.title, Place::Bar(bar), old)?;
             db.restore_edit(id, state)?;
             Ok(id)
         })

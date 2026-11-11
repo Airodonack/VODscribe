@@ -316,16 +316,10 @@ impl BarQueue for AppHandle {
 /// the change left it, or as an undo of it did) to `to`. Only that: what the
 /// change didn't touch stays as it is now, so a clip that went meanwhile
 /// without a change of its own (its file deleted outside the app) stays gone.
-/// A clip is made again unless its file is as clips are made `now`. The
-/// clips made anew, each with the id it had in `to` (`renumber`).
-fn restore(
-    queue: &impl BarQueue,
-    db: &Db,
-    now: ClipEncoding,
-    doc: Doc,
-    from: &Snapshot,
-    to: &Snapshot,
-) -> Result<Vec<(i64, i64)>> {
+/// A clip is made again unless its file is as clips are made `now`. A clip
+/// made anew keeps the id it had in `to` (`Db::bring_back_bar_clip`), so
+/// every step and holder that names it by that id finds it.
+fn restore(queue: &impl BarQueue, db: &Db, now: ClipEncoding, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
     let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| remake_clip(db, now, clip, want);
     match (doc, from, to) {
         (Doc::Edit(id), Snapshot::Edit { state: was, bar: had }, Snapshot::Edit { state, bar }) => {
@@ -336,11 +330,10 @@ fn restore(
                 if queue.unhold(db, doc, want.id, &want.made)? {
                     return Ok(None);
                 }
-                db.add_bar_clip(id, &want.made).map(Some)
+                db.bring_back_bar_clip(id, Some(want.id), &want.made).map(Some)
             };
-            let made = restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
-            order_bar(db, id, bar, &edit_bar(db, id)?)?;
-            Ok(made)
+            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
+            order_bar(db, id, bar, &edit_bar(db, id)?)
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
@@ -350,15 +343,16 @@ fn restore(
                 if queue.unhold(db, doc, want.id, &want.made)? {
                     return Ok(None);
                 }
-                db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made).map(Some)
+                let bar = db.vod_clip(id)?.context("That VOD is gone.")?;
+                db.bring_back_bar_clip(bar, Some(want.id), &want.made).map(Some)
             };
-            let made = restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
+            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
             if let Some(bar) = db.vod_clip(id)? {
                 order_bar(db, bar, clips, &vod_bar(db, id)?)?;
             }
-            Ok(made)
+            Ok(())
         }
-        _ => Ok(Vec::new()),
+        _ => Ok(()),
     }
 }
 
@@ -416,7 +410,8 @@ enum BarStep<'a, M> {
 }
 
 /// The clip in `list` that is `clip`, one of `beside`: of its id, or else
-/// made of the same (a clip made again by an undo has a new id), but not one
+/// made of the same (a clip made again by an undo under a new id, its own
+/// taken: `Db::bring_back_bar_clip`), but not one
 /// that is another of `beside` by its id (two clips of one stretch, a pill
 /// pasted beside itself, are two).
 fn find<'a, M: Made>(list: &'a [BarClip<M>], clip: &BarClip<M>, beside: &[BarClip<M>]) -> Option<&'a BarClip<M>> {
@@ -459,8 +454,7 @@ fn bar_steps<'a, M: Made>(from: &[BarClip<M>], to: &'a [BarClip<M>], now: &[BarC
 /// Puts back what one change did to a clip bar, `now` as it is
 /// (`bar_steps`): a clip renamed back, made of what it was (`remake`, and
 /// made again), taken off (its file too, unless dragged out), or put back
-/// (`add`: the clip a cut holds, None, or else one made anew, its id). The
-/// clips made anew, each as (the id it had, its id now).
+/// (`add`: the clip a cut holds, None, or else one made anew, its id).
 fn restore_bar<M: Made>(
     queue: &impl BarQueue,
     db: &Db,
@@ -469,8 +463,7 @@ fn restore_bar<M: Made>(
     now: &[BarClip<M>],
     remake: impl Fn(&Db, i64, &BarClip<M>) -> Result<()>,
     add: impl Fn(&Db, &BarClip<M>) -> Result<Option<i64>>,
-) -> Result<Vec<(i64, i64)>> {
-    let mut made = Vec::new();
+) -> Result<()> {
     for step in bar_steps(from, to, now) {
         match step {
             BarStep::Remake(id, want) => {
@@ -482,55 +475,11 @@ fn restore_bar<M: Made>(
             BarStep::Add(want) => {
                 if let Some(id) = add(db, want)? {
                     queue.added(id);
-                    made.push((want.id, id));
                 }
             }
         }
     }
-    Ok(made)
-}
-
-/// Clips an undo or redo made anew (`restore`), under ids never given
-/// before, each as (the id it had, its id now): every step that names one
-/// by the id it had (a change to it before it was deleted, `entry` among
-/// them) names it by its id now, as if it had kept its id, and its own
-/// history (a clip opened in the editor) is under its id now.
-fn renumber(s: &mut Stacks, entry: &mut Entry, made: &[(i64, i64)]) {
-    if made.is_empty() {
-        return;
-    }
-    for &(was, now) in made {
-        for stacks in [&mut s.undo, &mut s.redo] {
-            if let Some(list) = stacks.remove(&Doc::Edit(was)) {
-                stacks.insert(Doc::Edit(now), list);
-            }
-        }
-    }
-    let stacks = s.undo.values_mut().chain(s.redo.values_mut()).flatten();
-    for e in stacks.chain(std::iter::once(entry)) {
-        e.renumber(made);
-    }
-}
-
-impl Entry {
-    fn renumber(&mut self, made: &[(i64, i64)]) {
-        let new = |id: i64| made.iter().find(|(was, _)| *was == id).map_or(id, |&(_, now)| now);
-        if let Doc::Edit(id) = self.doc {
-            self.doc = Doc::Edit(new(id));
-        }
-        if let Some(Doc::Edit(id)) = self.origin {
-            self.origin = Some(Doc::Edit(new(id)));
-        }
-        for snapshot in [&mut self.before, &mut self.after] {
-            let (Snapshot::Edit { bar: clips, .. } | Snapshot::Vod { clips, .. }) = snapshot;
-            for clip in clips {
-                clip.id = new(clip.id);
-            }
-        }
-        for e in &mut self.cleared {
-            e.renumber(made);
-        }
-    }
+    Ok(())
 }
 
 /// The order `now`'s clips go in for clip bar `to`'s order: those that are
@@ -567,16 +516,12 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let mut s = state.history.0.lock().unwrap();
     let Some(mut entry) = History::take(&mut s, view, undo) else { return Ok(None) };
     let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
-    let made = match restore(app, &db, crate::edits::made_now(app), entry.doc, from, to) {
-        Ok(made) => made,
-        Err(e) => {
-            // Kept, to try again: it's the newest of its stack still.
-            let stacks = if undo { &mut s.undo } else { &mut s.redo };
-            stacks.entry(entry.doc).or_default().push(entry);
-            return Err(err(e));
-        }
-    };
-    renumber(&mut s, &mut entry, &made);
+    if let Err(e) = restore(app, &db, crate::edits::made_now(app), entry.doc, from, to) {
+        // Kept, to try again: it's the newest of its stack still.
+        let stacks = if undo { &mut s.undo } else { &mut s.redo };
+        stacks.entry(entry.doc).or_default().push(entry);
+        return Err(err(e));
+    }
     s.count += 1;
     entry.at = s.count;
     entry.revision = revision(&db, entry.doc);
@@ -678,7 +623,7 @@ mod tests {
         assert_ne!(new.id, old.id, "the deleted clip's id isn't given out again");
     }
 
-    /// Undo of a delete brings the clip back, made anew under a new id, and
+    /// Undo of a delete brings the clip back, made anew under its own id, and
     /// an undo past it of a change to that clip changes the clip brought
     /// back, rather than making another beside it (the clip e2e scenario:
     /// resized, deleted, then both undone).
@@ -708,7 +653,7 @@ mod tests {
     }
 
     /// As above with a clip that isn't the newest, which an undo of its
-    /// delete made anew under a new id in 0.7.2 too: undone past the
+    /// delete made anew under a new id in 0.7.2 already: undone past the
     /// delete, the resize changes the clip brought back, and the other
     /// clip stays as it is.
     #[test]
@@ -851,7 +796,7 @@ mod tests {
         let two = bar(&[(1, 1.0, 2.0, "a"), (2, 1.0, 2.0, "a")]);
         assert_eq!(bar_steps(&two, &one, &two), [BarStep::Remove(2)]);
         assert_eq!(bar_steps(&one, &two, &one), [BarStep::Add(&two[1])]);
-        // Undone and redone, the copy has a new id: undone again, that one goes.
+        // Brought back under another id (its own taken): undone again, that one goes.
         let again = bar(&[(1, 1.0, 2.0, "a"), (5, 1.0, 2.0, "a")]);
         assert_eq!(bar_steps(&two, &one, &again), [BarStep::Remove(5)]);
     }

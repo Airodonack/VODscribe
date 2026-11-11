@@ -358,6 +358,12 @@ fn is_cut(db: &Db, id: i64) -> Result<Option<bool>> {
 fn settle_canceled(app: &AppHandle, id: i64) {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
+    // Queued again since, it's to be made, not canceled: a clip deleted and
+    // brought back by undo under its id meanwhile isn't the one canceled
+    // (`history::restore` queues it).
+    if state.clips.is_waiting(id) {
+        return;
+    }
     let Ok(Some(snippet)) = db.is_snippet(id) else { return };
     let unmade = |status| matches!(status, ClipStatus::Waiting | ClipStatus::Cutting);
     if snippet {
@@ -680,6 +686,11 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     crate::testkit::cut_ended(&out);
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
+    // The file this make replaces: the one the clip has now, not the one it
+    // had as the cut began. Deleted and brought back by undo meanwhile, under
+    // its id, it has none yet; the one it had went with the delete, or stayed
+    // for the app that took it.
+    let before = db.clip(id)?.and_then(|c| c.file_path);
     let recorded = match &result {
         // Deleted as ffmpeg ended, too late for its stop: nothing to record,
         // and what it's made of now can't be asked (`status_once_made`).
@@ -711,7 +722,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     // Its file in the format before goes (those it was handed out by stay,
     // and so does that file itself if it was what went: the new one is the
     // app's own).
-    let old = clip.file_path.as_deref().filter(|p| own_file(&state.paths, p));
+    let old = before.as_deref().filter(|p| own_file(&state.paths, p));
     if let Some(old) = old.filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
         if db.clip_file_handed_out(id)? {
             db.take_back_clip(id)?;
@@ -1286,6 +1297,9 @@ pub(crate) async fn forget_gone_clips(
     })
     .await
     .map_err(err)?;
+    // (A test holds it here, looked at and not yet taken.)
+    #[cfg(test)]
+    crate::testkit::gone_looked(&state.paths.clips());
     let db = state.db.lock().unwrap();
     // A change of its own in the bar's history: undone, the clips come back
     // (made again), apart from what was done before or after.

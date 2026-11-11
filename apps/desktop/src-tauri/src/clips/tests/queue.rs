@@ -284,6 +284,31 @@ fn a_clip_canceled_while_it_is_made_says_so() {
     assert_eq!(clip.file_path, None);
 }
 
+/// A clip canceled while it's made again, then deleted and the delete
+/// undone before its stopped cut has ended, is the clip brought back, not
+/// the one canceled: it's made, and never shows it was canceled (the cancel
+/// was of the clip that went; `cancel_job`: "A clip then shows it was
+/// canceled … once its job has ended if it was running"). It comes back
+/// under its id, which the cancel names (review-undo-old-id F2).
+#[test]
+fn a_clip_canceled_deleted_and_undone_as_its_cut_stops_is_made_and_never_shows_canceled() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    app.invoke("set_clip_range", json!({ "id": clip.id, "start": at("0:10"), "end": at("0:25") })).unwrap();
+    halfway.reached();
+    cancel(&app, "clip", clip.id);
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    app.invoke("undo", json!({ "view": { "kind": "vod", "id": vod.id } })).unwrap();
+    halfway.open();
+    let made = app.made(clip.id);
+    assert_eq!((made.status, made.error.as_deref()), (ClipStatus::Ready, None));
+    let canceled = app.heard("clip").into_iter().filter(|c| c["id"] == clip.id && c["error"] == CANCELED).count();
+    assert_eq!(canceled, 0, "the clip brought back shown canceled");
+}
+
 /// A canceled clip is made once it's asked for again at its own range, as
 /// Clip on its stretch does (app clips.rs:293, `settle_canceled`: "so it
 /// isn't made again at the next start and Clip again makes it"; 0.7.1: "A

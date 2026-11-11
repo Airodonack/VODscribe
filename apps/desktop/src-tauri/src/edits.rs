@@ -151,9 +151,9 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         // rendering: render() gives it that).
         let out = db.next_clip_file(id, clips::extension(audio_only, encoding.format()))?;
         crate::files::writing(&out);
-        anyhow::Ok((pieces, ffmpeg, out, version, encoding, edit.file_path, made_of, chapters))
+        anyhow::Ok((pieces, ffmpeg, out, version, encoding, made_of, chapters))
     })();
-    let (pieces, ffmpeg, out, version, encoding, before, made_of, chapters) = match prepared {
+    let (pieces, ffmpeg, out, version, encoding, made_of, chapters) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
@@ -177,8 +177,16 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
     let result = render::render(&ffmpeg, &pieces, None, &chapters, encoding, &out, stop, report);
     // As made: sound alone is named so (an .m4a or .wav), found only then.
     let out = result.as_ref().map_or(out, |made| made.clone());
+    // (A test holds it here, as a cut's end: its render over, not yet recorded.)
+    #[cfg(test)]
+    crate::testkit::cut_ended(&out);
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
+    // The file this render replaces: the one it has now, not the one it had
+    // as the render began. Deleted and brought back by undo meanwhile, under
+    // its id, it has none yet; the one it had went with the delete, or stayed
+    // for the app that took it.
+    let before = db.edit(id, ClipEncoding::default())?.and_then(|e| e.file_path);
     match &result {
         Ok(_) => {
             db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?;

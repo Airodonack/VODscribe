@@ -153,6 +153,89 @@ fn a_clip_deleted_and_undone_comes_back_as_it_was_and_is_made_again() {
     assert_eq!(app.clip_media(back), media, "not made again as it was");
 }
 
+/// A clip deleted and undone comes back under its own id, so what still
+/// holds that id finds it: the page's selection and Back, which copy, rename
+/// or open the clip by it, and the clip's own history in the editor
+/// (owner, 2026-11-11, plans/clips-pilot.md "Main red after cc7506f":
+/// "undo of a delete brings the clip back under its own old id ... That
+/// keeps every holder's id valid (the page, Back)").
+#[test]
+fn a_clip_deleted_and_undone_comes_back_under_its_own_id() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    // Opened in the editor, a stretch of it taken out: a step in its own history.
+    app.invoke("remove_stretch", json!({ "id": clip.id, "from": 2.0, "to": 3.0 })).unwrap();
+    delete(&app, clip.id);
+    undo(&app, vod.id);
+    assert_eq!(pills(&app, vod.id), [clip.id], "not back under its own id");
+    app.made(clip.id);
+    let in_editor = app.invoke("undo", json!({ "view": { "kind": "edit", "id": clip.id } })).unwrap();
+    assert_ne!(in_editor, Value::Null, "the clip's own history lost");
+    app.invoke("copy_items", json!({ "items": [{ "kind": "clip", "id": clip.id }] })).unwrap();
+    app.invoke("rename_clip", json!({ "id": clip.id, "title": "Landed" })).unwrap();
+    assert_eq!(app.clip(clip.id).unwrap().title, "Landed");
+    all_made(&app, vod.id);
+}
+
+/// Undone, redone and undone again, a deleted clip keeps its id each time,
+/// and a clip made after gets one never given before (core db.rs
+/// `MIGRATE_V42`: "a deleted clip's id is never given to a new one"): the
+/// clip brought back doesn't move the counter back past one made after it.
+#[test]
+fn a_clip_deleted_undone_redone_and_undone_again_keeps_its_id() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let older = app.make_clip(vod.id, "0:01", "0:03");
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    // A clip made after it, of another VOD, and deleted for good.
+    let other = app.add_video_file("Day 4.mp4", 60.0);
+    let later = app.make_clip(other.id, "0:10", "0:20");
+    delete(&app, later.id);
+    delete(&app, clip.id);
+    undo(&app, vod.id);
+    assert_eq!(pills(&app, vod.id), [older.id, clip.id], "undone");
+    redo(&app, vod.id);
+    assert_eq!(pills(&app, vod.id), [older.id], "redone");
+    undo(&app, vod.id);
+    assert_eq!(pills(&app, vod.id), [older.id, clip.id], "undone again");
+    let new = app.make_clip(vod.id, "0:30", "0:40");
+    assert!(new.id > later.id, "a new clip given id {}, not past {}", new.id, later.id);
+    all_made(&app, vod.id);
+}
+
+/// A clip whose file was deleted outside the app, deleted and undone while
+/// the window looks for gone files, is made again at a path of its own, so
+/// the look's take, which goes by the path it saw missing, leaves it
+/// (`forget_gone_clips`: "Only those as they were when looked at (not made
+/// again meanwhile)"; plans/clips-pilot.md "Decided" 4b: each make a new
+/// file of its own; review-undo-old-id F1).
+#[test]
+fn a_clip_brought_back_and_made_again_while_gone_files_are_looked_for_stays() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    let path = file_of(&clip);
+    std::fs::remove_file(&path).unwrap();
+    let looked = Gate::new();
+    app.holds_gone_looks(&looked);
+    let handle = app.handle().clone();
+    let vod_id = vod.id;
+    let looking = std::thread::spawn(move || {
+        let state = handle.state::<AppState>();
+        tauri::async_runtime::block_on(forget_gone_clips(handle.clone(), state, Some(vod_id), None))
+    });
+    looked.reached();
+    delete(&app, clip.id);
+    undo(&app, vod.id);
+    let back = app.made(clip.id);
+    assert_ne!(file_of(&back), path, "made again at the path of a make before");
+    looked.open();
+    looking.join().unwrap().unwrap();
+    assert_eq!(pills(&app, vod.id), [clip.id], "the clip brought back and made again was taken for gone");
+    assert!(has_file(&app.clip(clip.id).unwrap()), "its new file deleted");
+}
+
 /// A clip cut from the middle of the clip bar and undone comes back in the
 /// middle, not last (the 0.7.2 bug: CHANGELOG.md, 0.7.2 Fixes: "Undo keeps
 /// the clip bar's order." "… and so did one deleted from there when
