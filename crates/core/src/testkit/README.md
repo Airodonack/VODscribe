@@ -8,7 +8,7 @@ Fakes for what's outside the app, and helpers to set up a library, so a unit or 
 - `worker.rs`: a fake transcription worker: the words it's told are said.
 - `media.rs`: the fake media files the fakes write and read, and the frames they decode.
 - `net.rs`: recorded answers for links.
-- `library.rs`: a library in a folder of its own, and VODs and words put in it.
+- `library.rs`: a library in a folder of its own, and VODs and words put in it; older libraries: one at any format, one taken back to a format, and those releases left.
 - `tests.rs`: the kit's own tests, each fake beside the real program where it's installed.
 
 ## Writing a test
@@ -141,6 +141,24 @@ Fake media files hold what a file would (length, picture, sound) and what they w
 `Net::new()` answers links for as long as it's kept: `serves(prefix, body)`, or `answers(prefix, 404)`. Give a test's links a host of its own, since tests run at once.
 
 Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files.
+
+## Older libraries
+
+An upgrade's test starts from a library at an older format, the number of migrations it has had (`PRAGMA user_version`):
+
+```rust
+let path = dir.join("library.sqlite");
+let conn = at_version(&path, 29); // the first 29 migrations, no rows
+conn.execute_batch("INSERT INTO vods (id, platform, platform_id, url, title, status, added_at) VALUES (1, 'kick', 'a', 'u', 't', 'done', 0);").unwrap();
+drop(conn);
+let db = Db::open(&path).unwrap(); // upgraded from 29
+```
+
+- `at_version(path, n)` makes a library at format `n`, for rows written as that version wrote them.
+- `back_to(path, n)` takes a library this version made, with rows put in through `Db`, back to format `n`: each table's rows in the columns format `n` has, with its triggers and search index. Close the library first; its connection is at format `n`, for changing rows as that version would.
+- `Released::new("0.5.1")` copies the library and settings file that release left (tests/e2e/fixtures) into a folder of the test's own, as `library` and `settings`. `Released::versions()` lists the releases there. A file's path in the library keeps its placeholder, `{FIXTURES}`.
+
+`db::MIGRATIONS` is the list `Db::open` runs, so neither needs changing when a migration is added.
 
 ## What's real and what isn't
 

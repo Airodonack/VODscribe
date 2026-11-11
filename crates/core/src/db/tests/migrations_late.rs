@@ -13,31 +13,7 @@ fn vods_clips_and_edits_become_clips() {
     let dir = crate::TempDir::new("migrate-v22");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        let before = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-            MIGRATE_V12,
-            MIGRATE_V13,
-            MIGRATE_V14,
-            MIGRATE_V15,
-            MIGRATE_V16,
-            MIGRATE_V17,
-            MIGRATE_V18,
-            MIGRATE_V19,
-            MIGRATE_V20,
-            MIGRATE_V21,
-        ];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 21;", before.join("\n"))).unwrap();
+        let conn = crate::testkit::at_version(&path, 21);
         conn.execute_batch(
             "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at, position) VALUES
                  (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0, 2), (2, 'kick', 'b', 'u', 'Second', 300.0, 'done', 0, 0);
@@ -117,37 +93,7 @@ fn transcriptions_so_far_become_stretches() {
     let dir = crate::TempDir::new("migrate-v27");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        let before = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-            MIGRATE_V12,
-            MIGRATE_V13,
-            MIGRATE_V14,
-            MIGRATE_V15,
-            MIGRATE_V16,
-            MIGRATE_V17,
-            MIGRATE_V18,
-            MIGRATE_V19,
-            MIGRATE_V20,
-            MIGRATE_V21,
-            MIGRATE_V22,
-            MIGRATE_V23,
-            MIGRATE_V24,
-            MIGRATE_V25,
-            MIGRATE_V26,
-        ];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 26;", before.join("\n").replace("FLICKS", FLICKS)))
-            .unwrap();
+        let conn = crate::testkit::at_version(&path, 26);
         conn.execute_batch(&format!(
             "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, progress, error, model, added_at) VALUES
                  (1, 'kick', 'done', 'u', 't', 600, 'done', 1, NULL, '{model}', 0),
@@ -193,38 +139,7 @@ fn search_reads_word_counts_and_chat_authors_after_upgrading() {
     let dir = crate::TempDir::new("migrate-v28");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        let before = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-            MIGRATE_V12,
-            MIGRATE_V13,
-            MIGRATE_V14,
-            MIGRATE_V15,
-            MIGRATE_V16,
-            MIGRATE_V17,
-            MIGRATE_V18,
-            MIGRATE_V19,
-            MIGRATE_V20,
-            MIGRATE_V21,
-            MIGRATE_V22,
-            MIGRATE_V23,
-            MIGRATE_V24,
-            MIGRATE_V25,
-            MIGRATE_V26,
-            MIGRATE_V27,
-        ];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 27;", before.join("\n").replace("FLICKS", FLICKS)))
-            .unwrap();
+        let conn = crate::testkit::at_version(&path, 27);
         conn.execute_batch(
             "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, status, added_at) VALUES
                  (1, 'twitch', '1', 'u', 't', 'Streamer', 600, 'done', 0);
@@ -274,15 +189,7 @@ fn marks_from_before_highlights_had_a_cast_read_with_none() {
         vod.id
     };
     // Back to version 29: the column 30 adds, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch(concat!(
-            "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
-            "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
-            "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-            "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 29;"
-        ))
-        .unwrap();
+    crate::testkit::back_to(&path, 29);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -309,15 +216,7 @@ fn marks_from_before_chapters_had_an_icon_read_with_none() {
         vod.id
     };
     // Back to version 30: the column 31 adds, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch(concat!(
-            "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
-            "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
-            "ALTER TABLE vods DROP COLUMN started_at; ",
-            "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 30;"
-        ))
-        .unwrap();
+    crate::testkit::back_to(&path, 30);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -342,14 +241,7 @@ fn vods_from_before_annotations_were_looked_up_are_unknown() {
         db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id
     };
     // Back to version 31: the columns 32 adds, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch(concat!(
-            "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
-            "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-            "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 31;"
-        ))
-        .unwrap();
+    crate::testkit::back_to(&path, 31);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -370,12 +262,7 @@ fn vods_from_before_their_start_was_kept_have_none_till_their_chat_says() {
         db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id
     };
     // Back to version 32: the columns 33 and 34 add, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch(
-            "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 32;",
-        )
-        .unwrap();
+    crate::testkit::back_to(&path, 32);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -402,10 +289,7 @@ fn annotations_imported_before_povs_were_kept_have_none() {
         vod
     };
     // Back to version 33: the column 34 adds, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 33;")
-        .unwrap();
+    crate::testkit::back_to(&path, 33);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -429,10 +313,7 @@ fn a_channels_login_is_kept_and_vods_from_before_have_none() {
         db.add_vod(&info).unwrap().0.id
     };
     // Back to version 36: the column 37 adds, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;")
-        .unwrap();
+    crate::testkit::back_to(&path, 36);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -468,10 +349,7 @@ fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
         db.add_vod(&VodInfo { platform: "dailymotion".into(), ..crate::edits::tests::info("old") }).unwrap().0.id
     };
     // Back to version 39: the column 40 adds, gone.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 39;")
-        .unwrap();
+    crate::testkit::back_to(&path, 39);
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -535,10 +413,7 @@ fn clip_ids_are_never_reused() {
         (vod, rows(&db.conn))
     };
     // Back to version 41, before clips kept their ids.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch("ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 41;")
-        .unwrap();
+    crate::testkit::back_to(&path, 41);
     let db = Db::open(&path).unwrap();
     assert_eq!(rows(&db.conn), before, "upgraded, the same clips, pieces, files and marks");
 
@@ -594,13 +469,7 @@ fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
     };
     assert_eq!(before.len(), 4);
     // Back to version 43, the column there, holding something on one row.
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch(
-            "ALTER TABLE stretches ADD COLUMN note TEXT; UPDATE stretches SET note = 'old' WHERE start = 100;
-             PRAGMA user_version = 43;",
-        )
-        .unwrap();
+    crate::testkit::back_to(&path, 43).execute("UPDATE stretches SET note = 'old' WHERE start = 100", []).unwrap();
     let db = Db::open(&path).unwrap();
     let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(version, 44);
@@ -661,12 +530,7 @@ fn stretches_kept_while_their_vod_stays_get_back_their_speakers_and_chat_kinds()
         db.delete_vod(other).unwrap();
         (vod, kept)
     };
-    rusqlite::Connection::open(&path)
-        .unwrap()
-        .execute_batch(
-            "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 35;",
-        )
-        .unwrap();
+    crate::testkit::back_to(&path, 35);
     let db = Db::open(&path).unwrap();
 
     let lines = db.lines(kept).unwrap();

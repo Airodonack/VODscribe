@@ -1,8 +1,13 @@
 //! A library for a test: the real SQLite file with every migration, in a
 //! folder of its own (`Library`), and what a test puts in it the way the
 //! app would (a file on this computer, a site's VOD, what's said in it).
+//! Older libraries too: one at any format (`at_version`), one this version
+//! made taken back to an older format (`back_to`), and the libraries and
+//! settings files releases left (`Released`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use rusqlite::Connection;
 
 use super::{Media, TempDir};
 use crate::Paths;
@@ -124,4 +129,140 @@ pub fn said(start: f64, text: &str) -> Vec<Word> {
             Word { text: word.into(), start: at, end: at + 0.5 }
         })
         .collect()
+}
+
+/// A new library at `path` at format `version`, as a VODscribe whose newest
+/// migration was that one made it: the first `version` migrations
+/// (`db::MIGRATIONS`) run and `user_version` set, no rows. The test puts
+/// rows in through the connection, as that version wrote them, and
+/// `Db::open` then upgrades it.
+pub fn at_version(path: &Path, version: usize) -> Connection {
+    let migrations = crate::db::MIGRATIONS;
+    assert!(version <= migrations.len(), "format {version} is newer than this version's {}", migrations.len());
+    let conn = Connection::open(path).unwrap();
+    let schema = migrations[..version].join("\n").replace("FLICKS", crate::db::FLICKS);
+    conn.execute_batch(&format!("BEGIN; {schema}\n PRAGMA user_version = {version}; COMMIT;")).unwrap();
+    conn
+}
+
+/// The library at `path`, made by this version, taken back to format
+/// `version`, as if an older one had kept its rows: a library at that
+/// format (`at_version`) with every row of each table both have, in the
+/// columns both have. A column or table added since is gone, one dropped
+/// since is back and empty, and the triggers and indexes are that format's;
+/// a value whose meaning changed since (struck spans in seconds before 22)
+/// is copied as it is. Nothing may have the library open. The connection is
+/// to the library at `version`, for a test to change rows as that version
+/// would.
+pub fn back_to(path: &Path, version: usize) -> Connection {
+    let now = path.with_extension("now");
+    let _ = std::fs::remove_file(&now);
+    // Whole, with what the write-ahead log holds.
+    Connection::open(path).unwrap().execute("VACUUM INTO ?1", [now.to_string_lossy()]).unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let mut file = path.as_os_str().to_owned();
+        file.push(suffix);
+        let _ = std::fs::remove_file(file);
+    }
+    let conn = at_version(path, version);
+    conn.execute("ATTACH ?1 AS now", [now.to_string_lossy()]).unwrap();
+    let names = |sql: &str| -> Vec<(String, String)> {
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+    };
+    let columns = |schema: &str, table: &str| -> Vec<String> {
+        let mut stmt = conn.prepare("SELECT name FROM pragma_table_info(?1, ?2)").unwrap();
+        stmt.query_map([table, schema], |r| r.get(0)).unwrap().map(|c| c.unwrap()).collect()
+    };
+    // The format's triggers keep counts and the search index as rows change;
+    // the rows copied are already counted, so they're off while they go in.
+    let triggers = names("SELECT name, sql FROM main.sqlite_master WHERE type = 'trigger'");
+    // Tables of rows: not views, virtual tables (the search index) or their
+    // own shadow tables, nor SQLite's.
+    let tables = names(
+        "SELECT name, type FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%'",
+    );
+    conn.execute_batch("PRAGMA foreign_keys = OFF; BEGIN").unwrap();
+    for (name, _) in &triggers {
+        conn.execute_batch(&format!("DROP TRIGGER main.\"{name}\"")).unwrap();
+    }
+    for (table, _) in &tables {
+        let theirs = columns("now", table);
+        if theirs.is_empty() {
+            continue;
+        }
+        let both: Vec<String> =
+            columns("main", table).into_iter().filter(|c| theirs.contains(c)).map(|c| format!("\"{c}\"")).collect();
+        let both = both.join(", ");
+        // What the format's migrations put in (the next id) gives way to the library's own.
+        conn.execute_batch(&format!(
+            "DELETE FROM main.\"{table}\"; INSERT INTO main.\"{table}\" ({both}) SELECT {both} FROM now.\"{table}\";"
+        ))
+        .unwrap();
+    }
+    // The search index of what was copied, made again from its rows.
+    let virtual_tables = names("SELECT name, sql FROM main.sqlite_master WHERE sql LIKE 'CREATE VIRTUAL TABLE %'");
+    for (index, sql) in &virtual_tables {
+        let sql = sql.to_lowercase();
+        if !sql.contains("using fts5") || sql.contains("fts5vocab") {
+            continue;
+        }
+        conn.execute_batch(&format!("INSERT INTO main.\"{index}\" (\"{index}\") VALUES ('rebuild')")).unwrap();
+    }
+    for (_, sql) in &triggers {
+        conn.execute_batch(sql).unwrap();
+    }
+    conn.execute_batch("COMMIT; DETACH now").unwrap();
+    std::fs::remove_file(&now).unwrap();
+    conn
+}
+
+/// The library and settings file a release left, as the upgrade scenarios
+/// keep them (tests/e2e/fixtures: `library-<version>.sqlite`,
+/// `settings-<version>.json`), copied into a folder of the test's own as the
+/// app's data folder holds them. The fixtures stay as they are. A file's
+/// path in the library keeps its placeholder (`{FIXTURES}`).
+pub struct Released {
+    /// The copy of the library, `library.sqlite`.
+    pub library: PathBuf,
+    /// The copy of the settings, `settings.json`.
+    pub settings: PathBuf,
+    dir: TempDir,
+}
+
+impl Released {
+    /// The fixtures' folder, tests/e2e/fixtures.
+    pub fn fixtures() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/e2e/fixtures")
+    }
+
+    /// The releases there are fixtures of, oldest first, as their files name
+    /// them ("0.3.0", "0.5.2-dev").
+    pub fn versions() -> Vec<String> {
+        let mut versions: Vec<String> = std::fs::read_dir(Self::fixtures())
+            .unwrap()
+            .filter_map(|e| {
+                let name = e.unwrap().file_name().to_string_lossy().into_owned();
+                Some(name.strip_prefix("library-")?.strip_suffix(".sqlite")?.to_owned())
+            })
+            .collect();
+        let number = |v: &str| -> Vec<u32> { v.split(['.', '-']).filter_map(|n| n.parse().ok()).collect() };
+        versions.sort_by_key(|v| number(v));
+        versions
+    }
+
+    /// Release `version`'s library and settings, copied.
+    pub fn new(version: &str) -> Self {
+        let dir = TempDir::new(&format!("released-{version}"));
+        let (library, settings) = (dir.join("library.sqlite"), dir.join("settings.json"));
+        let fixtures = Self::fixtures();
+        std::fs::copy(fixtures.join(format!("library-{version}.sqlite")), &library).unwrap();
+        std::fs::copy(fixtures.join(format!("settings-{version}.json")), &settings).unwrap();
+        Released { library, settings, dir }
+    }
+
+    /// The folder the two copies are in.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
 }

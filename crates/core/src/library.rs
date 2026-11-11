@@ -416,11 +416,8 @@ mod tests {
         pub(super) static NO_LINKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
-    /// Undoes `MIGRATE_BUILT_PATHS`, for a library as 0.7.1 left it.
-    const BEFORE_072: &str = "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext;
-        ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext;
-        ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url;
-        ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;";
+    /// The library's format as 0.7.1 left it, before `MIGRATE_BUILT_PATHS`.
+    const FORMAT_071: usize = 36;
 
     /// `db`, its files settled as the app does at start.
     fn settled(db: Db) -> Db {
@@ -486,10 +483,11 @@ mod tests {
             let clip = db.add_clip(clip_vod, 1.0, 2.0, "c", true).unwrap().id;
             let gone = db.add_clip(clip_vod, 3.0, 4.0, "d", true).unwrap().id;
             let stretch = db.request(downloaded, 10.0, Some(20.0)).unwrap().id;
-            db.conn.execute_batch(BEFORE_072).unwrap();
+            drop(db);
+            let conn = crate::testkit::back_to(&paths.db(), FORMAT_071);
             let s = |p: &Path| p.to_string_lossy().into_owned();
             let set = |sql: &str, id: i64, value: String| {
-                db.conn.execute(sql, params![id, value]).unwrap();
+                conn.execute(sql, params![id, value]).unwrap();
             };
             set("UPDATE vods SET media_path = ?2, audio_path = ?2 WHERE id = ?1", kept, written_otherwise(&video));
             set("UPDATE vods SET source_path = ?2 WHERE id = ?1", own, s(&song));
@@ -600,11 +598,10 @@ mod tests {
         let id = {
             let db = settled(Db::open(&paths.db()).unwrap());
             let id = db.add_vod(&info("x")).unwrap().0.id;
-            db.conn.execute_batch(BEFORE_072).unwrap();
+            drop(db);
+            let conn = crate::testkit::back_to(&paths.db(), FORMAT_071);
             let old = paths.media().join("Old name [000001].mp4");
-            db.conn
-                .execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![id, crate::db::shown(&old)])
-                .unwrap();
+            conn.execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![id, crate::db::shown(&old)]).unwrap();
             // Moved, then the crash.
             write(&paths.source_video(id, "mp4"), b"video");
             id
@@ -765,17 +762,17 @@ mod tests {
             let vod = db.add_vod(&info("v")).unwrap().0.id;
             let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap().id;
             let stretch = db.request(vod, 10.0, Some(20.0)).unwrap().id;
-            db.conn.execute_batch(BEFORE_072).unwrap();
+            drop(db);
+            let conn = crate::testkit::back_to(&paths.db(), FORMAT_071);
             let sql = "UPDATE vods SET media_path = ?2, audio_path = ?3 WHERE id = ?1";
-            db.conn.execute(sql, params![vod, crate::db::shown(&private), r"\\server\share\a.m4a"]).unwrap();
+            conn.execute(sql, params![vod, crate::db::shown(&private), r"\\server\share\a.m4a"]).unwrap();
             let sql = "UPDATE renders SET file_path = ?2, status = 'ready' WHERE clip_id = ?1";
-            db.conn.execute(sql, params![clip, "//server/share/c.mp4"]).unwrap();
-            db.conn
-                .execute(
-                    "UPDATE stretches SET audio = ?2 WHERE id = ?1",
-                    params![stretch, r"\\?\UNC\server\share\s.mka"],
-                )
-                .unwrap();
+            conn.execute(sql, params![clip, "//server/share/c.mp4"]).unwrap();
+            conn.execute(
+                "UPDATE stretches SET audio = ?2 WHERE id = ?1",
+                params![stretch, r"\\?\UNC\server\share\s.mka"],
+            )
+            .unwrap();
             (vod, clip, stretch)
         };
         let db = settled(Db::open(&paths.db()).unwrap());
@@ -827,9 +824,10 @@ mod tests {
             let db = settled(Db::open_in(&paths).unwrap());
             let vod = db.add_vod(&info("v")).unwrap().0.id;
             let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap().id;
-            db.conn.execute_batch(BEFORE_072).unwrap();
+            drop(db);
+            let conn = crate::testkit::back_to(&paths.db(), FORMAT_071);
             let sql = "UPDATE renders SET file_path = ?2, status = 'ready' WHERE clip_id = ?1";
-            db.conn.execute(sql, params![clip, crate::db::shown(&made)]).unwrap();
+            conn.execute(sql, params![clip, crate::db::shown(&made)]).unwrap();
             clip
         };
         NO_LINKS.set(true);
@@ -896,10 +894,10 @@ mod tests {
             let db = settled(Db::open_in(&paths).unwrap());
             let vod = db.add_vod(&info("v")).unwrap().0.id;
             let clip = db.add_clip(vod, 1.0, 2.0, "c", true).unwrap().id;
-            db.conn.execute_batch(BEFORE_072).unwrap();
+            drop(db);
+            let conn = crate::testkit::back_to(&paths.db(), FORMAT_071);
             fs::create_dir_all(root.join("Videos/VODscribe")).unwrap();
-            db.conn
-                .execute("UPDATE renders SET file_path = ?2, status = 'ready' WHERE clip_id = ?1", params![clip, lost])
+            conn.execute("UPDATE renders SET file_path = ?2, status = 'ready' WHERE clip_id = ?1", params![clip, lost])
                 .unwrap();
             clip
         };
@@ -926,11 +924,11 @@ mod tests {
         let vod = {
             let db = settled(Db::open(&before.db()).unwrap());
             let vod = db.add_vod(&info("v")).unwrap().0.id;
-            db.conn.execute_batch(BEFORE_072).unwrap();
+            drop(db);
+            let conn = crate::testkit::back_to(&before.db(), FORMAT_071);
             let old = before.media().join(format!("Title [{vod:06}].mp4"));
             write(&old, b"video");
-            db.conn
-                .execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![vod, crate::db::shown(&old)])
+            conn.execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![vod, crate::db::shown(&old)])
                 .unwrap();
             vod
         };

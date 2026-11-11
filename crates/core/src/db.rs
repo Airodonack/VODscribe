@@ -512,7 +512,7 @@ ALTER TABLE clips ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
 const MIGRATE_V21: &str = "ALTER TABLE edits ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
 
 /// Flicks in a second (`crate::time::PER_SECOND`), for the migration's SQL.
-const FLICKS: &str = "705600000";
+pub(crate) const FLICKS: &str = "705600000";
 
 /// v22: the clip model (`crate::edits`). `clips` holds every document: a
 /// VOD's own clip over the whole VOD (`whole_of`, with the VOD's place in
@@ -1161,6 +1161,58 @@ pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<C
     Ok(clip)
 }
 
+/// The library's migrations, in the order `Db::open` runs them: migration n
+/// brings the schema to version n + 1, and `user_version` is how many have
+/// run. A test builds a library at any version from the first n
+/// (`testkit::library::at_version`); tests/e2e/fixtures/upgrade-matrix.mjs
+/// counts them here.
+pub(crate) const MIGRATIONS: &[&str] = &[
+    SCHEMA,
+    MIGRATE_V2,
+    MIGRATE_V3,
+    MIGRATE_V4,
+    MIGRATE_V5,
+    MIGRATE_V6,
+    MIGRATE_V7,
+    MIGRATE_V8,
+    MIGRATE_V9,
+    MIGRATE_V10,
+    MIGRATE_V11,
+    MIGRATE_V12,
+    MIGRATE_V13,
+    MIGRATE_V14,
+    MIGRATE_V15,
+    MIGRATE_V16,
+    MIGRATE_V17,
+    MIGRATE_V18,
+    MIGRATE_V19,
+    MIGRATE_V20,
+    MIGRATE_V21,
+    MIGRATE_V22,
+    MIGRATE_V23,
+    MIGRATE_V24,
+    MIGRATE_V25,
+    MIGRATE_V26,
+    MIGRATE_V27,
+    MIGRATE_V28,
+    MIGRATE_V29,
+    MIGRATE_V30,
+    MIGRATE_V31,
+    MIGRATE_V32,
+    MIGRATE_V33,
+    MIGRATE_V34,
+    MIGRATE_V35,
+    MIGRATE_V36,
+    MIGRATE_V37,
+    MIGRATE_V38,
+    MIGRATE_BUILT_PATHS,
+    MIGRATE_V40,
+    MIGRATE_V41,
+    MIGRATE_V42,
+    MIGRATE_V43,
+    MIGRATE_V44,
+];
+
 /// How many copies of the library from before upgrades are kept.
 const KEPT_COPIES: usize = 2;
 
@@ -1519,67 +1571,20 @@ impl Db {
         // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        // Migration n brings the schema to version n + 1; user_version is how many have run.
-        let migrations = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-            MIGRATE_V12,
-            MIGRATE_V13,
-            MIGRATE_V14,
-            MIGRATE_V15,
-            MIGRATE_V16,
-            MIGRATE_V17,
-            MIGRATE_V18,
-            MIGRATE_V19,
-            MIGRATE_V20,
-            MIGRATE_V21,
-            MIGRATE_V22,
-            MIGRATE_V23,
-            MIGRATE_V24,
-            MIGRATE_V25,
-            MIGRATE_V26,
-            MIGRATE_V27,
-            MIGRATE_V28,
-            MIGRATE_V29,
-            MIGRATE_V30,
-            MIGRATE_V31,
-            MIGRATE_V32,
-            MIGRATE_V33,
-            MIGRATE_V34,
-            MIGRATE_V35,
-            MIGRATE_V36,
-            MIGRATE_V37,
-            MIGRATE_V38,
-            MIGRATE_BUILT_PATHS,
-            MIGRATE_V40,
-            MIGRATE_V41,
-            MIGRATE_V42,
-            MIGRATE_V43,
-            MIGRATE_V44,
-        ];
-        if (version as usize) < migrations.len() {
+        if (version as usize) < MIGRATIONS.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
             // undone; no copy, no upgrade.
             if version > 0 {
                 keep_before_upgrade(&conn, path, version)?;
             }
-            let pending = migrations[version as usize..].join("\n").replace("FLICKS", FLICKS);
-            let latest = migrations.len();
+            let pending = MIGRATIONS[version as usize..].join("\n").replace("FLICKS", FLICKS);
+            let latest = MIGRATIONS.len();
             conn.execute_batch(&format!("BEGIN; {pending}"))?;
             if version < 22 {
                 struck_to_flicks(&conn)?;
             }
             conn.execute_batch(&format!("PRAGMA user_version = {latest}; COMMIT;"))?;
-        } else if version as usize > migrations.len() {
+        } else if version as usize > MIGRATIONS.len() {
             // A newer VODscribe made this library (the user went back a version).
             // The migrations after 0.5.0's only add, or drop what no version reads (V44, the
             // stretches' `note`), so carry on rather than refuse to start. Going back to a version

@@ -482,6 +482,144 @@ fn a_librarys_commits_wait_on_no_flush_to_the_disk() {
     assert_eq!(reader.vod(vod.id).unwrap().map(|v| v.id), Some(vod.id), "seen at once by another connection");
 }
 
+
+/// The schema of the library at `path`: each table's, index's, view's and
+/// trigger's SQL, by name.
+fn schema(path: &Path) -> Vec<(String, Option<String>)> {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let mut stmt = conn.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").unwrap();
+    stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+}
+
+fn format_of(conn: &rusqlite::Connection) -> usize {
+    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap() as usize
+}
+
+/// A library at each format is that format, and opened it upgrades to the
+/// library a new one is.
+#[test]
+fn a_library_at_a_format_upgrades_to_a_new_ones() {
+    let dir = TempDir::new("kit-formats");
+    let new = dir.join("new.sqlite");
+    drop(crate::db::Db::open(&new).unwrap());
+    let latest = crate::db::MIGRATIONS.len();
+    for version in 0..=latest {
+        let path = dir.join(format!("v{version}.sqlite"));
+        let conn = at_version(&path, version);
+        assert_eq!(format_of(&conn), version);
+        drop(conn);
+        let db = crate::db::Db::open(&path).unwrap();
+        assert_eq!(format_of(&db.conn), latest);
+        drop(db);
+        assert_eq!(schema(&path), schema(&new), "format {version} upgraded");
+    }
+}
+
+/// A library at the format a release left is the release's: the same
+/// tables, columns, indexes and triggers as its library in the fixtures.
+#[test]
+fn a_library_at_a_releases_format_is_laid_out_as_its_library() {
+    let dir = TempDir::new("kit-released-format");
+    for version in Released::versions() {
+        let released = Released::new(&version);
+        let format = format_of(&rusqlite::Connection::open(&released.library).unwrap());
+        let path = dir.join(format!("{version}.sqlite"));
+        drop(at_version(&path, format));
+        assert_eq!(schema(&path), schema(&released.library), "{version}, format {format}");
+    }
+}
+
+/// A library taken back to a format has that format's tables and columns,
+/// with the rows it had, counted and found by search as that format does;
+/// opened again, it is upgraded with them all.
+#[test]
+fn a_library_taken_back_keeps_its_rows_in_that_formats_columns() {
+    let dir = TempDir::new("kit-back");
+    let path = dir.join("library.sqlite");
+    let shown = |db: &crate::db::Db| serde_json::to_value(db.vods().unwrap()).unwrap();
+    let (vod, vods, clips) = {
+        let mut db = crate::db::Db::open(&path).unwrap();
+        let vod = super::library::add_site_vod(&db, "twitch", "1", "A stream", 600.0).id;
+        super::library::says(&mut db, vod, said(10.0, "The Eagle has landed"));
+        db.add_clip(vod, 10.0, 20.0, "Landing", true).unwrap();
+        db.add_mark(vod, "chapter", 5.0, Some("Descent")).unwrap();
+        (vod, shown(&db), db.clips(vod).unwrap())
+    };
+    let made = dir.join("made.sqlite");
+    rusqlite::Connection::open(&path).unwrap().execute("VACUUM INTO ?1", [made.to_string_lossy()]).unwrap();
+    let conn = back_to(&path, 36);
+    assert_eq!(format_of(&conn), 36);
+    // Each table's rows, in the columns both formats have, and no others.
+    conn.execute("ATTACH ?1 AS made", [made.to_string_lossy()]).unwrap();
+    let tables: Vec<String> = {
+        let mut stmt =
+            conn.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table'").unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().map(|t| t.unwrap()).collect()
+    };
+    for table in tables.iter().filter(|t| !t.starts_with("sqlite_")) {
+        let columns = |schema: &str| -> Vec<String> {
+            let mut stmt = conn.prepare("SELECT name FROM pragma_table_info(?1, ?2)").unwrap();
+            stmt.query_map([table.as_str(), schema], |r| r.get(0)).unwrap().map(|c| c.unwrap()).collect()
+        };
+        let made_columns = columns("made");
+        let both: Vec<String> = columns("main").into_iter().filter(|c| made_columns.contains(c)).collect();
+        if both.is_empty() {
+            continue;
+        }
+        let rows = |schema: &str| -> Vec<Vec<rusqlite::types::Value>> {
+            let sql = format!("SELECT {} FROM {schema}.{table} ORDER BY rowid", both.join(", "));
+            let mut stmt = conn.prepare(&sql).unwrap();
+            stmt.query_map([], |r| (0..both.len()).map(|i| r.get(i)).collect()).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(rows("main"), rows("made"), "{table}");
+    }
+    conn.execute("DETACH made", []).unwrap();
+    let at_36 = dir.join("at-36.sqlite");
+    drop(at_version(&at_36, 36));
+    assert_eq!(schema(&path), schema(&at_36), "laid out as format 36");
+    let one = |sql: &str| -> i64 { conn.query_row(sql, [vod], |r| r.get(0)).unwrap() };
+    let found = |word: &str| -> i64 {
+        conn.query_row("SELECT count(*) FROM segments_fts WHERE segments_fts MATCH ?1", [word], |r| r.get(0)).unwrap()
+    };
+    assert_eq!(one("SELECT pieces FROM vods WHERE id = ?1"), 2, "its own clip's piece and the clip's, counted once");
+    assert_eq!(found("eagle"), 1, "found by search");
+    assert_eq!(one("SELECT count(*) FROM marks WHERE vod_id = ?1 AND text = 'Descent'"), 1);
+    // The format's triggers are there again.
+    conn.execute(
+        "INSERT INTO segments (vod_id, start, end, text, words) VALUES (?1, 30, 31, 'Tranquility', '[]')",
+        [vod],
+    )
+    .unwrap();
+    assert_eq!(found("tranquility"), 1);
+    conn.execute("DELETE FROM segments WHERE vod_id = ?1 AND start = 30", [vod]).unwrap();
+    drop(conn);
+    let db = crate::db::Db::open(&path).unwrap();
+    assert_eq!(format_of(&db.conn), crate::db::MIGRATIONS.len());
+    assert_eq!(shown(&db), vods, "upgraded, the same VODs");
+    assert_eq!(db.clips(vod).unwrap(), clips, "and clips");
+}
+
+/// Each release's library and settings file in the fixtures are there to
+/// copy, oldest first, and a copy is the test's own: what it does leaves the
+/// fixture as it is.
+#[test]
+fn a_releases_library_and_settings_are_copies_of_the_fixtures() {
+    let versions = Released::versions();
+    assert_eq!(versions, ["0.3.0", "0.4.0", "0.5.0", "0.5.1", "0.5.2-dev"]);
+    for version in &versions {
+        let fixture = Released::fixtures().join(format!("library-{version}.sqlite"));
+        let before = std::fs::read(&fixture).unwrap();
+        let released = Released::new(version);
+        assert_eq!(released.library, released.dir().join("library.sqlite"));
+        assert_eq!(released.settings, released.dir().join("settings.json"));
+        assert_eq!(std::fs::read(&released.library).unwrap(), before, "{version}");
+        let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&released.settings).unwrap()).unwrap();
+        assert!(settings.get("theme").is_some(), "{version}'s settings: {settings}");
+        drop(crate::db::Db::open(&released.library).unwrap());
+        assert_eq!(std::fs::read(&fixture).unwrap(), before, "{version}'s fixture as it was");
+    }
+}
+
 /// A fake writing more than a pipe holds to an app that has stopped
 /// reading it still ends when the app stops it, as a killed program does.
 #[test]

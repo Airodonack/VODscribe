@@ -6,6 +6,7 @@ Recorded files the scenarios use, and the scripts that made them. Videos are mad
 - `library-0.3.0.sqlite`, `settings-0.3.0.json`: the landing transcribed and the dark theme, as 0.3.0 left them, for `upgrade`.
 - `library-0.5.0.sqlite`, `settings-0.5.0.json`: the same as 0.5.0 left them, with ten minutes of the landing paused part-way, for `upgrade-0.5.0`.
 - `library-0.4.0.sqlite`, `library-0.5.1.sqlite`, `library-0.5.2-dev.sqlite` and their `settings-<version>.json`: the upgrade matrix, every kind of row each release kept.
+- The libraries and settings files are core's test fixtures too (`testkit::Released`).
 - `annotations-minute.json`, `annotations-minute.chat.json`: a made-up VODscription and chat for a minute-long VOD, for `annotations`.
 - `streamer-cards.json`: made-up streamer cards and their index, for `streamer-card`.
 - `make-old-library.mjs`: makes an old release's library by driving that release.

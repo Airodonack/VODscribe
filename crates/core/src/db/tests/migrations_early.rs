@@ -38,8 +38,7 @@ fn an_upgrade_keeps_a_copy_from_before_and_only_the_last_two() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     {
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(&format!("{SCHEMA} PRAGMA user_version = 1;")).unwrap();
+        let conn = crate::testkit::at_version(&path, 1);
         conn.execute(
             "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES ('kick', 'x', 'u', 't', 'done', 0)",
             [],
@@ -71,8 +70,7 @@ fn migrates_v1_databases() {
     let dir = crate::TempDir::new("migrate");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(&format!("{SCHEMA} PRAGMA user_version = 1;")).unwrap();
+        let conn = crate::testkit::at_version(&path, 1);
         conn.execute(
             "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES ('kick', 'x', 'u', 't', 'done', 0)",
             [],
@@ -104,10 +102,7 @@ fn chat_from_before_kinds_is_fetched_again() {
     let dir = crate::TempDir::new("migrate-v10");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        let before =
-            [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7, MIGRATE_V8, MIGRATE_V9];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 9;", before.join("\n"))).unwrap();
+        let conn = crate::testkit::at_version(&path, 9);
         conn.execute_batch(
             "INSERT INTO vods (platform, platform_id, url, title, status, added_at, chat) VALUES
                  ('kick', 'a', 'u', 't', 'done', 0, 'done'), ('local', 'b', 'u', 't', 'done', 0, 'none');
@@ -126,29 +121,7 @@ fn pieces_of_clips_become_their_own() {
     let dir = crate::TempDir::new("migrate-v19");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        let before = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-            MIGRATE_V12,
-            MIGRATE_V13,
-            MIGRATE_V14,
-            MIGRATE_V15,
-            MIGRATE_V16,
-            MIGRATE_V17,
-            MIGRATE_V18,
-            MIGRATE_V19,
-        ];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 19;", before.join("\n"))).unwrap();
+        let conn = crate::testkit::at_version(&path, 19);
         conn.execute_batch(
             "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES ('kick', 'a', 'u', 't', 'done', 0);
              INSERT INTO clips (vod_id, start, end, title, position, created_at) VALUES (1, 10.0, 20.0, 'Lunch', 1, 0);
@@ -175,21 +148,7 @@ fn canceled_vods_say_stopped() {
     let dir = crate::TempDir::new("migrate-v12");
     let path = dir.join("library.sqlite");
     {
-        let conn = Connection::open(&path).unwrap();
-        let before = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-        ];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 11;", before.join("\n"))).unwrap();
+        let conn = crate::testkit::at_version(&path, 11);
         conn.execute_batch(
             "INSERT INTO vods (platform, platform_id, url, title, status, error, added_at) VALUES
                  ('kick', 'a', 'u', 't', 'error', 'Canceled', 0), ('kick', 'b', 'u', 't', 'error', 'No audio', 0);",
@@ -209,23 +168,7 @@ fn ids_are_never_reused() {
     let path = dir.join("library.sqlite");
     let before: Vec<_> = {
         // A library from before v14, whose newest VOD was deleted.
-        let conn = Connection::open(&path).unwrap();
-        let before = [
-            SCHEMA,
-            MIGRATE_V2,
-            MIGRATE_V3,
-            MIGRATE_V4,
-            MIGRATE_V5,
-            MIGRATE_V6,
-            MIGRATE_V7,
-            MIGRATE_V8,
-            MIGRATE_V9,
-            MIGRATE_V10,
-            MIGRATE_V11,
-            MIGRATE_V12,
-            MIGRATE_V13,
-        ];
-        conn.execute_batch(&format!("{} PRAGMA user_version = 13;", before.join("\n"))).unwrap();
+        let conn = crate::testkit::at_version(&path, 13);
         conn.execute_batch(
             "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES
                  ('kick', 'a', 'u', 't', 'done', 0), ('kick', 'b', 'u', 't', 'done', 0);",

@@ -61,7 +61,8 @@ function migrationsAt(rev) {
   const constants = new Map();
   for (const m of source.matchAll(/^const (SCHEMA|MIGRATE_V\d+): &str =\s*(?:r#"([\s\S]*?)"#|"([\s\S]*?)");$/gm))
     constants.set(m[1], m[2] ?? m[3]);
-  const list = source.match(/let migrations = \[([\s\S]*?)\];/)[1];
+  // A list in open_inner until 0.7.4's development, the constant MIGRATIONS since.
+  const list = source.match(/(?:let migrations = \[|const MIGRATIONS: &\[&str\] = &\[)([\s\S]*?)\];/)[1];
   return [...list.matchAll(/(SCHEMA|MIGRATE_V\d+),/g)].map((m) => {
     if (!constants.has(m[1])) throw new Error(`${m[1]} isn't a string constant of ${rev}'s db.rs`);
     return constants.get(m[1]).replace(/FLICKS/g, String(FLICKS));

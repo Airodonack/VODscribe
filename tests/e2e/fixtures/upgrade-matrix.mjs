@@ -29,12 +29,16 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 /** The format this version's library is at: the migrations `Db::open` runs, if the source is here. */
 function latestFormat() {
+  let source;
   try {
-    const source = readFileSync(path.join(here, "..", "..", "..", "crates", "core", "src", "db.rs"), "utf8");
-    return source.match(/let migrations = \[([\s\S]*?)\];/)[1].match(/\b(?:SCHEMA|MIGRATE_\w+),/g).length;
+    source = readFileSync(path.join(here, "..", "..", "..", "crates", "core", "src", "db.rs"), "utf8");
   } catch {
     return null;
   }
+  // Found, or the check would quietly fall back to "newer than before".
+  const list = source.match(/const MIGRATIONS: &\[&str\] = &\[([\s\S]*?)\];/);
+  if (!list) throw new Error("crates/core/src/db.rs has no MIGRATIONS list to count");
+  return list[1].match(/\b(?:SCHEMA|MIGRATE_\w+),/g).length;
 }
 
 /**
