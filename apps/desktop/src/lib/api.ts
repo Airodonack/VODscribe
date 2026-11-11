@@ -21,6 +21,8 @@ export interface Stretch {
   reached: number | null;
   error: string | null;
   model: string | null;
+  /** Its audio is here (its own section or the VOD's whole audio), and so its waveform. */
+  audio: boolean;
 }
 
 export interface Vod {

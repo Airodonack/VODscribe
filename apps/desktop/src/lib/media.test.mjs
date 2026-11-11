@@ -189,7 +189,7 @@ test("a site VOD's waveform has gaps where nothing is transcribed or fetched", (
    * @param {import("./api").Stretch["status"]} status @param {number | null} reached
    * @returns {import("./api").Stretch}
    */
-  const stretch = (start, end, status, reached = null) => ({
+  const stretch = (start, end, status, reached = null, audio = false) => ({
     id: 0,
     vod_id: 1,
     start,
@@ -199,6 +199,7 @@ test("a site VOD's waveform has gaps where nothing is transcribed or fetched", (
     reached,
     error: null,
     model: null,
+    audio,
   });
   // Nothing asked for: all of it.
   assert.deepEqual(waveformGaps([], 600), [{ start: 0, end: 600 }]);
@@ -213,7 +214,18 @@ test("a site VOD's waveform has gaps where nothing is transcribed or fetched", (
       { start: 240, end: 500 },
     ],
   );
-  // A request still waiting or paused: levels only as far as it has written lines.
+  // A request paused or failed after its audio came: levels to its end, as
+  // media.ts `waveformGaps` says ("all of a request whose audio is here");
+  // one still waiting: none.
+  assert.deepEqual(
+    waveformGaps(
+      [stretch(0, 300, "paused", 100, true), stretch(300, 400, "queued"), stretch(400, null, "error", 400, true)],
+      600,
+    ),
+    [{ start: 300, end: 400 }],
+  );
+  // A request paused or failed before its audio came: levels only as far as
+  // it has written lines.
   assert.deepEqual(
     waveformGaps([stretch(0, 300, "paused", 100), stretch(300, 400, "queued"), stretch(400, null, "error", 400)], 600),
     [{ start: 100, end: 600 }],

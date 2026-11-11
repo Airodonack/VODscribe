@@ -29,6 +29,7 @@ const stretch = (start, end, status = "done", reached = null) => ({
   reached,
   error: null,
   model: null,
+  audio: false,
 });
 /** @param {import("./stretches").Gap[]} list */
 const spans = (list) => list.map((g) => [g.start, g.end, g.request ? g.request.status : null]);

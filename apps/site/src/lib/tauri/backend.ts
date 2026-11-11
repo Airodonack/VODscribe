@@ -87,6 +87,7 @@ export function transcriptStretches(vodId: number): Stretch[] {
       reached: null,
       error: null,
       model: null,
+      audio: false,
     },
   ];
 }

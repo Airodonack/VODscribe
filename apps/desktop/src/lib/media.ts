@@ -43,15 +43,16 @@ export function columns(levels: Uint8Array, duration: number, columns: number): 
  * Where a VOD from a site has no waveform yet, in order: its levels are read
  * from the audio fetched to transcribe each stretch (crates/core peaks.rs
  * `merge`), so they're there for what's transcribed, and all of a request
- * whose audio is here (ready or transcribing); elsewhere they're 0, as
- * silence is, hence asked of its stretches rather than read from its levels.
+ * whose audio is here (ready or transcribing, or paused or failed after it
+ * came); elsewhere they're 0, as silence is, hence asked of its stretches
+ * rather than read from its levels.
  */
 export function waveformGaps(stretches: Stretch[], duration: number): { start: number; end: number }[] {
   const heard = stretches
     .map((s) => ({
       start: s.start,
       end:
-        s.status === "done" || s.status === "ready" || s.status === "transcribing"
+        s.status === "done" || s.status === "ready" || s.status === "transcribing" || s.audio
           ? (s.end ?? duration)
           : (s.reached ?? s.start),
     }))

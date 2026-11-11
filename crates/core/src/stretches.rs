@@ -34,6 +34,10 @@ pub struct Stretch {
     /// A section of audio downloaded for it alone, whose 0 is at `start`.
     #[serde(skip)]
     pub audio: Option<String>,
+    /// Its audio is here, its own section or the VOD's whole audio, and so
+    /// its waveform: the levels are read as the audio comes.
+    #[serde(rename = "audio")]
+    pub audio_here: bool,
 }
 
 impl Stretch {
@@ -61,10 +65,13 @@ pub enum Transcribed {
     All,
 }
 
-const STRETCH_COLUMNS: &str = "id, vod_id, start, end, status, progress, reached, error, model, audio_ext";
+const STRETCH_COLUMNS: &str = "id, vod_id, start, end, status, progress, reached, error, model, audio_ext,
+    (SELECT audio_ext FROM vods WHERE vods.id = stretches.vod_id) AS vod_audio_ext";
 
 fn stretch_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Stretch> {
     let (id, vod_id) = (r.get("id")?, r.get("vod_id")?);
+    let audio = crate::db::ext_of(r.get("audio_ext")?);
+    let audio_here = audio.is_some() || crate::db::ext_of(r.get("vod_audio_ext")?).is_some();
     Ok(Stretch {
         id,
         vod_id,
@@ -75,8 +82,8 @@ fn stretch_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Stretch> 
         reached: r.get("reached")?,
         error: r.get("error")?,
         model: r.get("model")?,
-        audio: crate::db::ext_of(r.get("audio_ext")?)
-            .map(|ext| crate::db::shown(&files.source_section(vod_id, id, &ext))),
+        audio: audio.map(|ext| crate::db::shown(&files.source_section(vod_id, id, &ext))),
+        audio_here,
     })
 }
 
@@ -98,6 +105,7 @@ pub(crate) fn from_json(json: &str) -> serde_json::Result<Vec<Stretch>> {
             error,
             model,
             audio: None,
+            audio_here: false,
         })
         .collect();
     out.sort_by_key(|s| s.id);
@@ -539,6 +547,7 @@ mod tests {
             error: None,
             model: Some(crate::model::CPU_MODEL.id.into()),
             audio: None,
+            audio_here: false,
         }
     }
 
@@ -706,5 +715,28 @@ mod tests {
         assert_eq!(db.vod(b).unwrap().unwrap().status, Status::Downloading);
         db.remove_entry(a).unwrap();
         assert_eq!(next(&db), None, "out of the list, its work waits");
+    }
+
+    /// What the waveform asks of a request paused or failed (media.ts
+    /// `waveformGaps`: levels for "all of a request whose audio is here"):
+    /// whether its audio came, its own section or the VOD's whole audio.
+    #[test]
+    fn a_request_says_whether_its_audio_is_here() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let [a, b] = ["a", "b"].map(|id| db.add_vod(&info(id, Some(600.0))).unwrap().0.id);
+        let before = db.request(a, 0.0, Some(100.0)).unwrap().id;
+        db.set_stretch_status(before, Status::Paused, 0.3, None).unwrap();
+        let section = db.request(a, 100.0, Some(200.0)).unwrap().id;
+        let path = db.files.source_section(a, section, "m4a");
+        db.set_stretch_audio(section, Some(path.to_str().unwrap())).unwrap();
+        db.set_stretch_status(section, Status::Paused, 0.3, None).unwrap();
+        let whole = db.request(b, 100.0, None).unwrap().id;
+        db.set_audio_path(b, Some(db.files.source_audio(b, "m4a").to_str().unwrap())).unwrap();
+        db.set_stretch_status(whole, Status::Error, 0.0, Some("worker gone")).unwrap();
+        let here = |vod: i64| db.stretches(vod).unwrap().into_iter().map(|s| (s.id, s.audio_here)).collect::<Vec<_>>();
+        assert_eq!(here(a), [(before, false), (section, true)], "paused before its audio came, and after");
+        assert_eq!(here(b), [(whole, true)], "failed with the VOD's whole audio here");
+        let shown = serde_json::to_value(db.stretch(section).unwrap().unwrap()).unwrap();
+        assert_eq!(shown["audio"], true, "the page reads it as `audio`");
     }
 }
