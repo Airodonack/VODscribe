@@ -13,10 +13,9 @@ Builds, release packaging and checks, run by hand and by CI.
 - `check-nsis-template.py`: fails when Tauri's installer template moved on from our copy.
 - `check-workflows.mjs`: checks every workflow file's shape.
 - `export-demo-chat.py`: exports a VOD's chat for the website's demo, with made-up names.
-- `ready-to-release.py`: checks main is ready to tag, and says what comes next.
 - `release.py`: names the build's files, writes `latest.json` and the winget manifests; `--version` prints the version a commit carries.
 - `verify-release.py`: checks a published release as the app and the website see it.
-- `test_release.py`: tests of the three release scripts.
+- `test_release.py`: tests of the two release scripts.
 
 ## Releasing
 
@@ -25,7 +24,7 @@ Between releases, the root `Cargo.toml`'s version is the next one with `+dev`, s
 1. Write each change's bullet in `CHANGELOG.md` as it lands, under the version's "(unreleased)" heading.
 2. Freeze `main` for the release round. Until the tag only fixes land on it; features wait on their own branches.
 3. When it's clean, set the version without `+dev` on `main`, date the heading, commit "Version 0.4.1" with the entry as its body, and push.
-4. Run `python3 scripts/ready-to-release.py`, then `git tag -s v0.4.1 -m "Version 0.4.1"` and push the tag; its run builds every system, runs every end-to-end test and publishes.
+4. Once that commit is pushed and its checks pass, tag it with `git tag -s v0.4.1 -m "Version 0.4.1"` and push the tag; its run builds every system, runs every end-to-end test and publishes.
 5. If that run needs a fix, revert the version commit, land the fix, then make a fresh version commit. The unpublished tag is deleted, and the new version commit gets the same tag.
 6. Once it's out, move `site` to the tag, and set `main` to `0.4.2+dev` (`Cargo.toml` and `Cargo.lock`) with an empty "0.4.2 (unreleased)" entry atop `CHANGELOG.md`; `release.py --check` keeps the two in step. Then the waiting features land.
 

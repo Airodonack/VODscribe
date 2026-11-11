@@ -1,14 +1,11 @@
-"""Tests for release.py's changelog and version parsing, verify-release.py's
-signature checks, and ready-to-release.py's changelog, ledger, main branch
-and tag checks:
+"""Tests for release.py's changelog and version parsing, and verify-release.py's
+signature checks:
 python3 -I scripts/test_release.py"""
 
 import base64
 import hashlib
 import importlib.util
 import json
-import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,11 +19,6 @@ spec = importlib.util.spec_from_file_location("verify", Path(__file__).with_name
 assert spec is not None and spec.loader is not None
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
-
-spec = importlib.util.spec_from_file_location("ready", Path(__file__).with_name("ready-to-release.py"))
-assert spec is not None and spec.loader is not None
-ready = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(ready)
 
 CHANGELOG = """# Changelog
 
@@ -48,18 +40,6 @@ First release.
 
 
 class ChangelogEntry(unittest.TestCase):
-    def test_the_tag_goes_on_the_version_commit(self):
-        entry = "- A new thing.\n- Fixes:\n  - A fixed thing.\n"
-        ok = "Version 0.7.1"
-        self.assertEqual(ready.commit_problems(ok, entry, "0.7.1", entry), [])
-        self.assertEqual(ready.commit_problems(ok, entry + "\nMore detail.\n", "0.7.1", entry), [])
-        fix = ready.commit_problems("e2e: a scenario waits longer", "A fix.", "0.7.1", entry)
-        self.assertEqual(len(fix), 1)
-        self.assertIn('not "Version 0.7.1"', fix[0])
-        short = ready.commit_problems(ok, "- A new thing.\n", "0.7.1", entry)
-        self.assertEqual(len(short), 1)
-        self.assertIn("lacks 2 line(s)", short[0])
-
     def test_matches_the_exact_version(self):
         self.assertEqual(release.changelog_entry(CHANGELOG, "0.1.1"), ("- One.\n- Two.", False))
         self.assertEqual(release.changelog_entry(CHANGELOG, "0.1.0"), ("First release.", False))
@@ -198,183 +178,6 @@ class SignatureTest(unittest.TestCase):
         forged = sig_file.replace("file:installer", "file:other")
         self.assertIn("trusted comment", verify.minisign_ok(public_file, forged, file_hash) or "")
 
-
-
-class EntryShape(unittest.TestCase):
-    def test_fixes_last_as_sub_bullets(self):
-        self.assertEqual(ready.entry_problems("- New.\n- Also new.\n- Fixes:\n  - A fix.\n  - Another."), [])
-        self.assertEqual(ready.entry_problems("- New only."), [])
-
-    def test_new_behaviour_under_fixes(self):
-        self.assertEqual(len(ready.entry_problems("- Fixes:\n  - A fix.\n- New, below the fixes.")), 1)
-        self.assertEqual(len(ready.entry_problems("- Fixes:\n  - A fix.\n- Fixes:\n  - Another.")), 1)
-
-    def test_a_fix_above_fixes(self):
-        self.assertEqual(len(ready.entry_problems("- New.\n  - A fix out of place.\n- Fixes:\n  - A fix.")), 1)
-
-    def test_only_fixes_under_fixes(self):
-        # A heading or another kind of bullet under "- Fixes:" would read as
-        # a fix to the freeze's check; the entry is refused instead.
-        stray = ready.entry_problems("- New.\n- Fixes:\n  - A fix.\n### New\n* A whole new editor.")
-        self.assertEqual(len(stray), 1)
-        self.assertIn('"### New"', stray[0])
-        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - A fix.\n* A whole new editor.")), 1)
-        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - A fix.\nA line of prose.")), 1)
-        # A wrapped line of a fix, and a blank line between two, belong to it.
-        self.assertEqual(ready.entry_problems("- New.\n- Fixes:\n  - A fix.\n    Wrapped.\n\n  - Another."), [])
-
-    def test_the_fixes_block(self):
-        body = ["Prose.", "", "- New.", "- Fixes:", "  - A fix.", "    Wrapped.", "", "  - Two.", "", "### Stray"]
-        self.assertEqual(ready.fixes_block(body), ({3, 4, 5, 6, 7}, 9))
-        self.assertEqual(ready.fixes_block(body[:-1]), ({3, 4, 5, 6, 7}, None))
-        self.assertEqual(ready.fixes_block(["- New."]), (set(), None))
-        # A continuation needs a sub-bullet above it.
-        self.assertEqual(ready.fixes_block(["- Fixes:", "    Wrapped."]), ({0}, 1))
-
-    def test_a_merge_conflicts_marker(self):
-        body = "- New.\n- Fixes:\n  - A fix.\n    ||||||| parent of 0123abc (A fix)\n  - Another."
-        self.assertEqual(len(ready.entry_problems(body)), 1)
-
-    def test_a_long_headline(self):
-        self.assertEqual(ready.entry_problems("- Clips copy and paste. Ctrl+C copies, Ctrl+V pastes."), [])
-        long = ready.entry_problems("- Ctrl+C copies the selection or the clips picked, and Ctrl+V pastes them. More.")
-        self.assertEqual(len(long), 1)
-        self.assertIn('"Ctrl+C copies the selection or', long[0])
-        # A fix is held to it too; the full stop ends the headline only before a capital.
-        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - One, two, three, four, five, six, seven, eight, nine.")), 1)
-        self.assertEqual(len(ready.entry_problems("- Pasting works in v. two of edits, and more things too.")), 1)
-
-    def test_a_headline_with_a_colon_or_parenthesis(self):
-        self.assertEqual(len(ready.entry_problems("- Search learns from: names. More.")), 1)
-        self.assertEqual(len(ready.entry_problems("- Ctrl+A (⌘A) selects all. More.")), 1)
-        # In the detail they are fine, and so is a full stop inside `code`.
-        self.assertEqual(ready.entry_problems("- Search learns more words. Such as `from:a. B` (or `in:chat`)."), [])
-
-    def test_the_real_entry(self):
-        root = Path(__file__).resolve().parent.parent
-        version = release.cargo_version((root / "Cargo.toml").read_text()).split("+")[0]
-        body, _ = release.changelog_entry((root / "CHANGELOG.md").read_text(), version)
-        self.assertEqual(ready.entry_problems(body), [])
-
-
-class Ledgers(unittest.TestCase):
-    def ledgers(self, scenarios, durations, flaky=None, budgets=None):
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        e2e = Path(folder.name)
-        (e2e / "scenarios").mkdir()
-        for name in scenarios:
-            (e2e / "scenarios" / f"{name}.mjs").write_text("")
-        (e2e / "durations.json").write_text(json.dumps(durations))
-        (e2e / "flaky.json").write_text(json.dumps(flaky or {}))
-        (e2e / "budgets.json").write_text(json.dumps({"about": "", "linux": {"scenarios": budgets or {}}}))
-        self.e2e = e2e
-        return ready.ledger_problems(e2e)
-
-    def test_in_step(self):
-        self.assertEqual(self.ledgers(["a", "b"], {"a": 1, "b": 2}, {"a": "why"}, {"b": {}}), [])
-
-    def test_a_scenario_with_no_time(self):
-        self.assertEqual(self.ledgers(["a", "b"], {"a": 1}), [])
-        self.assertEqual(ready.unmeasured(self.e2e), ["b"])
-
-    def test_names_of_scenarios_gone(self):
-        problems = self.ledgers(["a"], {"a": 1, "old": 3}, {"gone": "why"}, {"perf-old": {}})
-        self.assertEqual(len(problems), 3)
-        self.assertTrue(all("aren't there" in p for p in problems))
-
-
-class OnMain(unittest.TestCase):
-    """git_problems against a scratch repository with its own origin."""
-
-    def git(self, cwd, *args):
-        # Without the machine's own git settings, whose hooks or signing
-        # would refuse the scratch commits.
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-        return subprocess.run(("git", *args), cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
-
-    def commit(self, name):
-        (self.work / name).write_text(name)
-        self.git(self.work, "add", name)
-        self.git(self.work, "commit", "--quiet", "-m", name)
-
-    def setUp(self):
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        self.folder = Path(folder.name)
-        origin, self.work = self.folder / "origin.git", self.folder / "work"
-        self.git(folder.name, "init", "--quiet", "--bare", "-b", "main", str(origin))
-        self.git(folder.name, "clone", "--quiet", str(origin), str(self.work))
-        self.git(self.work, "config", "user.name", "Test")
-        self.git(self.work, "config", "user.email", "test@example.invalid")
-        self.commit("first")
-        self.git(self.work, "push", "--quiet", "origin", "HEAD:main")
-
-    def test_the_version_commit_pushed_on_main(self):
-        self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", "main")
-        self.assertEqual(ready.git_problems(self.work), [])
-
-    def test_not_on_main(self):
-        self.git(self.work, "switch", "--quiet", "-c", "release/0.7.4")
-        self.commit("version")
-        self.git(self.work, "push", "--quiet", "origin", "release/0.7.4")
-        problems = ready.git_problems(self.work)
-        self.assertEqual(len(problems), 1)
-        self.assertIn("HEAD is on release/0.7.4, not main", problems[0])
-        self.git(self.work, "switch", "--quiet", "--detach")
-        self.assertIn("HEAD is on no branch, not main", ready.git_problems(self.work)[0])
-
-    def test_not_pushed(self):
-        self.commit("version")
-        self.assertEqual(ready.git_problems(self.work), ["this commit isn't origin/main: push, or pull"])
-
-    def test_a_stale_checkout(self):
-        # Another clone pushed since: this one would tag an old commit.
-        other = self.folder / "other"
-        self.git(self.folder, "clone", "--quiet", str(self.folder / "origin.git"), str(other))
-        self.git(other, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "version")
-        self.git(other, "push", "--quiet", "origin", "main")
-        self.assertEqual(ready.git_problems(self.work), ["this commit isn't origin/main: push, or pull"])
-
-    def test_a_dirty_tree(self):
-        (self.work / "first").write_text("changed")
-        self.assertEqual(ready.git_problems(self.work), ["the working tree has uncommitted changes"])
-
-    def test_origin_unreachable(self):
-        # A failed fetch leaves origin/main stale: no comparison, a problem.
-        self.git(self.work, "remote", "set-url", "origin", str(self.folder / "gone.git"))
-        problems = ready.git_problems(self.work)
-        self.assertEqual(len(problems), 1)
-        self.assertIn("fetching origin failed", problems[0])
-
-    def tag(self, name):
-        self.git(self.work, "tag", name)
-
-    def test_no_tag(self):
-        self.assertEqual(ready.tag_problems(self.work, "0.1.0"), [])
-
-    def test_a_tag_on_origin(self):
-        self.tag("v0.1.0")
-        self.git(self.work, "push", "--quiet", "origin", "refs/tags/v0.1.0")
-        problems = ready.tag_problems(self.work, "0.1.0")
-        self.assertEqual(len(problems), 1)
-        self.assertIn("never reused", problems[0])
-        self.assertIn("revert the version commit", problems[0])
-
-    def test_a_tag_origin_deleted(self):
-        # Step 7: the owner deleted the unpublished tag on origin; the local
-        # one is left from the first tagging.
-        self.tag("v0.1.0")
-        self.git(self.work, "push", "--quiet", "origin", "refs/tags/v0.1.0")
-        self.git(self.folder, "--git-dir", str(self.folder / "origin.git"), "tag", "-d", "v0.1.0")
-        problems = ready.tag_problems(self.work, "0.1.0")
-        self.assertEqual(len(problems), 1)
-        self.assertIn("git tag -d v0.1.0", problems[0])
-
-    def test_origin_cant_be_asked(self):
-        self.git(self.work, "remote", "set-url", "origin", str(self.folder / "gone.git"))
-        self.assertIn("can't be asked", ready.tag_problems(self.work, "0.1.0")[0])
 
 if __name__ == "__main__":
     unittest.main()
