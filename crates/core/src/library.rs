@@ -365,9 +365,15 @@ fn name_of(name: &std::ffi::OsStr) -> String {
 /// Whether `path` is inside folder `dir`, as the filesystem compares names:
 /// both as they are on disk (links followed), then without regard to case
 /// on Windows and macOS, whose filesystems don't regard it. By whole names,
-/// so `/data/lib2/x` isn't in `/data/lib`.
+/// so `/data/lib2/x` isn't in `/data/lib`. A path that isn't there (a file
+/// gone) is its nearest folder that is, as on disk, then the rest of its
+/// names: else a library reached through a link (macOS's /var, a Windows
+/// short name) would hold none of its missing files.
 pub(crate) fn inside(path: &Path, dir: &Path) -> bool {
-    let real = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let real = |p: &Path| {
+        let there = p.ancestors().find_map(|a| Some((dunce::canonicalize(a).ok()?, p.strip_prefix(a).ok()?)));
+        there.map_or_else(|| p.to_path_buf(), |(real, rest)| real.join(rest))
+    };
     let names = |p: &Path| -> Vec<String> { p.components().map(|c| name_of(c.as_os_str())).collect() };
     let (path, dir) = (names(&real(path)), names(&real(dir)));
     path.len() > dir.len() && path.starts_with(&dir)

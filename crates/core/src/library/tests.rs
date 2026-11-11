@@ -513,6 +513,27 @@ fn a_file_found_nowhere_is_forgotten_and_a_clip_is_left_to_be_seen_gone() {
     assert!(!Path::new(&file).exists() && Path::new(&file).parent().unwrap().is_dir(), "{file}: gone, as the bar sees");
 }
 
+/// A library reached through a link (macOS's temporary folder is under
+/// /var, a link to /private/var; a home folder moved and linked back) is
+/// still the library's folder for a file that isn't there: found nowhere,
+/// it's forgotten in 0.7.1's column too, as in any library (library.rs:36).
+#[cfg(unix)]
+#[test]
+fn a_file_found_nowhere_in_a_library_under_a_link_is_forgotten_in_both_columns() {
+    let root = crate::TempDir::new("settle-gone-link");
+    fs::create_dir_all(root.join("real")).unwrap();
+    std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+    let paths = Paths::new(root.join("link/lib"));
+    paths.ensure().unwrap();
+    let vod = as_071(&paths, |db| vod_in(db, "v"));
+    let missing = paths.media().join(format!("Missing [{vod:06}].mp4"));
+    let sql = "UPDATE vods SET media_path = ?2 WHERE id = ?1";
+    rusqlite::Connection::open(paths.db()).unwrap().execute(sql, params![vod, crate::db::shown(&missing)]).unwrap();
+    let db = settled(Db::open_in(&paths).unwrap());
+    assert_eq!(db.media_path(vod).unwrap(), None, "forgotten");
+    assert_eq!(old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", vod), None, "0.7.1's column too");
+}
+
 /// settle takes files only from the library's own folders and 0.7.1's
 /// clip folder: a row naming another file of the user's, or a network
 /// path (never looked at), is left as it was, the file where it is
