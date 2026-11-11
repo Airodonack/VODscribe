@@ -457,7 +457,11 @@ fn files_in(dir: &Path) -> Vec<String> {
 /// ended, so it's made again) is nobody's: it goes, and doesn't stay in the
 /// clips folder once the clip is deleted (`cut`; the re-review's RR1). The
 /// window, ffmpeg done and the library not yet taken, is held open by
-/// holding the library as ffmpeg ends.
+/// holding the library as ffmpeg ends. `set_clip_range`'s stop lands on that
+/// make, whose cut queues the clip again; the remake begins before the
+/// command's own queue, so the clip is both being made and waiting, and its
+/// delete takes it out of the queue but leaves the remake to end (CI run
+/// 43055187212, where this order came by chance).
 #[test]
 fn a_make_the_library_did_not_record_goes() {
     use vodscribe_core::testkit::{Gate, eventually};
@@ -469,19 +473,22 @@ fn a_make_the_library_did_not_record_goes() {
     app.invoke("set_clip_range", json!({ "id": clip.id, "start": at("0:30"), "end": at("0:35") })).unwrap();
     held.reached();
     let second = app.paths().clip_make(clip.id, 2, "mp4");
+    let next = Gate::new();
     {
         let db = app.db();
         held.open();
         eventually("the make's file written", || second.is_file());
-        // `set_clip_range` in the library as ffmpeg ended (its stop and
-        // queue come after the lock, below).
+        // `set_clip_range` as ffmpeg ended: the range in the library, and
+        // its stop while the cut waits for the library.
         db.set_clip_range(clip.id, at("0:40"), at("0:45")).unwrap();
+        app.ffmpeg.holds_at(0.5, &next);
+        app.state().clips.stop(clip.id);
     }
-    let next = Gate::new();
-    app.ffmpeg.holds_at(0.5, &next);
-    app.state().clips.stop(clip.id);
-    app.state().clips.queue(clip.id);
+    // The cut, queuing the clip again, has ended, and the remake has begun
+    // (its file, the next unrecorded make, is the same path) ...
     next.reached();
+    // ... before the command's queue.
+    app.state().clips.queue_once(clip.id);
     app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
     next.open();
     eventually("the clips' queue idle", || {
@@ -490,6 +497,29 @@ fn a_make_the_library_did_not_record_goes() {
     });
     let left = files_in(&app.paths().clips());
     assert!(!second.exists(), "a make never recorded, nobody's, stays after its clip is deleted: {left:?}");
+}
+
+/// A clip deleted as its make ends, its encode over and the library not yet
+/// told, leaves no file: that make is nobody's (`cut`: "Deleted while it was
+/// being cut, or moved as ffmpeg ended (it's queued again): this make is
+/// nobody's, and none will record it."). The delete's stop comes too late to
+/// stop ffmpeg, so it's the cut's end that finds the clip gone.
+#[test]
+fn a_clip_deleted_as_its_make_ends_leaves_no_file() {
+    use vodscribe_core::testkit::{Gate, eventually};
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let ended = Gate::new();
+    app.holds_cut_ends(&ended);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    ended.reached();
+    let made = app.paths().clip_make(clip.id, 1, "mp4");
+    assert!(made.is_file(), "its encode over");
+    app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
+    ended.open();
+    eventually("the clips' queue idle", || app.state().clips.listed() == (None, Vec::new()));
+    let left = files_in(&app.paths().clips());
+    assert!(!made.exists(), "the make of a clip deleted as it ended stays: {left:?}");
 }
 
 /// On a disk without hard links a drag hands out the clip's own file as the

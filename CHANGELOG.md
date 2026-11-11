@@ -10,6 +10,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Videos added at launch keep thumbnails. A video added in the first moments after VODscribe started could lose the thumbnails shown when scrubbing its timeline.
   - Chapters in removed stretches still show. A chapter whose start was taken out of an edit with Remove now starts where the next piece begins.
   - Transcript lines no longer vanish mid-transcription. Lines written while the whole transcript was being read could disappear until the next progress step.
+  - Clips deleted while finishing leave nothing. A clip deleted just as its file was finished kept that file in the library's folder for good.
 
 ## 0.7.3 — 2026-11-08
 

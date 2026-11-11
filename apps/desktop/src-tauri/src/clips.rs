@@ -681,6 +681,9 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     let recorded = match &result {
+        // Deleted as ffmpeg ended, too late for its stop: nothing to record,
+        // and what it's made of now can't be asked (`status_once_made`).
+        Ok(()) if db.clip(id)?.is_none() => false,
         Ok(()) => {
             // Changed in the editor meanwhile (as ffmpeg ended): its file is
             // kept, but it's still waiting for its remake, so nothing hands
