@@ -4,6 +4,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 
 - `main.rs`: starts the app.
 - `lib.rs`: the app's state and startup, and the list of commands.
+- `tests.rs`, `tests/`: the specs of `lib.rs`.
 - `system.rs`: what the commands ask of the desktop: showing and opening files.
 - `vods.rs`: the library's commands: adding, ordering and controlling VODs, refreshing a site's VOD's details, and reading transcripts.
 - `setup.rs`: first-run setup, settings, the GPU add-on and storage.
