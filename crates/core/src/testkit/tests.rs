@@ -482,7 +482,6 @@ fn a_librarys_commits_wait_on_no_flush_to_the_disk() {
     assert_eq!(reader.vod(vod.id).unwrap().map(|v| v.id), Some(vod.id), "seen at once by another connection");
 }
 
-
 /// The schema of the library at `path`: each table's, index's, view's and
 /// trigger's SQL, by name.
 fn schema(path: &Path) -> Vec<(String, Option<String>)> {
