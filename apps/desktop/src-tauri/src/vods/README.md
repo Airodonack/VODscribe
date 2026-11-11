@@ -5,4 +5,4 @@
 - `tests/list.rs`: listing and ordering VODs.
 - `tests/removing.rs`: removing VODs.
 - `tests/transcribing.rs`: asking for a VOD's transcription.
-- `tests/reading.rs`: reading a VOD's transcript.
+- `tests/reading.rs`: reading a VOD's transcript and captions, the names `from:` suggests, and showing and opening its file.
