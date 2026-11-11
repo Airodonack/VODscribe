@@ -389,10 +389,25 @@ pub fn clip_cues(pieces: &[EditPiece], mut segments_of: impl FnMut(i64) -> Resul
 /// Where a clip of `pieces` shows its `marks` on its timeline, in time
 /// order. A highlight shows where its moment plays; a chapter, where its
 /// moment plays or, if that's trimmed away, where its piece plays again
-/// after it (a chapter keeps its start in what's left). A moment played
+/// after it (a chapter keeps its start in what's left). A chapter whose
+/// moment no piece plays, nor plays again after it within its piece (taken
+/// out with Remove, trimmed off, or struck to its piece's end), starts where
+/// the next piece of its VOD begins: the first, in the edit's order, that
+/// plays after its moment; one past them all shows nowhere. A moment played
 /// more than once shows where it's first played.
 pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::db::Mark> {
     let mut out: Vec<crate::db::Mark> = Vec::new();
+    let place = |id: i64, m: &MarkAt, start: f64, spans: &[(f64, f64)], t: f64| {
+        let end = m.detail.end.map(|end| placed_end(spans, t, end)).filter(|&end| end > start);
+        crate::db::Mark {
+            id,
+            vod_id: m.vod_id,
+            kind: m.kind.clone(),
+            start,
+            text: m.text.clone(),
+            detail: MarkDetail { end, ..m.detail.clone() },
+        }
+    };
     let mut at = 0.0;
     for p in pieces {
         let spans = p.spans();
@@ -415,15 +430,29 @@ pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::
                 t += b - a;
             }
             if let Some((start, i, t)) = placed {
-                let end = m.detail.end.map(|end| placed_end(&spans[i..], t, end)).filter(|&end| end > start);
-                out.push(crate::db::Mark {
-                    id: *id,
-                    vod_id: m.vod_id,
-                    kind: m.kind.clone(),
-                    start,
-                    text: m.text.clone(),
-                    detail: MarkDetail { end, ..m.detail.clone() },
-                });
+                out.push(place(*id, m, start, &spans[i..], t));
+            }
+        }
+        at += spans.iter().map(|(a, b)| b - a).sum::<f64>();
+    }
+    // The chapters not placed yet go where the next piece begins. This walk
+    // comes after the first, so a later piece that plays the moment itself
+    // wins over an earlier one that only begins after it.
+    let mut at = 0.0;
+    for p in pieces {
+        let spans = p.spans();
+        for (id, m) in marks.iter().filter(|(_, m)| m.kind == "chapter" && m.vod_id == p.vod_id) {
+            if out.iter().any(|o| o.id == *id) {
+                continue;
+            }
+            let moment = m.at.seconds();
+            let mut t = at;
+            for (i, &(a, b)) in spans.iter().enumerate() {
+                if a > moment {
+                    out.push(place(*id, m, t, &spans[i..], t));
+                    break;
+                }
+                t += b - a;
             }
         }
         at += spans.iter().map(|(a, b)| b - a).sum::<f64>();
@@ -2330,6 +2359,32 @@ pub(crate) mod tests {
         db.restore_edit(edit, &state).unwrap();
         let back: Vec<f64> = db.clip_marks(edit).unwrap().iter().map(|(_, m)| m.at.seconds()).collect();
         assert_eq!(back, [13.0, 13.0, 15.0, 31.0, 34.999, 50.0]);
+    }
+
+    #[test]
+    fn a_chapter_in_no_piece_starts_where_the_next_piece_begins() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        // 10-20 s with 18-20 struck (plays 0-8), then 30-35 s (8-13).
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
+        let first = db.piece_rows(edit).unwrap()[0].id;
+        db.set_piece_struck(first, &[(18.0, 20.0)]).unwrap();
+        let pieces = db.edit_pieces(edit).unwrap();
+        let mark = |kind: &str, at: f64| db.add_clip_mark(edit, vod, kind, at, None).unwrap();
+        let struck = mark("chapter", 19.0);
+        let between = mark("chapter", 25.0);
+        let before = mark("chapter", 5.0);
+        let highlight = mark("highlight", 25.0);
+        let cut = mark("cut", 25.0);
+        let placed = place_marks(&pieces, &db.clip_marks(edit).unwrap());
+        let at = |id| placed.iter().find(|m| m.id == id).map(|m| m.start);
+        assert_eq!(at(struck), Some(8.0), "struck to its piece's end: where the next piece begins");
+        assert_eq!(at(between), Some(8.0), "between two pieces: where the next one begins");
+        assert_eq!(at(before), Some(0.0), "before every piece: where the first begins");
+        assert_eq!(at(highlight), None, "a highlight shows only where its moment plays");
+        assert_eq!(at(cut), None, "a cut shows only where its moment plays");
     }
 
     #[test]

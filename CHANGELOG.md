@@ -8,6 +8,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Marks can't go past the end. A cut, chapter or highlight placed or moved past the end of a video is refused, as one before its start already was.
   - Closing the player no longer stalls. Closing a VOD or switching to another while a timeline thumbnail loaded froze the window briefly, about a quarter second on some videos.
   - Videos added at launch keep thumbnails. A video added in the first moments after VODscribe started could lose the thumbnails shown when scrubbing its timeline.
+  - Chapters in removed stretches still show. A chapter whose start was taken out of an edit with Remove now starts where the next piece begins.
 
 ## 0.7.3 — 2026-11-08
 

@@ -478,10 +478,10 @@ fn an_edit_s_marks_show_where_their_moments_play() {
 /// A chapter whose start is cut away starts where its piece plays again (0.5.0:
 /// "a chapter whose start is cut away starts where its piece plays again";
 /// app clips.rs:884, crates/core/src/edits.rs `place_marks`). Here the cut is
-/// the editor's Remove, which splits the piece in two instead of striking a
-/// stretch out of it, and the chapter in the removed stretch is shown nowhere.
+/// the editor's Remove, which splits the piece in two, so the chapter starts
+/// where the next piece begins (owner, 2026-11-11: "Yes, the chapter should
+/// start where the next piece begins").
 #[test]
-#[ignore = "disagreement: a chapter in a stretch removed from an edit is not shown where the rest plays again"]
 fn a_chapter_whose_start_is_cut_away_starts_where_its_piece_plays_again() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
@@ -489,6 +489,19 @@ fn a_chapter_whose_start_is_cut_away_starts_where_its_piece_plays_again() {
     let edit = app.edit_of(vod, &[(20.0, 50.0)]);
     app.invoke("remove_stretch", json!({ "id": edit, "from": 10.0, "to": 20.0 })).unwrap();
     assert_eq!(app.edit_marks(edit), [("chapter".to_string(), 10.0, Some("cut away".to_string()))]);
+}
+
+/// A chapter cut away after the edit's last piece shows nowhere: no piece
+/// plays again after it (crates/core/src/edits.rs `place_marks`: "one past
+/// them all shows nowhere").
+#[test]
+fn a_chapter_cut_away_after_the_last_piece_shows_nowhere() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0).id;
+    app.add_mark(vod, 45.0, Some("chapter"), Some("cut away")).unwrap();
+    let edit = app.edit_of(vod, &[(20.0, 50.0)]);
+    app.invoke("remove_stretch", json!({ "id": edit, "from": 20.0, "to": 30.0 })).unwrap();
+    assert_eq!(app.edit_marks(edit), []);
 }
 
 /// A mark's text change is one step (app clips.rs:964: "Text changed").
