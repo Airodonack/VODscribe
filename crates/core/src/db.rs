@@ -825,6 +825,12 @@ END;";
 const MIGRATE_V43: &str = "
 ALTER TABLE renders ADD COLUMN make INTEGER;";
 
+/// Version 44: the stretches' `note` (v27) goes; nothing ever read or wrote
+/// it. A version before this one opened on the library reads and writes the
+/// stretches by their columns' names, none of them `note`.
+const MIGRATE_V44: &str = "
+ALTER TABLE stretches DROP COLUMN note;";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -1552,6 +1558,7 @@ impl Db {
             MIGRATE_V41,
             MIGRATE_V42,
             MIGRATE_V43,
+            MIGRATE_V44,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1568,7 +1575,7 @@ impl Db {
             conn.execute_batch(&format!("PRAGMA user_version = {latest}; COMMIT;"))?;
         } else if version as usize > migrations.len() {
             // A newer VODscribe made this library (the user went back a version).
-            // Migrations so far only add, so carry on rather than refuse to start.
+            // Migrations so far only add, or drop what nothing reads, so carry on rather than refuse to start.
             eprintln!("{}: library format {version} is newer than this version knows", path.display());
         }
         tidy_copies(path, COPIES_KEPT_FOR);
@@ -3445,7 +3452,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -3485,12 +3492,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -3517,12 +3524,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -3546,12 +3553,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -3569,12 +3576,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -3598,11 +3605,11 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }
@@ -3623,11 +3630,11 @@ mod tests {
         // Back to version 36: the column 37 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 36;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
         let info = VodInfo {
             platform: "twitch".into(),
@@ -3660,11 +3667,11 @@ mod tests {
         // Back to version 39: the column 40 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 39;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE renders DROP COLUMN encoding; ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 39;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 43);
+        assert_eq!(version, 44);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
         let page = "https://www.dailymotion.com/quill";
         let info = VodInfo {
@@ -3837,7 +3844,7 @@ mod tests {
         // Back to version 41, before clips kept their ids.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE renders DROP COLUMN make; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 41;")
+            .execute_batch("ALTER TABLE renders DROP COLUMN make; ALTER TABLE stretches ADD COLUMN note TEXT; DROP TRIGGER clips_ids; DROP TABLE clip_ids; PRAGMA user_version = 41;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         assert_eq!(rows(&db.conn), before, "upgraded, the same clips, pieces, files and marks");
@@ -3860,6 +3867,53 @@ mod tests {
         let older = db.conn.last_insert_rowid();
         db.delete_clip(older).unwrap();
         assert!(db.add_clip(vod, 7.0, 8.0, "d", true).unwrap().id > older);
+    }
+
+    /// The stretches' `note` (v27), which nothing ever read or wrote, goes
+    /// (`MIGRATE_V44`), and a library from before upgrades with every stretch
+    /// as it was: done, asked for, paused partway, failed, with its audio
+    /// (testing.md, "Order after the pilot" 1: old schema and rows in, the
+    /// same data out).
+    #[test]
+    fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
+        let dir = crate::TempDir::new("stretch-note");
+        let path = dir.join("library.sqlite");
+        let columns = |conn: &Connection| -> Vec<String> {
+            let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('stretches')").unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().map(|c| c.unwrap()).collect()
+        };
+        let (vod, before, shown) = {
+            let db = Db::open(&path).unwrap();
+            assert!(!columns(&db.conn).contains(&"note".to_string()), "a new library's: {:?}", columns(&db.conn));
+            let vod = db.add_vod(&info("a")).unwrap().0.id;
+            db.insert_done(vod, 0.0, Some(100.0), Some("large")).unwrap();
+            let paused = db.request(vod, 100.0, Some(200.0)).unwrap().id;
+            db.set_stretch_status(paused, Status::Paused, 0.4, None).unwrap();
+            db.set_reached(paused, Some(140.0)).unwrap();
+            db.set_stretch_model(paused, Some("large")).unwrap();
+            let failed = db.request(vod, 200.0, Some(300.0)).unwrap().id;
+            db.set_stretch_status(failed, Status::Error, 0.0, Some("worker gone")).unwrap();
+            let queued = db.request(vod, 300.0, None).unwrap().id;
+            let audio = db.files.source_section(vod, queued, "m4a");
+            db.set_stretch_audio(queued, Some(audio.to_str().unwrap())).unwrap();
+            let shown = serde_json::to_value(db.vod(vod).unwrap().unwrap()).unwrap();
+            (vod, db.stretches(vod).unwrap(), shown)
+        };
+        assert_eq!(before.len(), 4);
+        // Back to version 43, the column there, holding something on one row.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "ALTER TABLE stretches ADD COLUMN note TEXT; UPDATE stretches SET note = 'old' WHERE start = 100;
+                 PRAGMA user_version = 43;",
+            )
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 44);
+        assert_eq!(db.stretches(vod).unwrap(), before, "upgraded, the same stretches");
+        assert_eq!(serde_json::to_value(db.vod(vod).unwrap().unwrap()).unwrap(), shown, "and the VOD shown the same");
+        assert!(!columns(&db.conn).contains(&"note".to_string()), "upgraded: {:?}", columns(&db.conn));
     }
 
     /// As a VOD removed from the library is pasted again while its erasure is
