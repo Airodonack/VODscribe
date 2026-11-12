@@ -419,6 +419,13 @@ impl TestApp {
         self.worker.get_or_init(|| fake_worker(&self.paths()))
     }
 
+    /// Each storyboards' sweep from now (`storyboards::sweep`, the start's)
+    /// waits at `gate` once it has read the library's VODs, before it goes
+    /// through the storyboards: a VOD can be added meanwhile.
+    pub(crate) fn holds_sweeps(&self, gate: &Gate) {
+        self.holds(Held::Sweep, gate);
+    }
+
     /// `forget_gone_clips`, once it has looked at the clips' files (without
     /// the library held), waits at `gate` before it takes the library to
     /// take those it found gone.
@@ -817,6 +824,8 @@ enum Held {
     InAPart,
     /// An edit's plan worked out, not yet played (`TestApp::holds_plans`).
     Planned,
+    /// The storyboards' sweep, the library read (`TestApp::holds_sweeps`).
+    Sweep,
     /// The worker's start (`Folder::holds_worker_start`).
     WorkerStart,
 }
@@ -872,6 +881,12 @@ pub(crate) fn in_a_part(app: &AppHandle) {
 /// (`TestApp::holds_plans`).
 pub(crate) fn planned(app: &AppHandle) {
     hold(Held::Planned, &app.state::<AppState>().paths.clips());
+}
+
+/// The storyboards' sweep has read the library's VODs: it waits there if
+/// its test holds sweeps (`TestApp::holds_sweeps`).
+pub(crate) fn sweep_read(app: &AppHandle) {
+    hold(Held::Sweep, &app.state::<AppState>().paths.clips());
 }
 
 /// The gate the worker's start waits at in the library whose clips folder

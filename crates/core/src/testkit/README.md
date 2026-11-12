@@ -62,6 +62,7 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `folder.holds_worker_start(&gate)`, before `TestApp::on(folder)`: that start's transcription waits at the gate while the other queues take up what was left, as on a busy start.
 - `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
 - `holds_erasures(&gate)` holds each erasure of a removed VOD between its parts, the library let go of; `holds_erasure_parts(&gate)` holds it in a part, the library still held.
+- `holds_sweeps(&gate)` holds the storyboards' sweep once it has read the library's VODs, before it goes through the storyboards, so a VOD can be added meanwhile.
 - `holds_plans(&gate)` holds each plan of an edit the page asks for once it's worked out, before it's played.
 - `holds_searches(&gate)` holds each search once it's asked, before it has its connection, so a search typed after it can go first.
 - `holds_settings_reads(&gate)` holds a read of an unreadable settings file before it sets the file aside, and `holds_settings_saves(&gate)` each save before its turn.
