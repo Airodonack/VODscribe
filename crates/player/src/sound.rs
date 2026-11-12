@@ -298,13 +298,39 @@ impl Output {
 pub mod stand_in {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::Shared;
 
     /// Its samples a second, and how many pairs it asks for at a time.
     pub const RATE: u32 = 48_000;
     const CHUNK: usize = 480;
+    /// How long a chunk plays.
+    const CHUNK_TIME: Duration = Duration::from_micros(CHUNK as u64 * 1_000_000 / RATE as u64);
+
+    /// When the stand-in asks for its next chunk: a chunk's time after the
+    /// last one was due, however late its thread woke, as a device's clock
+    /// runs on its own. Sleeping a chunk's time after each instead lost
+    /// every late wake-up: where sleeps run late (macOS coalesces timers,
+    /// more so for work in the background), the time ran at a third of
+    /// the clock's pace, and a test waiting two seconds of playing gave up.
+    struct Pace {
+        due: Instant,
+    }
+
+    impl Pace {
+        /// Due at once, from `now` (going, or going again after a pause).
+        fn starting(now: Instant) -> Pace {
+            Pace { due: now }
+        }
+
+        /// A chunk asked for at `now`: how long till the next is due (none,
+        /// when the thread is behind: it catches up).
+        fn asked(&mut self, now: Instant) -> Duration {
+            self.due += CHUNK_TIME;
+            self.due.saturating_duration_since(now)
+        }
+    }
 
     static CHOSEN: AtomicBool = AtomicBool::new(false);
     static GOING: AtomicBool = AtomicBool::new(false);
@@ -341,12 +367,17 @@ pub mod stand_in {
             let run = state.clone();
             std::thread::spawn(move || {
                 let mut out = vec![0f32; CHUNK * 2];
+                let mut pace = Pace::starting(Instant::now());
                 loop {
                     {
                         let (lock, wake) = &*run;
                         let mut s = lock.lock().unwrap();
-                        while !s.0 && !s.1 {
-                            s = wake.wait(s).unwrap();
+                        if !s.0 && !s.1 {
+                            while !s.0 && !s.1 {
+                                s = wake.wait(s).unwrap();
+                            }
+                            // Paused meanwhile: what's due runs from now.
+                            pace = Pace::starting(Instant::now());
                         }
                         if s.1 {
                             return;
@@ -354,7 +385,10 @@ pub mod stand_in {
                     }
                     ASKED.fetch_add(1, Ordering::AcqRel);
                     super::fill(&mut out, 2, RATE, &shared);
-                    std::thread::sleep(Duration::from_secs_f64(CHUNK as f64 / RATE as f64));
+                    let wait = pace.asked(Instant::now());
+                    if !wait.is_zero() {
+                        std::thread::sleep(wait);
+                    }
                 }
             });
             Stream { state }
@@ -376,6 +410,34 @@ pub mod stand_in {
             GOING.store(false, Ordering::Release);
             wake.notify_all();
         }
+    }
+
+    /// The stand-in takes its samples in real time, as a device would, so
+    /// the time follows the clock (sound_idle.rs: "A stand-in output
+    /// (`sound::stand_in`) takes the samples in real time, so the time
+    /// follows it as it would a device's"): a wake-up late by however much
+    /// is made up by the next chunks, which are due at once.
+    #[test]
+    fn the_stand_in_keeps_the_clocks_pace_when_its_wake_ups_run_late() {
+        let begun = Instant::now();
+        let mut pace = Pace::starting(begun);
+        let mut now = begun;
+        let mut chunks = 0u32;
+        // A second of chunks, each sleep running 20 ms late.
+        while now < begun + Duration::from_secs(1) {
+            chunks += 1;
+            let wait = pace.asked(now);
+            if !wait.is_zero() {
+                now += wait + Duration::from_millis(20);
+            }
+        }
+        let played = CHUNK_TIME * chunks;
+        let behind = (now - begun).saturating_sub(played);
+        assert!(behind <= CHUNK_TIME + Duration::from_millis(20), "{played:?} played in {:?}", now - begun);
+        // On time, a chunk's time apart.
+        let mut pace = Pace::starting(begun);
+        assert_eq!(pace.asked(begun), CHUNK_TIME);
+        assert_eq!(pace.asked(begun + CHUNK_TIME), CHUNK_TIME);
     }
 }
 
