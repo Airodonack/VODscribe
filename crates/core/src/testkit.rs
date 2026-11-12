@@ -28,7 +28,7 @@ pub mod yt_dlp;
 mod tests;
 
 pub use ffmpeg::Ffmpeg;
-pub use library::{Library, Released, at_version, back_to, said};
+pub use library::{Library, Released, at_version, back_to, newer, said};
 pub use media::Media;
 pub use net::Net;
 pub use tools::Gate;

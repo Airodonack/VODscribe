@@ -71,6 +71,8 @@ const EVENTS: &[&str] = &[
 pub(crate) struct TestApp {
     app: tauri::App<Rt>,
     window: WebviewWindow,
+    /// Its library's layout, in its folder.
+    paths: vodscribe_core::Paths,
     /// The ffmpeg the app finds, faked.
     pub(crate) ffmpeg: Ffmpeg,
     /// The yt-dlp the app finds, faked: it serves each site's VOD added with
@@ -88,8 +90,9 @@ pub(crate) struct TestApp {
     drags_ended: AtomicUsize,
     /// Where its library keeps the files it couldn't delete (`files`).
     leftovers: PathBuf,
-    // Kept for the chat queue, which the tests don't run: what's asked of it waits.
-    _chats: std::sync::mpsc::Receiver<i64>,
+    // Kept for the chat queue, which the tests don't run: what's asked of it
+    // waits. None on the recovery screen.
+    _chats: Option<std::sync::mpsc::Receiver<i64>>,
     // The app's while it runs: removed once `drop` has closed what the app
     // has open in it, unless `quit` or `kill` gave it to the test.
     folder: Option<Folder>,
@@ -117,6 +120,11 @@ impl Folder {
         self.0.join("files")
     }
 
+    /// Where everything of it is.
+    fn root(&self) -> PathBuf {
+        self.0.to_path_buf()
+    }
+
     /// The next app started on it holds its transcription back till `gate`
     /// opens (`Worker::run_at`), as a busy start does: the other queues
     /// take up what was left first.
@@ -134,9 +142,14 @@ impl Drop for TestApp {
         // opened (it failed first) ends, and can be joined; and a drag's
         // receiver waiting for a file stops.
         self.drags().end();
+        // The rest is the state of a library that opened: none on the
+        // recovery screen.
+        let started = self.app.try_state::<AppState>().is_some();
         // The player first: its threads tell the state of each frame, and
         // end once it's closed, while the queues below are joined.
-        crate::player::close(self.handle());
+        if started {
+            crate::player::close(self.handle());
+        }
         self.ffmpeg.end();
         self.yt_dlp.end();
         if let Some(worker) = self.worker.get() {
@@ -144,9 +157,12 @@ impl Drop for TestApp {
             let model = self.paths().model_dir();
             routes().retain(|(m, _)| *m != model);
         }
-        // What the library's own code was held at lets go, as the app's below.
-        vodscribe_core::testkit::tools::let_go(&self.paths().root);
-        self.state().searches.lets_go();
+        // What the library's own code was held at lets go, as the app's
+        // below; and a quit's stop of its folder's runs is forgotten.
+        vodscribe_core::testkit::tools::let_go(&self.app.state::<Ending>().root);
+        if started {
+            self.state().searches.lets_go();
+        }
         no_links().retain(|dir| *dir != self.paths().clips());
         held().retain(|(_, dir, gate)| {
             let ours = *dir == self.paths().clips();
@@ -157,6 +173,9 @@ impl Drop for TestApp {
         });
         // The threads its commands started end before the state they read goes.
         self.threads_done();
+        if !started {
+            return;
+        }
         let state = self.state();
         state.clips.close();
         state.sweeper.close();
@@ -183,13 +202,23 @@ impl TestApp {
     }
 
     /// The app started on `folder`'s library, as `lib.rs`'s `run` starts it
-    /// (but with no page in its window, nor the background jobs that reach
-    /// the network: thumbnails, streamer cards, chat): what's left from
-    /// before tidied, then its queues running, beginning with what was left
-    /// unfinished. A folder an app quit or was killed on is started on
-    /// again as after that quit (`quit`, `kill`). The fakes start anew, and
-    /// the fake site serves each site's VOD the library has.
+    /// (`open_at_start`, `open_library`; but with no page in its window, nor
+    /// the background jobs that reach the network: thumbnails, streamer
+    /// cards, chat): the library opened and its files settled, what's left
+    /// from before tidied, then its queues running, beginning with what was
+    /// left unfinished. A library that won't open starts it on the recovery
+    /// screen (recovery.rs), with none of the rest. A folder an app quit or
+    /// was killed on is started on again as after that quit (`quit`,
+    /// `kill`). The fakes start anew, and the fake site serves each site's
+    /// VOD the library has.
     pub(crate) fn on(folder: Folder) -> Self {
+        Self::on_with(folder, |_| {})
+    }
+
+    /// `on`, with the fakes told what to do by `setup` before the start
+    /// does anything with them: before its queues take up what was left (a
+    /// cut held as it begins again, say).
+    pub(crate) fn on_with(folder: Folder, setup: impl FnOnce(&Fakes)) -> Self {
         let paths = folder.paths();
         paths.ensure().unwrap();
         let files = folder.files();
@@ -212,8 +241,7 @@ impl TestApp {
         app.manage(Drags::default());
         app.manage(Clock::default());
         app.manage(Env::default());
-        app.manage(crate::choices::Kept::load(paths.choices()));
-        app.manage(crate::recovery::Problem::none(paths.db()));
+        app.manage(Ending { root: folder.root(), code: Mutex::default() });
         app.manage(crate::screen::Screen::default());
         app.manage(Screen::default());
         app.manage(Started::default());
@@ -226,20 +254,24 @@ impl TestApp {
         // The player's sound plays out in time on a stand-in, not the
         // computer's speakers (every player opened from now, in any test).
         vodscribe_player::sound::stand_in::choose();
-        let db = Db::open_in(&paths).unwrap();
-        vodscribe_core::library::settle(&db).unwrap();
-        // The site still has the VODs added before, for what's left to make.
-        for vod in db.vods().unwrap().iter().filter(|v| v.info.platform != vodscribe_core::local::PLATFORM) {
-            yt_dlp.serves(details(vod));
-        }
         let store = paths.leftovers();
-        let chats = crate::open_library(app.handle(), paths, db).unwrap();
-        // The storyboards' sweep, which runs beside the start, has asked for what's left.
-        app.state::<AppState>().storyboards.swept();
+        let mut chats = None;
+        if let Some(db) = crate::open_at_start(app.handle(), &paths).unwrap() {
+            // The site still has the VODs added before, for what's left to
+            // make: those the library can read.
+            for vod in db.vods().iter().flatten().filter(|v| v.info.platform != vodscribe_core::local::PLATFORM) {
+                yt_dlp.serves(details(vod));
+            }
+            setup(&Fakes { ffmpeg: &ffmpeg });
+            chats = Some(crate::open_library(app.handle(), paths.clone(), db).unwrap());
+            // The storyboards' sweep, which runs beside the start, has asked for what's left.
+            app.state::<AppState>().storyboards.swept();
+        }
         let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
         TestApp {
             app,
             window,
+            paths,
             ffmpeg,
             yt_dlp,
             worker,
@@ -255,20 +287,21 @@ impl TestApp {
 
     /// Quits, as closing the window does (`lib.rs`'s `quit`): the library's
     /// part of it (`quit_library`: a cut not pasted goes, then nothing more
-    /// is written), the files left to delete tried again, then the app
-    /// ends. Its folder is the test's from now, to start the app on again
-    /// (`on`).
+    /// is written), what the app started stopped (its own, as the test's
+    /// fakes: `stop_tracked`), the files left to delete tried again, then
+    /// the app ends. Its folder is the test's from now, to start the app on
+    /// again (`on`).
     pub(crate) fn quit(mut self) -> Folder {
-        {
-            let state = self.state();
-            let db = state.db.lock().unwrap();
-            crate::quit_library(self.handle(), &db);
-            // The real quit keeps the lock till the process ends. Let go
-            // here, so the app can end; what its jobs still write is in the
-            // transaction `stop_writes` began, gone as the library closes.
-        }
-        crate::files::delete_leftovers();
+        crate::quit(self.handle());
         self.folder.take().unwrap()
+    }
+
+    /// Once the app has ended itself (`lib.rs`'s `exit`, as Ctrl+Q's
+    /// `quit_app` ends it), the code it ended with and its folder, the
+    /// test's from now. It hasn't: the test fails.
+    pub(crate) fn exited(mut self) -> (i32, Folder) {
+        let code = self.app.state::<Ending>().code.lock().unwrap().expect("the app didn't end itself");
+        (code, self.folder.take().unwrap())
     }
 
     /// Ends the app as if it were killed: none of the quit's work, and
@@ -421,7 +454,7 @@ impl TestApp {
     }
 
     pub(crate) fn paths(&self) -> vodscribe_core::Paths {
-        self.state().paths.clone()
+        self.paths.clone()
     }
 
     /// What the system's desktop was asked (`Desktop`).
@@ -617,6 +650,33 @@ impl TestApp {
         let path = clip.file_path.as_deref().expect("a made clip's file");
         Media::read(Path::new(path)).unwrap_or_else(|| panic!("no media at {path}"))
     }
+}
+
+/// The fakes a test tells what to do before a start runs (`TestApp::on_with`).
+pub(crate) struct Fakes<'a> {
+    pub(crate) ffmpeg: &'a Ffmpeg,
+}
+
+/// How a test's app ends: the folder it works in, and the code it ended
+/// itself with, if it did (`exit`).
+struct Ending {
+    root: PathBuf,
+    code: Mutex<Option<i32>>,
+}
+
+/// `tools::stop_tracked` for the test's app: what its quit stops of what
+/// it started is the test's own, its fakes working in its folder; others
+/// run beside it (`tools::stop_tracked_in`).
+pub(crate) fn stop_tracked(app: &AppHandle) {
+    fakes::stop_tracked_in(&app.state::<Ending>().root);
+}
+
+/// The test's app ends itself with `code` (`lib.rs`'s `exit`), as the real
+/// one's event loop ends: `ended`, quit's work, and the code kept for the
+/// test (`TestApp::exited`).
+pub(crate) fn exit(app: &AppHandle, code: i32) {
+    *app.state::<Ending>().code.lock().unwrap() = Some(code);
+    crate::ended(app);
 }
 
 /// The folders whose disk takes no hard links (`TestApp::takes_no_hard_links`),

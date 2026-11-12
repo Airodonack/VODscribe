@@ -14,6 +14,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Transcript lines no longer vanish mid-transcription. Lines written while the whole transcript was being read could disappear until the next progress step.
   - Clips deleted while finishing leave nothing. A clip deleted just as its file was finished kept that file in the library's folder for good.
   - Paused requests show their whole waveform. A request paused or failed after its audio came showed levels only up to where it stopped.
+  - VODscribe starts on a newer library. A library a later version changed no longer keeps it from opening, and it says what doesn't work.
   - Unreadable settings are kept, not overwritten. A settings file that can't be read is set aside beside your library, and VODscribe says so.
   - Captions show a stretch just transcribed. Captions read just before a stretch finished no longer replace the newer ones.
   - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".

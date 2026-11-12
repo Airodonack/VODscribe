@@ -629,3 +629,75 @@ fn an_added_files_picture_is_asked_for_on_a_thread_the_app_waits_for() {
     app.threads_done();
     assert_eq!(app.threads_running(), 0);
 }
+
+/// An app starts on a library that won't open, as the app's own start
+/// does (lib.rs `open_at_start`): on the recovery screen, with the error
+/// the page shows, and none of the rest; and it ends.
+#[test]
+fn an_app_starts_on_a_library_that_wont_open_on_the_recovery_screen() {
+    let folder = Folder::new();
+    let paths = folder.paths();
+    paths.ensure().unwrap();
+    std::fs::write(paths.db(), b"not a library").unwrap();
+    let app = TestApp::on(folder);
+    let problem = app.invoke("library_problem", json!({})).unwrap();
+    assert!(problem.as_str().is_some_and(|p| p.contains("open the library")), "{problem}");
+    assert!(app.handle().try_state::<AppState>().is_none(), "the rest started");
+}
+
+/// The fakes told what to do as an app starts are told before its queues
+/// take up what was left: a cut left unmade, held as it begins again, is
+/// held from its first run.
+#[test]
+fn fakes_told_as_an_app_starts_are_told_before_its_queues_run() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let first = Gate::new();
+    app.ffmpeg.holds_at(0.25, &first);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    first.reached();
+    let again = Gate::new();
+    let app = TestApp::on_with(app.kill(), |fakes| fakes.ffmpeg.holds_at(0.25, &again));
+    again.reached();
+    assert_ne!(app.clip(clip.id).unwrap().status, ClipStatus::Ready, "made before it was let go");
+    again.open();
+    assert_eq!(app.made(clip.id).status, ClipStatus::Ready);
+}
+
+/// A quit stops what its app started (lib.rs `quit`, `tools::stop_tracked`),
+/// and only that: another test's app, its cut held as this one's is, makes
+/// its clip once let go.
+#[test]
+fn a_quit_stops_only_what_its_own_app_started() {
+    let (ours, theirs) = (TestApp::new(), TestApp::new());
+    let (held, theirs_held) = (Gate::new(), Gate::new());
+    ours.ffmpeg.holds_at(0.5, &held);
+    theirs.ffmpeg.holds_at(0.5, &theirs_held);
+    let vod = ours.add_video_file("Day 3.mp4", 60.0);
+    ours.add_clip(vod.id, "0:10", "0:20").unwrap();
+    let their_vod = theirs.add_video_file("Day 3.mp4", 60.0);
+    let their_clip = theirs.add_clip(their_vod.id, "0:10", "0:20").unwrap();
+    held.reached();
+    theirs_held.reached();
+    let _folder = ours.quit();
+    theirs_held.open();
+    assert_eq!(theirs.made(their_clip.id).status, ClipStatus::Ready, "the other app's cut was stopped");
+}
+
+/// An app ends itself as its event loop's end would end it (lib.rs `exit`,
+/// which Tauri's mock runtime can't): quit's work done, the code it ended
+/// with kept, and its folder the test's to start it on again.
+#[test]
+fn an_app_ends_itself_as_its_event_loop_would() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let clip = app.make_clip(vod.id, "0:10", "0:20");
+    app.invoke("copy_items", json!({ "items": [{ "kind": "clip", "id": clip.id }] })).unwrap();
+    app.invoke("copied_text", json!({ "text": "copied" })).unwrap();
+    app.invoke("cut_clips", json!({ "ids": [clip.id] })).unwrap();
+    crate::exit(app.handle(), 3);
+    let (code, folder) = app.exited();
+    assert_eq!(code, 3);
+    let app = TestApp::on(folder);
+    assert!(app.clip(clip.id).is_none(), "quit's work wasn't done: the cut clip is still there");
+}

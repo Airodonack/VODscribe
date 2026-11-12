@@ -514,6 +514,28 @@ fn a_library_at_a_format_upgrades_to_a_new_ones() {
     }
 }
 
+/// A library a newer version changed is at a format past this version's,
+/// with that version's change, and opens as it is: neither upgraded nor
+/// refused.
+#[test]
+fn a_library_a_newer_version_changed_opens_as_it_left_it() {
+    let dir = TempDir::new("kit-newer");
+    let path = dir.join("library.sqlite");
+    drop(crate::db::Db::open(&path).unwrap());
+    newer(&path, "ALTER TABLE renders DROP COLUMN encoding;");
+    let db = crate::db::Db::open(&path).unwrap();
+    assert_eq!(format_of(&db.conn), crate::db::MIGRATIONS.len() + 1);
+    let columns: Vec<String> = db
+        .conn
+        .prepare("SELECT name FROM pragma_table_info('renders')")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|c| c.unwrap())
+        .collect();
+    assert!(!columns.contains(&"encoding".to_string()), "{columns:?}");
+}
+
 /// A library at the format a release left is the release's: the same
 /// tables, columns, indexes and triggers as its library in the fixtures.
 #[test]
@@ -825,4 +847,60 @@ fn a_gate_never_reached_fails_its_test_and_still_opens() {
     assert!(missed.is_err(), "reached with no run at it");
     gate.open();
     gate.wait();
+}
+
+/// A test's quit stops the runs the app tracks that work in its folder, and
+/// those tracked there after, as quitting stops processes
+/// (`tools::stop_tracked`); a run another test's folder has, or one not
+/// tracked, goes on. Once the test lets go of its folder, a run tracked
+/// there runs.
+#[test]
+fn a_tests_quit_stops_only_the_runs_it_tracks() {
+    let (ours, theirs, elsewhere) =
+        (TempDir::new("kit-quit-ours"), TempDir::new("kit-quit-theirs"), TempDir::new("kit-quit-elsewhere"));
+    // Each run works till it's stopped or the test lets it end.
+    let done = std::sync::Arc::new(AtomicBool::new(false));
+    let fake = |at: &Path| {
+        let done = done.clone();
+        super::tools::fake(at.join("bin/tool"), move |run| {
+            loop {
+                if run.stopped() || done.load(std::sync::atomic::Ordering::SeqCst) {
+                    return 0;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        })
+    };
+    let (in_ours, in_theirs, in_elsewhere) = (fake(&ours), fake(&theirs), fake(&elsewhere));
+    let start = |program: &Path, arg: &Path, track: bool| {
+        let child = tools::spawn(tools::command(program).arg(arg)).unwrap();
+        let tracked = if track { child.track() } else { None };
+        (child, tracked)
+    };
+    // Whether it ended as a stopped program does, once it has.
+    let stopped = |child: &mut tools::Child| {
+        let mut status = None;
+        eventually("the run ended", || {
+            status = child.try_wait().unwrap();
+            status.is_some()
+        });
+        !status.unwrap().success()
+    };
+    let mut tracked = start(in_ours.path(), &ours.join("a.mp4"), true);
+    // Another folder's program working on a path in ours is ours too, as
+    // the app's worker works on its library's model.
+    let mut working_here = start(in_elsewhere.path(), &ours.join("model"), true);
+    let mut untracked = start(in_ours.path(), &ours.join("b.mp4"), false);
+    let mut other = start(in_theirs.path(), &theirs.join("a.mp4"), true);
+    super::tools::stop_tracked_in(&ours);
+    let mut later = start(in_ours.path(), &ours.join("c.mp4"), true);
+    super::tools::let_go(&ours);
+    let mut next = start(in_ours.path(), &ours.join("d.mp4"), true);
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(stopped(&mut tracked.0), "a tracked run in the folder was stopped");
+    assert!(stopped(&mut working_here.0), "a run working in the folder was stopped");
+    assert!(stopped(&mut later.0), "a run tracked there after the quit was stopped at once");
+    assert!(!stopped(&mut untracked.0), "a run not tracked went on");
+    assert!(!stopped(&mut other.0), "another folder's run went on");
+    assert!(!stopped(&mut next.0), "once the folder was let go of, a run tracked there ran");
 }

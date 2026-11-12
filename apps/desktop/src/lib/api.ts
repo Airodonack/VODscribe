@@ -678,6 +678,8 @@ export const api = {
   openDataDir: () => invoke<void>("open_data_dir"),
   /** Quits the app, as closing its window does. */
   quit: () => invoke<void>("quit_app"),
+  /** The work that couldn't start with the app, as the library couldn't be read in full; told once it's up. */
+  notStarted: () => invoke<string[]>("not_started"),
   /** Adds a link; `ticket` lets cancelAdd stop it while it's looked up. */
   addVod: (url: string, ticket?: number) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url, ticket }),
   cancelAdd: (ticket: number) => invoke<void>("cancel_add", { ticket }),

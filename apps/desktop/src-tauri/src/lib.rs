@@ -103,6 +103,9 @@ struct AppState {
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
     /// VODs whose details are being refreshed (`vods::refresh_details`), one at a time each.
     refreshing: Mutex<std::collections::HashSet<i64>>,
+    /// The work that couldn't start with the app (`start_queues`), in the
+    /// page's words, for it to say (`not_started`).
+    not_started: Mutex<Vec<&'static str>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -201,6 +204,37 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     Ok(())
 }
 
+/// Each start's own steps before anything runs on the library: its folders
+/// made, the choices kept read, the models an upgrade left dropped, then the
+/// library opened and its files settled. None if it won't open: the window
+/// opens on the recovery screen (recovery.rs) instead of the app failing to
+/// start. The tests' app starts with it too (testkit.rs), on any library.
+fn open_at_start(app: &AppHandle, paths: &Paths) -> anyhow::Result<Option<Db>> {
+    paths.ensure()?;
+    app.manage(choices::Kept::load(paths.choices()));
+    // Upgrades: drop models this version no longer uses.
+    if model::is_installed(&paths.model_dir(), &model::CPU_MODEL) {
+        model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
+    }
+    match Db::open_in(paths) {
+        Ok(db) => {
+            // Files recorded where they were before 0.7.2 go where they're
+            // built now (a move a crash cut short is finished): here only,
+            // before any job has a path.
+            if let Err(e) = vodscribe_core::library::settle(&db) {
+                eprintln!("Some of the library's files couldn't be moved to where they go now: {e:#}");
+            }
+            app.manage(recovery::Problem::none(paths.db()));
+            Ok(Some(db))
+        }
+        Err(e) => {
+            eprintln!("The library couldn't be opened: {e:#}");
+            app.manage(recovery::Problem::new(format!("{e:#}"), paths.clone()));
+            Ok(None)
+        }
+    }
+}
+
 /// Everything that runs on the library: the state the commands use, the
 /// queues and the background jobs.
 fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Result<()> {
@@ -221,7 +255,7 @@ fn start_library(app: &mut tauri::App<Rt>, paths: Paths, db: Db) -> anyhow::Resu
 fn open_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::sync::mpsc::Receiver<i64>> {
     let sections = tidy_at_start(&paths, &db);
     let chat_rx = manage_library(app, paths, db)?;
-    start_queues(app, &sections)?;
+    start_queues(app, &sections);
     Ok(chat_rx)
 }
 
@@ -291,35 +325,52 @@ fn manage_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::
         embed: embed::Embed::default(),
         adding: Mutex::default(),
         refreshing: Mutex::default(),
+        not_started: Mutex::default(),
     });
     Ok(chat_rx)
 }
 
 /// Starts the queues that work on the library (`manage_library`'s state),
 /// each taking up what a quit (or a crash) left unfinished; `sections` are
-/// the footage sections that were downloading (`tidy_at_start`).
-fn start_queues(app: &AppHandle, sections: &[(i64, f64, f64)]) -> anyhow::Result<()> {
+/// the footage sections that were downloading (`tidy_at_start`). One that
+/// can't start, as when it can't read what was left (in a library a newer
+/// version changed, say), is no reason for the others or the app not to:
+/// it's logged, and listed for the page to say (`not_started`).
+fn start_queues(app: &AppHandle, sections: &[(i64, f64, f64)]) {
+    let state = app.state::<AppState>();
+    let started = |what: &'static str, run: anyhow::Result<()>| {
+        if let Err(e) = run {
+            eprintln!("{what} couldn't start: {e:#}");
+            state.not_started.lock().unwrap().push(what);
+        }
+    };
     // First, so the queues' first news (what's left from last time) is heard.
-    app.state::<AppState>().job_list.run(app.clone())?;
+    started("the list of jobs", state.job_list.run(app.clone()));
     // (A test may hold the worker's start, as a busy start would hold it.)
     #[cfg(test)]
-    match crate::testkit::worker_start_held(&app.state::<AppState>().paths.clips()) {
-        Some(gate) => app.state::<AppState>().worker.run_at(gate),
-        None => app.state::<AppState>().worker.run(),
+    match crate::testkit::worker_start_held(&state.paths.clips()) {
+        Some(gate) => state.worker.run_at(gate),
+        None => state.worker.run(),
     }
     #[cfg(not(test))]
-    app.state::<AppState>().worker.run();
-    app.state::<AppState>().clips.run(app.clone())?;
+    state.worker.run();
+    started("clips and edits", state.clips.run(app.clone()));
     // What was left to erase of the VODs nothing uses any more (stopped, or the app quit first).
-    app.state::<AppState>().sweeper.run(app.clone())?;
-    app.state::<AppState>().videos.run(app.clone())?;
-    app.state::<AppState>().footage.run(app.clone(), sections.to_vec())?;
+    started("erasing removed VODs", state.sweeper.run(app.clone()));
+    started("video downloads", state.videos.run(app.clone()));
+    started("footage downloads", state.footage.run(app.clone(), sections.to_vec()));
     // Beside its queue: the storyboards missing, of files changed since, or unfinished.
-    app.state::<AppState>().storyboards.run(app.clone())?;
+    started("the thumbnails shown when scrubbing", state.storyboards.run(app.clone()));
     // Files received whole from a drop, not yet added.
     #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     receive::take_up(app);
-    Ok(())
+}
+
+/// The work that couldn't start with the app (`start_queues`), in the
+/// page's words, for it to say once it's up.
+#[tauri::command]
+fn not_started(state: tauri::State<'_, AppState>) -> Vec<&'static str> {
+    state.not_started.lock().unwrap().clone()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -348,30 +399,8 @@ pub fn run() {
             if let Ok(videos) = app.path().video_dir() {
                 paths = paths.with_old_clips(videos.join("VODscribe"));
             }
-            paths.ensure()?;
-            app.manage(choices::Kept::load(paths.choices()));
-            // Upgrades: drop models this version no longer uses.
-            if model::is_installed(&paths.model_dir(), &model::CPU_MODEL) {
-                model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
-            }
-            // A library that won't open: the window opens on the recovery
-            // screen (recovery.rs) instead of the app failing to start.
-            let db_path = paths.db();
-            match Db::open_in(&paths) {
-                Ok(db) => {
-                    // Files recorded where they were before 0.7.2 go where
-                    // they're built now (a move a crash cut short is
-                    // finished): here only, before any job has a path.
-                    if let Err(e) = vodscribe_core::library::settle(&db) {
-                        eprintln!("Some of the library's files couldn't be moved to where they go now: {e:#}");
-                    }
-                    app.manage(recovery::Problem::none(db_path));
-                    start_library(app, paths, db)?;
-                }
-                Err(e) => {
-                    eprintln!("The library couldn't be opened: {e:#}");
-                    app.manage(recovery::Problem::new(format!("{e:#}"), paths));
-                }
+            if let Some(db) = open_at_start(app.handle(), &paths)? {
+                start_library(app, paths, db)?;
             }
             // The window is created here rather than from the config, so release builds
             // open it only once the app server is listening (see app_server.rs).
@@ -469,11 +498,7 @@ pub fn run() {
             }
             tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Destroyed, .. } => trace_exit("window destroyed"),
             tauri::RunEvent::ExitRequested { .. } => trace_exit("exit asked for"),
-            tauri::RunEvent::Exit => {
-                trace_exit("event loop ended");
-                quit(app);
-                trace_exit("quit's work done: the process ends");
-            }
+            tauri::RunEvent::Exit => ended(app),
             _ => {}
         });
 }
@@ -651,8 +676,17 @@ fn commands() -> impl Fn(tauri::ipc::Invoke<Rt>) -> bool + Send + Sync + 'static
         setup::set_playable,
         vods::delete_video,
         setup::clear_cache,
+        not_started,
         quit_app,
     ]
+}
+
+/// The app's end, once its event loop has: `quit`'s work, then the process
+/// ends.
+fn ended(app: &AppHandle) {
+    trace_exit("event loop ended");
+    quit(app);
+    trace_exit("quit's work done: the process ends");
 }
 
 /// As the app quits: what it started (downloads, transcription, encodes,
@@ -667,7 +701,8 @@ fn quit(app: &AppHandle) {
     // A window closed is destroyed by now, but the display is only told when
     // the main loop next runs, which it won't: flushed, it leaves the screen
     // at once instead of staying up through the work below.
-    #[cfg(target_os = "linux")]
+    // (A test's app has no display.)
+    #[cfg(all(target_os = "linux", not(test)))]
     if let Some(display) = gtk::gdk::Display::default() {
         display.flush();
     }
@@ -676,10 +711,17 @@ fn quit(app: &AppHandle) {
         trace_exit("library's lock taken");
         quit_library(app, &db);
         trace_exit("library's writes stopped");
-        // Held till the process ends.
+        // Held till the process ends. A test's app lets go, so it can end:
+        // what its jobs still write is in the transaction `stop_writes`
+        // began, gone as the library closes.
+        #[cfg(not(test))]
         std::mem::forget(db);
     }
+    // In a test, only the test's own: others run beside it.
+    #[cfg(not(test))]
     vodscribe_core::tools::stop_tracked();
+    #[cfg(test)]
+    crate::testkit::stop_tracked(app);
     trace_exit("started processes stopped");
     files::delete_leftovers();
     trace_exit("leftover files deleted");
@@ -698,7 +740,17 @@ pub(crate) fn quit_library(app: &AppHandle, db: &vodscribe_core::db::Db) {
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     trace_exit("quit asked for by key");
-    app.exit(0);
+    exit(&app, 0);
+}
+
+/// Ends the app with `code`: its event loop ends, then `ended`. Tauri's mock
+/// runtime, a test's, has no event loop to end, so the test's app ends as
+/// one would (`testkit::exit`).
+fn exit(app: &AppHandle, code: i32) {
+    #[cfg(not(test))]
+    app.exit(code);
+    #[cfg(test)]
+    crate::testkit::exit(app, code);
 }
 
 /// Opens `path` as ffmpeg does, for tests: on Windows without sharing its

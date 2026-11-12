@@ -246,6 +246,16 @@ pub fn back_to(path: &Path, version: usize) -> Connection {
     conn
 }
 
+/// The library at `path`, made by this version, as a newer one left it:
+/// changed by `sql`, as that version's migrations change it (a column
+/// dropped, say), at the format after this version's, which `Db::open`
+/// opens as it is. Nothing may have the library open.
+pub fn newer(path: &Path, sql: &str) {
+    let format = crate::db::MIGRATIONS.len() + 1;
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch(&format!("BEGIN; {sql}\n PRAGMA user_version = {format}; COMMIT;")).unwrap();
+}
+
 /// The library and settings file a release left, as the upgrade scenarios
 /// keep them (tests/e2e/fixtures: `library-<version>.sqlite`,
 /// `settings-<version>.json`), copied into a folder of the test's own as the

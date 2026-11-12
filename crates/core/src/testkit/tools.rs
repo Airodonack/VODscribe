@@ -10,6 +10,10 @@
 //! act meanwhile, so a race is played in the order the test picks; and
 //! `hold_at` holds the library's own code where no fake runs (a settings
 //! file read, a save), by the file it's at.
+//!
+//! A run the app tracks (`tools::Child::track`), as it tracks a download or
+//! an encode for its quit to stop, is tracked by the folder it works in, so
+//! a test's quit stops only its own (`stop_tracked_in`).
 
 use std::ffi::OsString;
 use std::io::{PipeReader, PipeWriter, Read, Write};
@@ -168,6 +172,23 @@ impl Run {
 struct Stop {
     stopped: Mutex<bool>,
     changed: Condvar,
+    /// Second read ends of its stdout and stderr, emptied once it's stopped
+    /// (`stop`): an answer stuck writing to a full pipe the app no longer
+    /// reads then ends, as a killed program would.
+    outputs: Mutex<Vec<PipeReader>>,
+}
+
+impl Stop {
+    /// Stops the run, as killing a program does (`tools::kill_tree`).
+    fn stop(&self) {
+        *self.stopped.lock().unwrap() = true;
+        self.changed.notify_all();
+        // What it writes from now is read and dropped, here, not by the app,
+        // which may still hold its ends without reading them.
+        for mut output in self.outputs.lock().unwrap().drain(..) {
+            std::thread::spawn(move || std::io::copy(&mut output, &mut std::io::sink()));
+        }
+    }
 }
 
 /// A point a fake waits at (`Run::hold`) until the test opens it. Clones
@@ -265,8 +286,10 @@ pub fn held_at(at: At, path: &Path) {
     }
 }
 
-/// Opens and forgets each gate held for a file in `dir` (`hold_at`): a
-/// test's end, so nothing it held waits on.
+/// Opens and forgets each gate held for a file in `dir` (`hold_at`), and
+/// forgets that a quit stopped the runs there for good (`stop_tracked_in`):
+/// a test's end, so nothing it held waits on, and the next app started on
+/// its folder runs.
 pub fn let_go(dir: &Path) {
     held().retain(|(_, path, gate)| {
         let ours = path.starts_with(dir);
@@ -275,6 +298,53 @@ pub fn let_go(dir: &Path) {
         }
         !ours
     });
+    tracking().quit.retain(|quit| !quit.starts_with(dir));
+}
+
+/// The runs the app tracks, as `tools::stop_tracked` keeps the processes.
+struct Tracking {
+    /// Each by its number: where it works (`Fakery::works_in`) and its stop.
+    runs: Vec<(u64, Vec<PathBuf>, Arc<Stop>)>,
+    /// The folders a quit stopped the runs of for good: one tracked there
+    /// from then on is stopped at once.
+    quit: Vec<PathBuf>,
+    /// The next run's number.
+    next: u64,
+}
+
+fn tracking() -> MutexGuard<'static, Tracking> {
+    static TRACKING: Mutex<Tracking> = Mutex::new(Tracking { runs: Vec::new(), quit: Vec::new(), next: 0 });
+    TRACKING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether a run working at `paths` works in `dir`.
+fn works_in(paths: &[PathBuf], dir: &Path) -> bool {
+    paths.iter().any(|path| path.starts_with(dir))
+}
+
+/// Stops each run the app tracks (`tools::Child::track`) that works in
+/// `dir`, its program or a path among its arguments there, and every one
+/// tracked there from now: what `tools::stop_tracked` does to processes as
+/// the app quits, for a test's quit, each test stopping only its own. Runs
+/// not tracked go on, as processes do.
+pub fn stop_tracked_in(dir: &Path) {
+    let stopped: Vec<Arc<Stop>> = {
+        // Under one lock with `track`'s: each run is taken here or tracked
+        // once the folder's quit is known, and so stopped there.
+        let mut tracking = tracking();
+        tracking.quit.push(dir.to_path_buf());
+        let (ours, others) = std::mem::take(&mut tracking.runs).into_iter().partition(|(_, at, _)| works_in(at, dir));
+        tracking.runs = others;
+        ours.into_iter().map(|(_, _, stop)| stop).collect()
+    };
+    for stop in stopped {
+        stop.stop();
+    }
+}
+
+/// Untracks run `run` (`tools::Tracked`, dropped).
+pub(crate) fn untrack(run: u64) {
+    tracking().runs.retain(|(n, _, _)| *n != run);
 }
 
 /// A fake's run, as `tools::Child` sees it.
@@ -282,10 +352,8 @@ struct Fakery {
     thread: Option<JoinHandle<i32>>,
     stop: Arc<Stop>,
     status: Option<ExitStatus>,
-    /// Second read ends of its stdout and stderr, emptied once it's stopped
-    /// (`kill_tree`): an answer stuck writing to a full pipe the app no
-    /// longer reads then ends, as a killed program would.
-    outputs: Vec<PipeReader>,
+    /// Where it works: its program, and its arguments as paths.
+    works_in: Vec<PathBuf>,
 }
 
 impl Running for Fakery {
@@ -295,7 +363,7 @@ impl Running for Fakery {
         }
         // These let go of first, so an answer writing to a pipe the app has
         // let go of fails, as a program's write does.
-        self.outputs.clear();
+        self.stop.outputs.lock().unwrap().clear();
         // A panic in the answer (a test's assert) ends it as a crash would.
         let code = self.thread.take().map_or(0, |t| t.join().unwrap_or(101));
         let status = exit_status(code, *self.stop.stopped.lock().unwrap());
@@ -311,18 +379,20 @@ impl Running for Fakery {
     }
 
     fn kill_tree(&mut self) {
-        *self.stop.stopped.lock().unwrap() = true;
-        self.stop.changed.notify_all();
-        // What it writes from now is read and dropped, here, not by the app,
-        // which may still hold its ends without reading them.
-        for mut output in self.outputs.drain(..) {
-            std::thread::spawn(move || std::io::copy(&mut output, &mut std::io::sink()));
-        }
+        self.stop.stop();
         let _ = self.wait();
     }
 
     fn track(&self) -> Option<Tracked> {
-        None
+        let mut tracking = tracking();
+        let run = tracking.next;
+        tracking.next += 1;
+        if tracking.quit.iter().any(|dir| works_in(&self.works_in, dir)) {
+            self.stop.stop();
+        } else {
+            tracking.runs.push((run, self.works_in.clone(), self.stop.clone()));
+        }
+        Some(Tracked::fake(run))
     }
 }
 
@@ -365,8 +435,9 @@ fn start(cmd: &Command, (answer, ended): (Arc<Answer>, Arc<AtomicBool>)) -> std:
     let thread = std::thread::Builder::new()
         .name(format!("fake {}", name.unwrap_or_default()))
         .spawn(move || answer(&mut run))?;
-    let outputs = vec![stdout_read.try_clone()?, stderr_read.try_clone()?];
-    let process = Fakery { thread: Some(thread), stop, status: None, outputs };
+    *stop.outputs.lock().unwrap() = vec![stdout_read.try_clone()?, stderr_read.try_clone()?];
+    let works_in = std::iter::once(cmd.get_program()).chain(cmd.get_args()).map(PathBuf::from).collect();
+    let process = Fakery { thread: Some(thread), stop, status: None, works_in };
     Ok(Child::new(
         Some(Box::new(stdin_write)),
         Some(Box::new(stdout_read)),

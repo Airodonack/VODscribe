@@ -1,8 +1,9 @@
 //! The app's start and quit: what each start tidies before anything runs on
-//! the library, the queues taking up what was left from last time, and what
-//! a quit leaves to the next start (lib.rs `open_library`, `tidy_at_start`,
-//! `quit`). The start is `TestApp::on`, as `open_library` runs it; the quit
-//! `TestApp::quit`. Each test is named for what it says the app does and
+//! the library, the queues taking up what was left from last time, a library
+//! it can't read in full, and what a quit leaves to the next start (lib.rs
+//! `open_at_start`, `open_library`, `tidy_at_start`, `start_queues`,
+//! `quit`). The start is `TestApp::on`, as `run` starts the app; the quit
+//! `TestApp::quit`, as lib.rs `quit` runs it. Each test is named for what it says the app does and
 //! cites where that's said.
 
 use std::path::{Path, PathBuf};
@@ -500,6 +501,75 @@ fn a_storyboard_a_quit_stopped_partway_is_made_at_the_next_start() {
     let _app = TestApp::on(app.quit());
     eventually("its storyboard made", || Storyboard::open(&board).is_ok_and(|b| b.complete()));
     assert!(Storyboard::open(&board).unwrap().made() > had);
+}
+
+// A library this version can't read in full.
+
+/// The library of an app that quit on `folder`, as a newer version left it
+/// after changing it by `sql` (`library::newer`).
+fn changed_by_a_newer_version(folder: &Folder, sql: &str) {
+    vodscribe_core::testkit::newer(&folder.paths().db(), sql);
+}
+
+/// What the page is told couldn't start with the app (`not_started`).
+fn not_started(app: &TestApp) -> serde_json::Value {
+    app.invoke("not_started", json!({})).unwrap()
+}
+
+/// A library this version can open but not read is no reason not to start:
+/// "Only tidying from here, so a library that can't be read isn't a reason
+/// not to start" (lib.rs `tidy_at_start`). One a newer version changed so
+/// that its VODs can't be read starts, its tidying done (what a site's
+/// player was fed goes) and its queues running.
+#[test]
+fn a_library_that_cannot_be_read_is_no_reason_not_to_start() {
+    let app = TestApp::new();
+    app.add_video_file("Day 3.mp4", 60.0);
+    let folder = app.quit();
+    changed_by_a_newer_version(&folder, "ALTER TABLE vods DROP COLUMN channel_url;");
+    let fed = folder.paths().temp_embed().join("1").join("1-3.mp4");
+    write(&[&fed]);
+    let app = TestApp::on(folder);
+    assert!(app.db().vods().is_err(), "its VODs can be read");
+    assert!(!fed.exists(), "the start's tidying stopped");
+    assert_eq!(not_started(&app), json!([]));
+}
+
+/// A library a newer version changed, so that this one can't read what its
+/// clips left unmade, starts without making clips, and the page is told
+/// (owner, 2026-11-11, plans/sections-074.md item 9: "a library the start
+/// can open but not read must not stop VODscribe starting"; "I often get
+/// this from opening an old version"). What else the start does goes on:
+/// a VOD removed and left to erase is erased.
+#[test]
+fn a_library_whose_clips_cannot_be_read_starts_saying_so() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    let removed = app.add_video_file("Day 4.mp4", 60.0);
+    app.holds_erasures(&Gate::new());
+    app.invoke("delete_vod", json!({ "id": removed.id })).unwrap();
+    let folder = app.kill();
+    changed_by_a_newer_version(&folder, "ALTER TABLE renders DROP COLUMN encoding;");
+    let app = TestApp::on(folder);
+    assert_eq!(not_started(&app), json!(["clips and edits"]));
+    app.erasures_done();
+    assert!(app.db().vod(removed.id).unwrap().is_none(), "the removed VOD wasn't erased");
+}
+
+/// A library a newer version changed, so that this one can't read what's
+/// left to erase, starts without erasing, and the page is told (owner,
+/// 2026-11-11, plans/sections-074.md item 9). Clips are made.
+#[test]
+fn a_library_whose_removed_vods_cannot_be_read_starts_saying_so() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let folder = app.quit();
+    changed_by_a_newer_version(&folder, "ALTER TABLE vods RENAME COLUMN pieces TO uses;");
+    let app = TestApp::on(folder);
+    assert_eq!(not_started(&app), json!(["erasing removed VODs"]));
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    assert_eq!(app.made(clip.id).status, ClipStatus::Ready);
 }
 
 // Quitting.

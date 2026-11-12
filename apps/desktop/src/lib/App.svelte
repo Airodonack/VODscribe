@@ -426,6 +426,15 @@
           }),
       )
       .catch(() => {});
+    // Work the library couldn't be read for: the rest of VODscribe goes on without it.
+    void api
+      .notStarted()
+      .then(
+        (work) =>
+          work.length > 0 &&
+          toast.error(`Part of your library couldn't be read, so these don't work: ${work.join(", ")}.`),
+      )
+      .catch(() => {});
     void getCurrentWindow()
       .show()
       .catch(() => {});

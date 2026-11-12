@@ -2,13 +2,13 @@
 
 Fakes for what's outside the app, and helpers to set up a library, so a unit or integration test does no slow I/O and decides the order things happen in. The app's own kit, `apps/desktop/src-tauri/src/testkit.rs`, runs the whole app on them.
 
-- `tools.rs`: programs faked in this process, keyed by their path; `Gate`, a point a fake waits at; and the points of the library's own code a test holds (`hold_at`).
+- `tools.rs`: programs faked in this process, keyed by their path; `Gate`, a point a fake waits at; the points of the library's own code a test holds (`hold_at`); and the runs the app tracks for its quit to stop, by the folder they work in (`stop_tracked_in`).
 - `ffmpeg.rs`: a fake ffmpeg: details, cuts and renders with progress, stills, the player's and the storyboards' decoding, and its failures.
 - `yt_dlp.rs`: a fake yt-dlp: a VOD's details and its downloads, as the site serves them.
 - `worker.rs`: a fake transcription worker: the words it's told are said.
 - `media.rs`: the fake media files the fakes write and read, and the frames they decode.
 - `net.rs`: recorded answers for links.
-- `library.rs`: a library in a folder of its own, and VODs and words put in it; older libraries: one at any format, one taken back to a format, and those releases left.
+- `library.rs`: a library in a folder of its own, and VODs and words put in it; older libraries: one at any format, one taken back to a format, and those releases left; and one a newer version changed.
 - `tests.rs`: the kit's own tests, each fake beside the real program where it's installed.
 
 ## Writing a test
@@ -52,7 +52,10 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `invoke("cancel_job", json!({ "kind": "clip", "id": id }))` calls a command as the page does, with its arguments in camelCase; `invoke_bytes` for one that answers in bytes (`player_still`). Call the command's Rust function through `app.run(...)` when the test needs its typed answer.
 - `heard("clip")` gives the events the page heard, in order.
 - `desktop()` tells what the file manager was asked to show or open.
-- `quit()` quits as closing the window does, and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's tidying, then the queues taking up what was left, the storyboards' sweep among them.
+- `quit()` quits as closing the window does (lib.rs `quit`, which stops what this test's app started and nothing of another test's), and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's own steps (lib.rs `open_at_start`: the library opened and settled), its tidying, then the queues taking up what was left, the storyboards' sweep among them.
+- `TestApp::on(folder)` starts on any library: one that won't open starts on the recovery screen, with no state but `library_problem`'s, and one it can't read in full starts saying what didn't (`invoke("not_started")`).
+- `TestApp::on_with(folder, |fakes| fakes.ffmpeg.holds_at(0.25, &gate))` tells the fakes what to do before the start does anything with them: a cut left unmade is held as it begins again.
+- `invoke("quit_app")` (Ctrl+Q) ends the app as its event loop's end would, which Tauri's mock runtime can't; `exited()` then gives the code it ended with and its `Folder`.
 - `drag_out(&[ids])` drags clips out of the window as the page does, and `drags().last()` is the drag. No system drag begins. `drag_ended()` waits for what the page hears at its end.
 - `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
@@ -169,6 +172,7 @@ let db = Db::open(&path).unwrap(); // upgraded from 29
 
 - `at_version(path, n)` makes a library at format `n`, for rows written as that version wrote them.
 - `back_to(path, n)` takes a library this version made, with rows put in through `Db`, back to format `n`: each table's rows in the columns format `n` has, with its triggers and search index. Close the library first; its connection is at format `n`, for changing rows as that version would.
+- `newer(path, "ALTER TABLE renders DROP COLUMN encoding;")` takes a library this version made to the next format, as a newer version that changed it so would leave it: `Db::open` opens it as it is.
 - `Released::new("0.5.1")` copies the library and settings file that release left (tests/e2e/fixtures) into a folder of the test's own, as `library` and `settings`. `Released::versions()` lists the releases there. A file's path in the library keeps its placeholder, `{FIXTURES}`.
 
 `db::MIGRATIONS` is the list `Db::open` runs, so neither needs changing when a migration is added.

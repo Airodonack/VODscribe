@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-not-started"
+description = "Enables the not_started command without any pre-configured scope."
+commands.allow = ["not_started"]
+
+[[permission]]
+identifier = "deny-not-started"
+description = "Denies the not_started command without any pre-configured scope."
+commands.deny = ["not_started"]

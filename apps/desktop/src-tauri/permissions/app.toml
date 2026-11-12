@@ -170,5 +170,6 @@ permissions = [
   "allow-set-playable",
   "allow-delete-video",
   "allow-clear-cache",
+  "allow-not-started",
   "allow-quit-app",
 ]

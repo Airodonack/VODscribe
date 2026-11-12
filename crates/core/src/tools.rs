@@ -412,7 +412,24 @@ impl Registry {
 
 /// A tracked process, untracked when dropped: held beside its `Child` (made
 /// after it, so dropped first), till it's been waited for.
-pub struct Tracked(&'static std::sync::Mutex<Registry>, u32);
+pub struct Tracked(Untrack);
+
+/// What a `Tracked` takes out of its registry when it's dropped.
+enum Untrack {
+    /// A process, by its id.
+    Process(&'static std::sync::Mutex<Registry>, u32),
+    /// A run of a test's fake, by its number (`testkit::tools::track`).
+    #[cfg(any(test, feature = "testkit"))]
+    Fake(u64),
+}
+
+impl Tracked {
+    /// The tracked run `run` of a test's fake.
+    #[cfg(any(test, feature = "testkit"))]
+    pub(crate) fn fake(run: u64) -> Self {
+        Tracked(Untrack::Fake(run))
+    }
+}
 
 /// Tracks `child` (made by `command`) until the returned guard is dropped.
 pub fn track(child: &std::process::Child) -> Tracked {
@@ -430,12 +447,16 @@ fn track_in(registry: &'static std::sync::Mutex<Registry>, child: &std::process:
     if stopping {
         stop_ids(&[child.id()]);
     }
-    Tracked(registry, child.id())
+    Tracked(Untrack::Process(registry, child.id()))
 }
 
 impl Drop for Tracked {
     fn drop(&mut self) {
-        self.0.lock().unwrap().ids.retain(|&id| id != self.1);
+        match self.0 {
+            Untrack::Process(registry, id) => registry.lock().unwrap().ids.retain(|&i| i != id),
+            #[cfg(any(test, feature = "testkit"))]
+            Untrack::Fake(run) => crate::testkit::tools::untrack(run),
+        }
     }
 }
 
@@ -583,7 +604,8 @@ pub(crate) trait Running: Send {
     fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>>;
     /// Stops it and all it started, and waits till they're gone (`kill_tree`).
     fn kill_tree(&mut self);
-    /// `track`; None for a fake, which quitting needn't stop.
+    /// `track`; for a test's fake, tracked as the test's own
+    /// (`testkit::tools::stop_tracked_in`).
     fn track(&self) -> Option<Tracked>;
 }
 
