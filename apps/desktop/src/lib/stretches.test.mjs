@@ -191,3 +191,73 @@ test("the Transcribe menu offers each stretch once, near the end as well", () =>
   // With no length known, nothing reaches the end but to the end.
   assert.equal(offered(600, null).length, 5);
 });
+
+/**
+ * stretches.ts `covered`: "The ranges `stretches` transcribed, in order and
+ * apart: the done ones, and what requests have reached".
+ */
+test("covered ranges come in time order, whatever order the stretches are in", () => {
+  assert.deepEqual(covered([stretch(300, 400), stretch(0, 60), stretch(120, 180)]), [
+    [0, 60],
+    [120, 180],
+    [300, 400],
+  ]);
+  assert.deepEqual(covered([]), []);
+});
+
+/** stretches.ts `covered`: "what requests have reached" (a request that has reached nothing has covered nothing). */
+test("a request that hasn't reached anything covers nothing, one that has covers as far as it reached", () => {
+  assert.deepEqual(covered([stretch(0, 600, "queued"), stretch(100, 200, "downloading", null)]), []);
+  assert.deepEqual(covered([stretch(100, 200, "transcribing", 100)]), [], "reached its own start");
+  assert.deepEqual(covered([stretch(100, 200, "transcribing", 130), stretch(300, null, "paused", 340)]), [
+    [100, 130],
+    [300, 340],
+  ]);
+  assert.deepEqual(covered([stretch(100, 200, "error", 150)]), [[100, 150]]);
+});
+
+/** stretches.ts `covered`: "ranges this close (EDGE) count as touching", and ranges that overlap are one. */
+test("stretches that overlap are covered as one range", () => {
+  assert.deepEqual(covered([stretch(0, 100), stretch(50, 80), stretch(90, 150)]), [[0, 150]]);
+  assert.deepEqual(covered([stretch(0, null), stretch(500, 700)]), [[0, Infinity]]);
+});
+
+/**
+ * 0.7.1 Fixes: "The Transcribe menu lists each stretch once. Near a VOD's end,
+ * lengths that would run past the end are left out, as To the end covers them."
+ */
+test("near the end, the menu offers only what reaches the end once, as to the end", () => {
+  /** @param {number} from @param {number | null} duration */
+  const keys = (from, duration) => transcribeChoices(from, duration).map((c) => c.key);
+  assert.deepEqual(keys(7000, 7200), ["end", "whole"], "even 5 min would run past the end");
+  assert.deepEqual(keys(6000, 7200), ["300", "900", "end", "whole"], "an hour runs past it, 15 min doesn't");
+  assert.deepEqual(keys(0, null), ["300", "900", "3600", "whole"], "from the start the whole VOD is all of it");
+});
+
+/**
+ * stretches.ts `gaps`: "The parts of a VOD that `stretches` don't cover, split
+ * where requests will transcribe them, in time order."
+ */
+test("gaps come in time order, whatever order the requests are in", () => {
+  const late = stretch(400, 500, "queued");
+  const early = stretch(100, 200, "queued");
+  assert.deepEqual(spans(gaps([late, early], 600)), [
+    [0, 100, null],
+    [100, 200, "queued"],
+    [200, 400, null],
+    [400, 500, "queued"],
+    [500, null, null],
+  ]);
+});
+
+/** stretches.ts `EDGE`: "Ranges this close count as touching". */
+test("what's left within half a second of the start or of a request's edge isn't a gap of its own", () => {
+  // Transcribed from 0.3: the 0.3 s before it touches the start.
+  assert.deepEqual(spans(gaps([stretch(0.3, 600)], 600)), []);
+  // A request starting 0.3 s into the gap takes all of it; one ending 0.2 s short of the end leaves nothing after.
+  assert.deepEqual(spans(gaps([stretch(0.3, 100, "queued")], 600)), [
+    [0, 100, "queued"],
+    [100, null, null],
+  ]);
+  assert.deepEqual(spans(gaps([stretch(0, 599.8, "queued")], 600)), [[0, 599.8, "queued"]]);
+});

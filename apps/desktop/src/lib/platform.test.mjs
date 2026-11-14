@@ -11,6 +11,7 @@ import {
   keepsVideo,
   videoSize,
   formatFraction,
+  formatSpan,
   formatTime,
   isTwitchClip,
   labelOf,
@@ -198,4 +199,22 @@ test("a Twitch id loses its v only before a number, never a clip's slug's", () =
 test("times as the app says them", () => {
   assert.equal(formatTime(5025), "1:23:45");
   assert.equal(formatTime(65), "1:05");
+});
+
+/**
+ * "3725 -> "1:02:05", 65 -> "1:05"" (platform.ts `formatTime`'s doc comment):
+ * the hours only from an hour on, minutes and seconds then two digits each.
+ */
+test("a time shows its hours only from an hour on, with two digits for minutes and seconds then", () => {
+  assert.equal(formatTime(3725), "1:02:05");
+  assert.equal(formatTime(65), "1:05");
+  assert.equal(formatTime(0), "0:00");
+  assert.equal(formatTime(3600), "1:00:00");
+  assert.equal(formatTime(3599), "59:59");
+});
+
+/** "From `start` to `end`: 65, 130 -> "1:05–2:10"" (platform.ts `formatSpan`'s doc comment). */
+test("a span is its two times with an en dash between", () => {
+  assert.equal(formatSpan(65, 130), "1:05\u20132:10");
+  assert.equal(formatSpan(0, 3725), "0:00\u20131:02:05");
 });

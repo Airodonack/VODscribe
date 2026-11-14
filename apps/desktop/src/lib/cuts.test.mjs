@@ -44,15 +44,22 @@ register("data:text/javascript," + encodeURIComponent(hooks), import.meta.url);
 const sent = [];
 /** @type {(() => void)[] | null} */
 let held = null;
+/** Whether the app refuses the cuts asked for, and how many marks it has made. */
+let failing = false;
+let made = 0;
 /** @type {(id: number, start: number, kind: string) => Promise<unknown>} */
-const addMark = (id, start, kind) => answer({ id: sent.length + 1, start, kind, text: null }, ["add", start]);
+const addMark = (id, start, kind) =>
+  failing
+    ? (sent.push(["add", start]), Promise.reject(new Error("the app refused")))
+    : answer({ id: ++made, start, kind, text: null }, ["add", start]);
 globalThis.fake = {
   api: {
     listMarks: async () => [],
     editMarks: async () => [],
     addEditMark: addMark,
     addMark,
-    moveMark: async () => {},
+    /** @param {number} _id @param {number} start */
+    moveMark: async (_id, start) => void sent.push(["move", start]),
     deleteMark: async () => {},
   },
 };
@@ -82,6 +89,7 @@ async function fresh(kind = "edit") {
   cuts.openDoc({ kind, id: ++opened });
   await settle();
   sent.length = 0;
+  failing = false;
   cuts.fps = 30;
 }
 
@@ -146,4 +154,198 @@ test(", and . move a piece's edge a frame, on the grid, inside its VOD and half 
   assert.deepEqual(edgeNudged(range, "end", 50, 25), { start: 10, end: 20.5 });
   assert.deepEqual(edgeNudged(range, "start", -1000, 25), { start: 0, end: 20 });
   assert.deepEqual(edgeNudged(range, "start", 1000, 25), { start: 19.5, end: 20 });
+});
+
+/**
+ * cuts.svelte.ts `cutSelection`: "Cuts both ends of the selection, which then
+ * goes (the stretch between the cuts shows it); returns that stretch, from
+ * cut to cut. With `length`, an end at the start or the end of what plays (an
+ * edit's) is no place for a cut and gets none."
+ */
+test("Split on a selection cuts both its ends, but not an end at the start or end of an edit", async () => {
+  await fresh("vod");
+  cuts.selection = { start: 2, end: 5 };
+  assert.deepEqual(await cuts.cutSelection(), { start: 2, end: 5 });
+  assert.deepEqual(sent, [
+    ["add", 2],
+    ["add", 5],
+  ]);
+  assert.equal(cuts.selection, null, "the selection goes");
+
+  await fresh("edit");
+  cuts.selection = { start: 0, end: 5 };
+  assert.deepEqual(await cuts.cutSelection(20), { start: 0, end: 5 });
+  cuts.selection = { start: 8, end: 20 };
+  assert.deepEqual(await cuts.cutSelection(20), { start: 8, end: 20 });
+  assert.deepEqual(sent, [
+    ["add", 5],
+    ["add", 8],
+  ]);
+});
+
+/** cuts.svelte.ts's doc: "Split (B) puts one where the playhead is (or takes away the one there)." */
+test("Split where a cut is takes it away, and where none is puts one", async () => {
+  await fresh("vod");
+  await cuts.toggle(4, 30);
+  assert.equal(cuts.list.length, 1);
+  await cuts.toggle(4, 30);
+  await settle();
+  assert.equal(cuts.list.length, 0);
+  assert.deepEqual(sent, [["add", 4]], "taking it away asks for no cut");
+});
+
+/** cuts.svelte.ts `setEdge`: "Moves the selection's `edge` to `time`; dragged past the other edge, it becomes that one." */
+test("an edge of the selection dragged past the other becomes that other edge", async () => {
+  await fresh();
+  cuts.selection = { start: 2, end: 5 };
+  cuts.setEdge("start", 8);
+  assert.deepEqual([cuts.selection, cuts.selectedEdge], [{ start: 5, end: 8 }, "end"]);
+  cuts.setEdge("end", 1);
+  assert.deepEqual([cuts.selection, cuts.selectedEdge], [{ start: 1, end: 5 }, "start"]);
+  cuts.setEdge("end", 7);
+  assert.deepEqual([cuts.selection, cuts.selectedEdge], [{ start: 1, end: 7 }, "end"]);
+});
+
+/** cuts.svelte.ts `toggle`'s doc: "Puts a mark on the frame showing at `time` (selected, if `select`)". */
+test("a cut put by Split is selected, but the cuts a selection's Split makes are not", async () => {
+  await fresh("vod");
+  await cuts.toggle(4, 30);
+  assert.equal(cuts.selected, cuts.list[0].id);
+  cuts.selected = null;
+  cuts.selection = { start: 8, end: 9 };
+  await cuts.cutSelection();
+  assert.equal(cuts.selected, null);
+});
+
+/** 0.7.1 Fixes: "B twice quickly makes one cut. It made two on the same frame." (two frames are two cuts) */
+test("Split pressed on two frames before either cut is made makes a cut on each", async () => {
+  await fresh("vod");
+  hold();
+  const both = [cuts.toggle(4, 30), cuts.toggle(5, 30)];
+  release();
+  await Promise.all(both);
+  assert.deepEqual(sent, [
+    ["add", 4],
+    ["add", 5],
+  ]);
+  assert.equal(cuts.list.length, 2);
+});
+
+/** cuts.svelte.ts's doc: "Split (B) puts one where the playhead is (or takes away the one there)." */
+test("Split on a frame again after its cut was made and taken away makes a cut again", async () => {
+  await fresh("vod");
+  await cuts.toggle(4, 30);
+  await cuts.toggle(4, 30);
+  await settle();
+  await cuts.toggle(4, 30);
+  assert.equal(cuts.list.length, 1);
+  assert.deepEqual(sent, [
+    ["add", 4],
+    ["add", 4],
+  ]);
+});
+
+/** cuts.svelte.ts `Cuts.error`: "What last went wrong, if anything: shown as a toast". */
+test("a cut the app refuses isn't listed, says what went wrong, and Split can ask again", async () => {
+  await fresh("vod");
+  failing = true;
+  await cuts.toggle(4, 30);
+  assert.equal(cuts.list.length, 0);
+  assert.match(cuts.error ?? "", /the app refused/);
+  failing = false;
+  await cuts.toggle(4, 30);
+  assert.equal(cuts.list.length, 1);
+  assert.equal(cuts.error, null, "put right, the error goes");
+});
+
+/** cuts.svelte.ts `toggle`: "Another VOD or edit open by now: the mark is that one's, not to select here." */
+test("a cut made after another VOD was opened isn't listed or selected there", async () => {
+  await fresh("vod");
+  hold();
+  const first = cuts.toggle(4, 30);
+  cuts.openDoc({ kind: "vod", id: ++opened });
+  release();
+  await first;
+  await settle();
+  assert.equal(cuts.list.length, 0);
+  assert.equal(cuts.selected, null);
+});
+
+/** cuts.svelte.ts `cutSelection`: "With `length`, an end at the start or the end of what plays (an edit's) is no place for a cut". */
+test("Split on a selection from the very start of a VOD, which plays no edit's length, cuts there too", async () => {
+  await fresh("vod");
+  cuts.selection = { start: 0, end: 5 };
+  await cuts.cutSelection();
+  assert.deepEqual(sent, [
+    ["add", 0],
+    ["add", 5],
+  ]);
+});
+
+/** cuts.svelte.ts `cutSelection`: "Another VOD or edit opened meanwhile: its own marks aren't cut, nor is a clip made." */
+test("Split on a selection while another VOD is opened makes no more cuts and no stretch", async () => {
+  await fresh("vod");
+  cuts.selection = { start: 2, end: 5 };
+  hold();
+  const split = cuts.cutSelection();
+  cuts.openDoc({ kind: "vod", id: ++opened });
+  release();
+  assert.equal(await split, null);
+  await settle();
+  assert.deepEqual(sent, [["add", 2]], "the second end isn't cut");
+});
+
+/** cuts.svelte.ts's doc: "A selected mark moves by frames with , and ." */
+test("a selected mark moves a frame on, is saved there and the new time comes back", async () => {
+  await fresh("vod");
+  await cuts.toggle(4, 30);
+  sent.length = 0;
+  const to = cuts.nudgeSelected(1, 30, 60);
+  assert.equal(to, 121 / 30);
+  assert.equal(cuts.list[0].start, 121 / 30);
+  assert.deepEqual(sent, [["move", 121 / 30]]);
+  cuts.selected = null;
+  assert.equal(cuts.nudgeSelected(1, 30, 60), null, "nothing selected, nothing moves");
+});
+
+/** cuts.svelte.ts `nudgeSelected`: "Moves the selected mark, or the selection's selected edge, `frames` frames". */
+test("a selection's selected edge moves a frame away from the other edge", async () => {
+  await fresh();
+  cuts.selection = { start: 1, end: 5 };
+  cuts.selectedEdge = "start";
+  assert.equal(cuts.nudgeSelected(1, 30, 60), 31 / 30);
+  assert.deepEqual(cuts.selection, { start: 31 / 30, end: 5 });
+  cuts.selectedEdge = "end";
+  assert.equal(cuts.nudgeSelected(-1, 30, 60), 149 / 30);
+  assert.deepEqual(cuts.selection, { start: 31 / 30, end: 149 / 30 });
+});
+
+/** cuts.svelte.ts `edgeNudged`: "inside the VOD and half a second long at least". */
+test(", on a piece's end never leaves it shorter than half a second", () => {
+  assert.deepEqual(edgeNudged({ start: 10, end: 20, max: 20.5 }, "end", -1000, 25), { start: 10, end: 10.5 });
+});
+
+/** cuts.svelte.ts `cutSelection`'s answer is the stretch "or null": with nothing selected there is none and no cut is asked for. */
+test("Split with nothing selected cuts nothing", async () => {
+  await fresh("vod");
+  assert.equal(await cuts.cutSelection(), null);
+  assert.deepEqual(sent, []);
+});
+
+/** cuts.svelte.ts `setEdge`: "Moves the selection's `edge`": with no selection there is none to move. */
+test("an edge set with no selection makes no selection", async () => {
+  await fresh();
+  cuts.setEdge("start", 3);
+  assert.equal(cuts.selection, null);
+  assert.equal(cuts.selectedEdge, null);
+});
+
+/** cuts.svelte.ts's doc: "A selected mark moves by frames with , and ." (a selection with no edge selected stays as it is) */
+test(", and . move the selected mark, not a selection whose edge isn't selected", async () => {
+  await fresh("vod");
+  await cuts.toggle(4, 30);
+  cuts.selection = { start: 10, end: 12 };
+  cuts.selected = cuts.list[0].id;
+  assert.equal(cuts.nudgeSelected(1, 30, 60), 121 / 30);
+  assert.deepEqual(cuts.selection, { start: 10, end: 12 });
 });

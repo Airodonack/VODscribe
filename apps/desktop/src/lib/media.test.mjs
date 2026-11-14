@@ -5,6 +5,7 @@ import {
   columns,
   cueAt,
   edgeIndex,
+  edgeShows,
   frameIndex,
   isUnplayable,
   unplayable,
@@ -198,4 +199,69 @@ test("a stretch of an edit's timeline starts in the VOD of the piece it starts i
   // At a join: the next piece's start.
   assert.deepEqual(inEdit(pieces, 8, 9), { vodId: 2, start: 100, end: 101 });
   assert.equal(inEdit(pieces, 13, 14), undefined);
+});
+
+/**
+ * 0.4.1 Fixes: "Videos at 23.976, 29.97 or 59.94 frames a second showed one
+ * frame twice every few minutes, and stepping frame by frame drifted."
+ */
+test("stepping frame by frame at 23.976, 29.97 or 59.94 shows each frame once, never twice or skipped", () => {
+  for (const fps of [24000 / 1001, 30000 / 1001, 60000 / 1001]) {
+    // Two hours of frames, forward then all the way back.
+    const frames = Math.round(2 * 3600 * fps);
+    let t = 0;
+    for (let k = 1; k <= frames; k++) {
+      t = stepTime(t, 1, fps);
+      assert.equal(frameIndex(t, fps), k, `${fps}: stepped forward to frame ${k}`);
+    }
+    for (let k = frames - 1; k >= 0; k--) {
+      t = stepTime(t, -1, fps);
+      assert.equal(frameIndex(t, fps), k, `${fps}: stepped back to frame ${k}`);
+    }
+  }
+});
+
+/**
+ * 0.5.0: "Dragging a selection's edge shows that frame. For the end, it's the
+ * last frame inside the selection, which the player shows too." (media.ts
+ * `edgeShows`: "its start's frame, or for its end the frame before".)
+ */
+test("a selection's start edge shows its own frame and its end edge the last frame inside it", () => {
+  const fps = 30;
+  assert.equal(edgeShows("start", 10, fps), 10);
+  assert.equal(edgeShows("end", 10, fps), 299 / 30, "an end on a frame's start: the frame before it");
+  assert.equal(edgeShows("end", 301 / 30, fps), 10, "an end where the next frame starts: the one before it");
+  assert.equal(edgeShows("end", 0, fps), 0, "no frame before the first");
+});
+
+/** "The tick step for `span` seconds drawn `width` pixels wide, labels at least 64 px apart" (media.ts `tickStep`). */
+test("a tick step is the first that leaves 64 pixels for its label", () => {
+  assert.equal(tickStep(100, 640), 10, "10 s of 100 over 640 px is exactly 64 px");
+  assert.equal(tickStep(100, 639), 15);
+  assert.equal(tickStep(1, 64), 1, "the first step, when it fits");
+});
+
+/**
+ * media.ts `inEdit`: "Where the stretch `from`..`to` of an edit's timeline
+ * starts in its VOD, for pieces played end to end: the VOD and the stretch of
+ * it from there, no further than the span it starts in. Undefined past the
+ * edit's end."
+ */
+test("a stretch of an edit's timeline starts where the piece it falls in plays it", () => {
+  const pieces = [
+    { vod_id: 1, start: 10, end: 20, struck: [] },
+    { vod_id: 2, start: 100, end: 105, struck: [] },
+  ];
+  assert.deepEqual(inEdit(pieces, 0, 4), { vodId: 1, start: 10, end: 14 });
+  assert.deepEqual(inEdit(pieces, 4, 40), { vodId: 1, start: 14, end: 20 }, "no further than the piece's end");
+  assert.deepEqual(inEdit(pieces, 10, 12), { vodId: 2, start: 100, end: 102 }, "at the join: the next piece");
+  assert.deepEqual(inEdit(pieces, 14, 15), { vodId: 2, start: 104, end: 105 });
+  assert.equal(inEdit(pieces, 15, 16), undefined, "past the edit's end");
+  assert.equal(inEdit([], 0, 1), undefined);
+});
+
+/** media.ts `playedSpans`' and `playedLength`'s doc: what plays of `start`..`end` (less what's jumped over). */
+test("an edit's piece with nothing taken out plays from its start to its end", () => {
+  assert.deepEqual(playedSpans(2, 9, []), [[2, 9]]);
+  assert.equal(playedLength({ start: 2, end: 9, struck: [] }), 7);
 });
