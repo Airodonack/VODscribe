@@ -220,15 +220,20 @@ fn add_file(app: &AppHandle, path: &Path) -> anyhow::Result<(Vod, bool)> {
 }
 
 /// Adds the file at `path`; one in the app's own data only if it's one
-/// `received` (into the kept videos' folder).
+/// `received` (into the kept videos' folder), and one received only from
+/// where files are received (`Paths::received_incoming`), never a file
+/// elsewhere that a link there points to.
 fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
     // probe refuses network paths and non-media files before touching them.
     let info = local::probe(&ffmpeg, path)?;
     let canonical = Path::new(&info.url);
+    if received && !local::is_inside(canonical, &state.paths.received_incoming()) {
+        anyhow::bail!("{} isn't in the folder files are received into.", vodscribe_core::tools::shown(path));
+    }
     let own = local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local);
-    if own && !(received && local::is_inside(canonical, &state.paths.media())) {
+    if own && !received {
         anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
     // One transaction, so a file never shows up as an online VOD with a path for a link.

@@ -475,6 +475,81 @@ fn a_file_received_whole_and_not_yet_added_is_added_at_the_next_start() {
     eventually("its picture", || app.db().vod(added.id).unwrap().unwrap().thumb.is_some());
 }
 
+/// A small video at `at`, its folder made if need be.
+#[cfg(unix)]
+fn video(at: &Path) {
+    std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+    let mut media = vodscribe_core::testkit::Media::video(60.0);
+    let picture = media.video.as_mut().unwrap();
+    (picture.width, picture.height) = (64, 36);
+    media.write(at);
+}
+
+/// The files the VODs of `app`'s library play.
+#[cfg(unix)]
+fn vods_files(app: &TestApp) -> Vec<String> {
+    app.db().vods().unwrap().into_iter().filter_map(|v| v.source_path).collect()
+}
+
+/// A link in the folder files are received into, to a video of the user's
+/// elsewhere (a library folder restored, shared or moved), is not a file
+/// received there: the start leaves the user's file where it is, and no VOD
+/// takes it, so removing that VOD can't delete the user's only copy
+/// (receive.rs: each is "written into the kept videos' folder, under
+/// `received/incoming`", and "a file received whole but not yet added is
+/// added (`take_up`)"; vods.rs `add_local`: one received only "from where
+/// files are received").
+#[cfg(unix)]
+#[test]
+fn a_link_where_files_are_received_leaves_the_users_file_alone() {
+    let outside = vodscribe_core::testkit::TempDir::new("outside");
+    let theirs = outside.join("Videos").join("wedding.mp4");
+    video(&theirs);
+    let app = TestApp::new();
+    let folder = app.quit();
+    let incoming = folder.paths().received_incoming();
+    std::fs::create_dir_all(&incoming).unwrap();
+    let link = incoming.join("Day 6.mp4");
+    std::os::unix::fs::symlink(&theirs, &link).unwrap();
+    let app = TestApp::on(folder);
+    assert!(theirs.is_file(), "the user's file was moved into the library; its VODs play {:?}", vods_files(&app));
+    assert_eq!(vods_files(&app), Vec::<String>::new(), "a VOD took the user's file");
+    // Nor does a received file's add (a live drop's too) take one through a link.
+    assert!(crate::vods::add_received(app.handle(), &link).is_err(), "added through a link");
+    assert!(theirs.is_file(), "the add moved the user's file");
+}
+
+/// The folder files are received into, or the one they're kept in, a link
+/// to a folder of the user's: the start takes none of that folder's videos
+/// and deletes none of its files (receive.rs `tidy`, which removes "what a
+/// crash or a quit left being received", and `take_up`; `own_folder`: "a
+/// link is left alone").
+#[cfg(unix)]
+#[test]
+fn a_linked_folder_where_files_are_received_or_kept_leaves_the_users_files_alone() {
+    for linked in ["incoming", "received"] {
+        let outside = vodscribe_core::testkit::TempDir::new("outside");
+        let videos = outside.join("Videos");
+        let theirs = [videos.join("a.mp4"), videos.join("b.mp4"), videos.join("notes.txt"), videos.join("c.mp4.part")];
+        video(&theirs[0]);
+        video(&theirs[1]);
+        write(&[&theirs[2], &theirs[3]]);
+        std::fs::create_dir_all(videos.join(".dragndrop-1a2b")).unwrap();
+        let app = TestApp::new();
+        let folder = app.quit();
+        let paths = folder.paths();
+        let at = if linked == "incoming" { paths.received_incoming() } else { paths.received() };
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&at);
+        std::os::unix::fs::symlink(&videos, &at).unwrap();
+        let app = TestApp::on(folder);
+        let gone: Vec<_> = theirs.iter().filter(|f| !f.is_file()).collect();
+        assert!(gone.is_empty(), "{linked} a link: the user's {gone:?} went; VODs play {:?}", vods_files(&app));
+        assert!(videos.join(".dragndrop-1a2b").is_dir(), "{linked} a link: the user's folder went");
+        assert_eq!(vods_files(&app), Vec::<String>::new(), "{linked} a link: a VOD took the user's file");
+    }
+}
+
 /// A storyboard a quit stopped partway is made on at the next start, from
 /// what it had (owner, 2026-11-11, plans/sections-074.md 2C spec 9;
 /// storyboards.rs `sweep`: "asks for those missing, of files changed since,

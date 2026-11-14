@@ -133,10 +133,31 @@ fn part_of(path: &std::path::Path) -> std::path::PathBuf {
 /// has (a crash as its VOD was erased). One received whole in `incoming`
 /// that no VOD has (a quit or a crash before it was added) is left for
 /// `take_up`. Called at start, after `library::settle` has moved 0.7.1's
-/// received files, and before any drop.
+/// received files, and before any drop. Either folder a link to another
+/// (`own_folder`), nothing in it goes: they'd be the user's files.
 pub(crate) fn tidy(received: &std::path::Path, incoming: &std::path::Path, kept: Option<&[String]>) {
+    if !own_folder(received) {
+        return;
+    }
     tidy_in(received, kept_files(kept).as_ref());
-    tidy_in(incoming, None);
+    if own_folder(incoming) {
+        tidy_in(incoming, None);
+    }
+}
+
+/// Whether `dir` is a folder of the library's own, not a link to a folder
+/// elsewhere (a library restored or shared with one, or a junction on
+/// Windows, which `symlink_metadata` reports as a link too); a link is left
+/// alone, and said.
+fn own_folder(dir: &std::path::Path) -> bool {
+    match std::fs::symlink_metadata(dir) {
+        Ok(found) if found.file_type().is_dir() => true,
+        Ok(_) => {
+            eprintln!("{} isn't a folder of the library's own (a link?): what's in it is left alone.", dir.display());
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// The files `kept` names, as found on disk: the paths rows keep may be spelled otherwise.
@@ -148,7 +169,9 @@ fn kept_files(kept: Option<&[String]>) -> Option<std::collections::HashSet<std::
 /// whole that a quit (or a crash) stopped before it was added (left in
 /// `incoming` by `tidy`), as its drop would have (`vods::add_received`).
 /// One that can't be added goes, as then. Not while ffmpeg is missing,
-/// which reads it: they wait for a start with it.
+/// which reads it: they wait for a start with it. Only files: a link there
+/// isn't one received, and neither is what's in `incoming` if it, or
+/// `received`, is a link (`own_folder`).
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 pub(crate) fn take_up(app: &crate::AppHandle) {
     use tauri::Manager;
@@ -159,10 +182,16 @@ pub(crate) fn take_up(app: &crate::AppHandle) {
     let Ok(vods) = state.db.lock().unwrap().vods() else { return };
     let files: Vec<String> = vods.into_iter().filter_map(|v| v.source_path).collect();
     let Some(kept) = kept_files(Some(&files)) else { return };
-    let Ok(entries) = std::fs::read_dir(state.paths.received_incoming()) else { return };
+    let incoming = state.paths.received_incoming();
+    if !own_folder(&state.paths.received()) || !own_folder(&incoming) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(incoming) else { return };
     for entry in entries.flatten() {
         let (name, path) = (entry.file_name().to_string_lossy().into_owned(), entry.path());
-        let whole = !name.starts_with('.') && !name.ends_with(".part") && path.is_file();
+        // (An entry's type is its own: a link's isn't its target's.)
+        let file = entry.file_type().is_ok_and(|t| t.is_file());
+        let whole = !name.starts_with('.') && !name.ends_with(".part") && file;
         if !whole || std::fs::canonicalize(&path).is_ok_and(|p| kept.contains(&p)) {
             continue;
         }
@@ -173,18 +202,21 @@ pub(crate) fn take_up(app: &crate::AppHandle) {
     }
 }
 
+/// Removes what `tidy` says from `dir`: only files and folders, never a
+/// link (an entry's type is its own, not its target's).
 fn tidy_in(dir: &std::path::Path, kept: Option<&std::collections::HashSet<std::path::PathBuf>>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
-        if name.ends_with(".part") && path.is_file() {
+        let Ok(kind) = entry.file_type() else { continue };
+        if name.ends_with(".part") && kind.is_file() {
             let _ = std::fs::remove_file(path);
-        } else if name.starts_with(".dragndrop-") && path.is_dir() {
+        } else if name.starts_with(".dragndrop-") && kind.is_dir() {
             let _ = std::fs::remove_dir_all(path);
         } else if let Some(kept) = kept
             && !name.starts_with('.')
-            && path.is_file()
+            && kind.is_file()
             && std::fs::canonicalize(&path).is_ok_and(|p| !kept.contains(&p))
         {
             let _ = std::fs::remove_file(path);

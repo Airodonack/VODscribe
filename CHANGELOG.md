@@ -21,6 +21,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Unreadable settings are kept, not overwritten. A settings file that can't be read is set aside beside your library, and VODscribe says so.
   - Captions show a stretch just transcribed. Captions read just before a stretch finished no longer replace the newer ones.
   - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".
+  - A linked folder's files stay put. VODscribe no longer takes or deletes your files at start when a folder in its library is a link to one of yours.
   - Stopping a transcription could freeze VODscribe. It could happen while another VOD was being removed.
 
 ## 0.7.3 — 2026-11-08
