@@ -409,11 +409,22 @@ pub(crate) async fn video_downloads(state: State<'_, AppState>) -> CmdResult<Vec
 }
 
 /// Deletes every downloaded video, keeping the transcripts: they then play on
-/// their sites. Downloads under way stop. Videos still needed to transcribe
-/// their VOD stay; returns how many.
+/// their sites. Downloads under way stop, and so does transcribing from a
+/// video, keeping the lines so far, as the row's Delete video does
+/// (`vods::cancel_and_wait`). A video whose transcription is still stopping
+/// stays; returns how many.
 #[tauri::command]
 pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>) -> CmdResult<usize> {
     state.videos.stop_all(&app);
+    let transcribing: Vec<i64> = {
+        let vods = state.db.lock().unwrap().vods().map_err(err)?;
+        vods.into_iter().filter(|v| v.media && crate::vods::busy(v.status)).map(|v| v.id).collect()
+    };
+    for id in transcribing {
+        let handle = app.clone();
+        // Still stopping, it's kept, below.
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::vods::cancel_and_wait(&handle, id)).await;
+    }
     let mut kept = 0;
     let mut gone = Vec::new();
     {

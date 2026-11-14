@@ -63,6 +63,10 @@ pub struct Worker {
     /// The stages' threads, for `close` to wait for.
     #[cfg(test)]
     threads: Mutex<Vec<std::thread::JoinHandle<()>>>,
+    /// For the tests: the next `control` or `control_vod` waits here, the
+    /// queue locked (`holds_next_control`).
+    #[cfg(test)]
+    held_control: Mutex<Option<vodscribe_core::testkit::Gate>>,
 }
 
 /// Keeps the queue held until dropped; see `Worker::hold`.
@@ -112,6 +116,8 @@ impl Worker {
             queue,
             #[cfg(test)]
             threads: Mutex::new(threads),
+            #[cfg(test)]
+            held_control: Mutex::default(),
         })
     }
 
@@ -192,12 +198,32 @@ impl Worker {
         (Hold(self), running)
     }
 
+    /// For the tests: the next `control` or `control_vod` waits at `gate`
+    /// with the queue locked, once, so a test sees which locks it holds.
+    #[cfg(test)]
+    pub(crate) fn holds_next_control(&self, gate: &vodscribe_core::testkit::Gate) {
+        *self.held_control.lock().unwrap() = Some(gate.clone());
+    }
+
+    /// The queue's lock, for `control` and `control_vod`.
+    fn lock_to_control(&self) -> std::sync::MutexGuard<'_, Queue> {
+        let queue = self.queue.lock().unwrap();
+        #[cfg(test)]
+        if let Some(gate) = self.held_control.lock().unwrap().take() {
+            gate.wait();
+        }
+        queue
+    }
+
     /// Applies `reason` to request `stretch_id`. If a stage is running it,
     /// the stage is told to stop and finishes the stop itself; otherwise
     /// `idle` runs, with the queue locked so no stage can start it meanwhile.
-    /// Returns whether a stage was running it.
+    /// Returns whether a stage was running it. A caller whose `idle` uses
+    /// the library takes the library's lock first, then calls this: the
+    /// library's lock before the queue's, everywhere (an erasure holds the
+    /// library and then controls its VOD, `vods::erase_unused`).
     pub fn control(&self, stretch_id: i64, reason: Stop, idle: impl FnOnce() -> Result<()>) -> Result<bool> {
-        let queue = self.queue.lock().unwrap();
+        let queue = self.lock_to_control();
         if let Some(job) = queue.jobs.iter().find(|j| j.stretch_id == stretch_id) {
             job.stop(reason);
             return Ok(true);
@@ -210,9 +236,10 @@ impl Worker {
     /// stages finish those stops themselves), then runs `idle` with the
     /// running ones' ids, with the queue locked so no stage can start
     /// another of the VOD's meanwhile: it does to the rest what's wanted.
-    /// Returns whether a stage was running one.
+    /// Returns whether a stage was running one. The library's lock is
+    /// taken before this, as for `control`.
     pub fn control_vod(&self, vod_id: i64, reason: Stop, idle: impl FnOnce(&[i64]) -> Result<()>) -> Result<bool> {
-        let queue = self.queue.lock().unwrap();
+        let queue = self.lock_to_control();
         let mut running = Vec::new();
         for job in queue.jobs.iter().filter(|j| j.vod_id == vod_id) {
             job.stop(reason);

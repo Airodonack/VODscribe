@@ -8,7 +8,7 @@ Fakes for what's outside the app, and helpers to set up a library, so a unit or 
 - `worker.rs`: a fake transcription worker: the words it's told are said.
 - `media.rs`: the fake media files the fakes write and read, and the frames they decode.
 - `net.rs`: recorded answers for links.
-- `library.rs`: a library in a folder of its own, and VODs and words put in it; older libraries: one at any format, one taken back to a format, and those releases left; and one a newer version changed.
+- `library.rs`: a library in a folder of its own, VODs and words put in it, and a connection of its own beside the app's; older libraries: one at any format, one taken back to a format, and those releases left; and one a newer version changed.
 - `tests.rs`: the kit's own tests, each fake beside the real program where it's installed.
 
 ## Writing a test

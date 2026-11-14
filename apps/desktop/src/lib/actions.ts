@@ -151,8 +151,12 @@ export async function confirmRemove(vods: Vod[], gone: Edit[]): Promise<{ delete
   ].map((e) => `“${e.title}”`);
   if (!using.length)
     return (await ask(`Remove ${what}?${vodText}${editText}`, "Remove", "Keep")) ? { deleteVideo: false } : null;
+  const whose = single ? "Its" : "Their";
   const answer = await choose(
-    `Remove ${what}?${vodText}${editText} ${single ? "Its" : "Their"} pieces in ${using.length === 1 ? "the edit" : "the edits"} ${listed(using)} stay: removed from the library, ${single ? "its video stays" : "their videos stay"} on this computer for them; deleted, only the stretches they use are kept.`,
+    `Remove ${what}? ${whose} clips leave VODscribe (their files stay in your Videos folder), and transcribing ${single ? "it" : "them"} stops.${editText} ` +
+      `${whose} pieces in ${listed(using)} stay. ` +
+      `${REMOVE} keeps ${single ? "its video and transcript" : "their videos and transcripts"}. ` +
+      `${DELETE} keeps only what ${using.length === 1 ? "the edit uses" : "the edits use"}.`,
     REMOVE,
     DELETE,
     "Keep",

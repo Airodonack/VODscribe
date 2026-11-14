@@ -5,6 +5,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.4 (unreleased)
 
 - Delete video works during a transcription. The transcription stops first, keeping what's transcribed so far.
+- Removing a VOD ends its transcription. What's transcribed so far is kept, even where an edit uses it.
+- Delete all videos stops their transcriptions. What's transcribed so far is kept, as with a row's Delete video.
 - Unfinished work carries on after a restart. Video and footage downloads, edits being rendered, files from other apps and the thumbnails shown when scrubbing pick up where a quit or a crash stopped them.
 - Fixes:
   - Marks can't go past the end. A cut, chapter or highlight placed or moved past the end of a video is refused, as one before its start already was.
@@ -18,6 +20,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Unreadable settings are kept, not overwritten. A settings file that can't be read is set aside beside your library, and VODscribe says so.
   - Captions show a stretch just transcribed. Captions read just before a stretch finished no longer replace the newer ones.
   - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".
+  - Stopping a transcription could freeze VODscribe. It could happen while another VOD was being removed.
 
 ## 0.7.3 — 2026-11-08
 

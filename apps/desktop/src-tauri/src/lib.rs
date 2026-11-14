@@ -346,6 +346,7 @@ fn start_queues(app: &AppHandle, sections: &[(i64, f64, f64)]) {
     };
     // First, so the queues' first news (what's left from last time) is heard.
     started("the list of jobs", state.job_list.run(app.clone()));
+    vods::end_unlisted_requests(app);
     // (A test may hold the worker's start, as a busy start would hold it.)
     #[cfg(test)]
     match crate::testkit::worker_start_held(&state.paths.clips()) {

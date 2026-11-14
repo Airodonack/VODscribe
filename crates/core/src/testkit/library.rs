@@ -160,6 +160,13 @@ pub fn said(start: f64, text: &str) -> Vec<Word> {
         .collect()
 }
 
+/// A connection of its own to the library at `path`, open beside the app's:
+/// for a test to change what the library allows, as a trigger that refuses
+/// a change does, the way a full or failing disk would refuse it.
+pub fn beside(path: &Path) -> Connection {
+    Connection::open(path).unwrap()
+}
+
 /// A new library at `path` at format `version`, as a VODscribe whose newest
 /// migration was that one made it: the first `version` migrations
 /// (`db::MIGRATIONS`) run and `user_version` set, no rows. The test puts

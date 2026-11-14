@@ -379,9 +379,11 @@ async fn erase_in_parts(
 
 /// Takes VOD `id` out of the library's list: its own clip goes, with its
 /// marks and its clip bar (the clips' files too, unless dragged out of the
-/// app), and its download or transcription stops where it is. What other
-/// clips use of it stays, a source only, until nothing does; if nothing
-/// does now, it's erased at once, a job beside the encodes (`Sweeper`).
+/// app), and its download stops where it is. Its transcription, started
+/// from it, ends, whatever uses it: each request is canceled, its lines so
+/// far kept, as Stop does (`cancel_requests`). What other clips use of it
+/// stays, a source only, until nothing does; if nothing does now, it's
+/// erased at once, a job beside the encodes (`Sweeper`).
 ///
 /// With `delete_video`, it's erased now: first each stretch other clips use
 /// is realized (`realize_all`); if one can't be (offline, a full disk),
@@ -415,11 +417,16 @@ pub(crate) async fn delete_vod(
             crate::clips::remove(&app, &db, clip.id)?;
         }
         db.remove_entry(id)?;
-        state.worker.control_vod(id, Stop::Pause, |_| Ok(()))?;
         anyhow::Ok(())
     })();
     state.clips.vod_removed(&state.db.lock().unwrap(), id);
     removed.map_err(err)?;
+    // Failing, it's out of the list all the same: no stage takes a request
+    // of a VOD out of it (`Db::next_stretch`), and the next start ends them
+    // (`end_unlisted_requests`).
+    if let Err(e) = cancel_requests(&state, id, |_| true) {
+        eprintln!("VOD {id}'s requests: {e:#}");
+    }
     let mut erased = false;
     if delete_video {
         // Its chat and transcript a part at a time, then the rest; one whose
@@ -439,6 +446,24 @@ pub(crate) async fn delete_vod(
     }
     crate::page::emit(&app, "vod-removed", id);
     Ok(None)
+}
+
+/// At start, before the queue runs: the requests an older version left
+/// paused or waiting on VODs out of the list (it paused them as they were
+/// removed) are ended, their lines so far kept, as Remove now does. Only
+/// tidying: an error is said, and passed over; no stage takes them meanwhile
+/// (`Db::next_stretch`).
+pub(crate) fn end_unlisted_requests(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let vods = match state.db.lock().unwrap().vods() {
+        Ok(vods) => vods,
+        Err(e) => return eprintln!("VODs out of the list: {e:#}"),
+    };
+    for vod in vods.into_iter().filter(|v| !v.listed) {
+        if let Err(e) = cancel_requests(&state, vod.id, |_| true) {
+            eprintln!("VOD {}'s requests: {e:#}", vod.id);
+        }
+    }
 }
 
 /// Erases VOD `id`'s files, footage and pictures (its transcript and chat
@@ -541,7 +566,7 @@ pub(crate) struct Sweep {
 }
 
 /// How long an erasure waits for the VOD's download or transcription to
-/// stop (paused as it was removed) before leaving it to the next start.
+/// stop (canceled as it was removed) before leaving it to the next start.
 const WORK_STOPPING: Duration = Duration::from_secs(10);
 
 /// The sources nothing uses (`Db::unused_sources`) erased one at a time, a
@@ -824,10 +849,11 @@ pub(crate) async fn retranscribe_vod(
 #[tauri::command]
 pub(crate) async fn pause_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // A running job is paused by its stage once its process has stopped.
+    // The library's lock before the queue's (`Worker::control`).
+    let db = state.db.lock().unwrap();
     state
         .worker
         .control_vod(id, Stop::Pause, |running| {
-            let db = state.db.lock().unwrap();
             for stretch in db.requests(id)? {
                 if !running.contains(&stretch.id) && matches!(stretch.status, Status::Queued | Status::Ready) {
                     db.set_stretch_status(stretch.id, Status::Paused, stretch.progress, None)?;
@@ -836,7 +862,7 @@ pub(crate) async fn pause_vod(app: AppHandle, state: State<'_, AppState>, id: i6
             Ok(())
         })
         .map_err(err)?;
-    emit_vod(&app, &state.db.lock().unwrap(), id)
+    emit_vod(&app, &db, id)
 }
 
 #[tauri::command]
@@ -862,8 +888,9 @@ pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i
 /// told to stop (their stage ends them), the rest ended now. Returns whether
 /// one was running.
 fn cancel_requests(state: &AppState, id: i64, which: impl Fn(&Stretch) -> bool) -> anyhow::Result<bool> {
+    // The library's lock before the queue's (`Worker::control`).
+    let db = state.db.lock().unwrap();
     state.worker.control_vod(id, Stop::Cancel, |running| {
-        let db = state.db.lock().unwrap();
         for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id) && which(s)) {
             worker::cancel(&db, &state.paths, stretch.id)?;
         }
@@ -874,7 +901,7 @@ fn cancel_requests(state: &AppState, id: i64, which: impl Fn(&Stretch) -> bool) 
 /// Cancels VOD `id`'s transcription, running or waiting (a paused or failed
 /// request stays as it is), and waits till none of it is running, so
 /// nothing reads its files once this returns.
-fn cancel_and_wait(app: &AppHandle, id: i64) -> CmdResult<()> {
+pub(crate) fn cancel_and_wait(app: &AppHandle, id: i64) -> CmdResult<()> {
     let state = app.state::<AppState>();
     let began = Instant::now();
     while cancel_requests(&state, id, |s| busy(s.status)).map_err(err)? {
@@ -890,12 +917,11 @@ fn cancel_and_wait(app: &AppHandle, id: i64) -> CmdResult<()> {
 /// wrote, as `cancel_vod` does for all of a VOD's.
 #[tauri::command]
 pub(crate) async fn cancel_stretch(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let Some(vod_id) = state.db.lock().unwrap().stretch(id).map_err(err)?.map(|s| s.vod_id) else { return Ok(()) };
-    state
-        .worker
-        .control(id, Stop::Cancel, || worker::cancel(&state.db.lock().unwrap(), &state.paths, id))
-        .map_err(err)?;
-    emit_vod(&app, &state.db.lock().unwrap(), vod_id)
+    // The library's lock before the queue's (`Worker::control`).
+    let db = state.db.lock().unwrap();
+    let Some(vod_id) = db.stretch(id).map_err(err)?.map(|s| s.vod_id) else { return Ok(()) };
+    state.worker.control(id, Stop::Cancel, || worker::cancel(&db, &state.paths, id)).map_err(err)?;
+    emit_vod(&app, &db, vod_id)
 }
 
 /// Asks for `start`..`end` seconds of VOD `vod_id` (`end` None: to its end)

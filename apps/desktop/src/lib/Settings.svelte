@@ -162,7 +162,7 @@
   async function deleteAllVideos() {
     const ok = await ask(
       `Delete all downloaded videos${mediaBytes ? ` (${formatBytes(mediaBytes)})` : ""}? Transcripts and clips stay; ` +
-        "the videos play from their sites instead. Downloads under way stop.",
+        "the videos play from their sites instead. Downloads under way stop, and so does transcribing from a video, keeping what's transcribed so far.",
       "Delete videos",
       "Keep",
     );
@@ -173,7 +173,7 @@
     try {
       const kept = await api.deleteAllVideos();
       if (kept)
-        videosNote = `${kept} still being transcribed from ${kept === 1 ? "its video was" : "their videos were"} kept.`;
+        videosNote = `${kept} kept: ${kept === 1 ? "its transcription is" : "their transcriptions are"} still stopping. Try again in a moment.`;
       mediaBytes = await api.mediaSize();
     } catch (e) {
       error = String(e);

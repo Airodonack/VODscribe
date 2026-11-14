@@ -972,7 +972,7 @@ export default {
       () => app.js(`return window.__e2e.asked.length ? JSON.stringify(window.__e2e.asked.at(-1)) : null`),
       10_000,
     );
-    if (!removing.includes(`Its pieces in the edit “${NAME}” stay`))
+    if (!removing.includes(`Its pieces in “${NAME}” stay`))
       throw new Error(`removing the VOD asked ${removing}, not naming the edit`);
     if ((await app.invoke("list_vods")).length !== 1) throw new Error(`answering "Keep" removed the VOD`);
 
