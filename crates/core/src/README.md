@@ -9,9 +9,13 @@ One module per subject.
 - `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
 - `transcript.rs`: words and lines as the model gives them.
 - `fetch.rs`: a VOD's details and audio through yt-dlp.
+- [`fetch`](fetch): fetch's tests.
 - `kick.rs`: Kick's VODs, which yt-dlp can't read yet.
+- [`kick`](kick): kick's tests.
 - `twitch.rs`: Twitch clips, and a VOD's channel.
+- [`twitch`](twitch): twitch's tests.
 - `youtube.rs`: a YouTube video's channel, through oEmbed.
+- [`youtube`](youtube): youtube's tests.
 - `local.rs`: files on this computer, read in place.
 - `pipeline.rs`: gets a stretch's audio and runs the worker on it.
 - `audio.rs`: decodes any media to 16 kHz mono with ffmpeg.

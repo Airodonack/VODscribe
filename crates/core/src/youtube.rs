@@ -47,46 +47,4 @@ fn parse_channel(json: &Value, id: &str) -> Result<(String, String)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn knows_a_video_id() {
-        assert!(is_video_id("noa29qsTc4g") && is_video_id("a-b_c123456"));
-        assert!(!is_video_id("e2eolder") && !is_video_id("noa29qsTc4g?") && !is_video_id("noa29qsTc4gx"));
-    }
-
-    #[test]
-    fn reads_the_channel() {
-        let answer = |page: &str, embed: &str| {
-            json!({ "author_name": "Quill", "author_url": page,
-                "html": format!("<iframe src=\"https://www.youtube.com/embed/{embed}?feature=oembed\"></iframe>") })
-        };
-        assert_eq!(
-            parse_channel(&answer("https://www.youtube.com/@quill.tv", "aaaaaaaaaaa"), "aaaaaaaaaaa").unwrap(),
-            ("@quill.tv".into(), "https://www.youtube.com/@quill.tv".into())
-        );
-        // Another video's answer, or a channel named otherwise, isn't taken.
-        assert!(parse_channel(&answer("https://www.youtube.com/@quill", "bbbbbbbbbbb"), "aaaaaaaaaaa").is_err());
-        for page in [
-            "https://www.youtube.com/channel/UC0123456789",
-            "https://www.youtube.com/@",
-            "https://www.youtube.com/@%E5%90%8D",
-            "https://www.youtube.com/@quill/videos",
-            "https://evil.example/@quill",
-            "http://www.youtube.com/@quill",
-        ] {
-            assert!(parse_channel(&answer(page, "aaaaaaaaaaa"), "aaaaaaaaaaa").is_err(), "{page}");
-        }
-        assert!(parse_channel(&json!({ "html": "youtube.com/embed/aaaaaaaaaaa?" }), "aaaaaaaaaaa").is_err());
-    }
-
-    /// Asks YouTube for real: `cargo test -p vodscribe-core -- --ignored youtube_channel_live`.
-    #[test]
-    #[ignore = "network"]
-    fn youtube_channel_live() {
-        let id = std::env::var("VIDEO").unwrap_or_else(|_| "noa29qsTc4g".into());
-        eprintln!("{:?}", channel(&id, &AtomicBool::new(false)).unwrap());
-    }
-}
+mod tests;
