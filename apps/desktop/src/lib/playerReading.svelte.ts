@@ -11,8 +11,9 @@ interface Readable {
   playing(): boolean;
   fps?(): number | null;
   /** When its last seek's reply came (performance.now()), null while one
-   *  is out, -Infinity if it failed (the app's own player). */
-  settled?(): number | null;
+   *  is out, -Infinity if it failed (the app's own player, also drawing a
+   *  site's picture); undefined where the player doesn't say (a site's). */
+  settled?(): number | null | undefined;
   volume?: { get(): number; muted(): boolean };
   rate?: { get(): number };
 }
@@ -55,10 +56,10 @@ export class PlayerReading {
     if (off < 0.5 / this.fps) return false;
     // How long since the seek's reply came: 0 while it's out, or where the
     // player doesn't say (a site's).
-    const settled = p.settled?.() ?? null;
-    const since = settled === null ? 0 : performance.now() - settled;
+    const settled = p.settled?.();
+    const since = settled === null || settled === undefined ? 0 : performance.now() - settled;
     if (p.playing()) return (this.shown === this.left || off > 1 / this.fps + 1e-3) && since < SETTLING * 4;
-    return this.shown === this.left && p.settled !== undefined && since < SETTLING;
+    return this.shown === this.left && settled !== undefined && since < SETTLING;
   }
 
   constructor(now = 0) {

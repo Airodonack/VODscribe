@@ -128,7 +128,20 @@ export default {
       MINUTE,
     );
     ctx.log(`jumped: from ${before.toFixed(2)} s to ${jumped.time.toFixed(2)} s`);
-    ctx.log(await app.timeIsPicture("after the jump", { playing: true }));
+    // The time shown holds at the jump's time, running on with their
+    // player's clock, until a frame is drawn near it or a moment (1 s) after
+    // the app's player answered the seek (playerReading.svelte.ts `holds`);
+    // from then on it's our picture's frame.
+    const heldTill = Date.now() + 3_000;
+    for (;;) {
+      try {
+        ctx.log(await app.timeIsPicture("after the jump", { playing: true }));
+        break;
+      } catch (e) {
+        if (Date.now() > heldTill) throw e;
+        await wait(100);
+      }
+    }
     shot("jumped");
 
     // Paused from the app's controls: it stands.

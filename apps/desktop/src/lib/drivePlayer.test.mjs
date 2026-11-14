@@ -80,3 +80,16 @@ test("a playhead the page moves is remembered before the next frame", async () =
   assert.equal(nav.back.at(-1)?.left.time, 4, "the step back to it");
   assert.equal(nav.lastSeen(doc)?.time, 4, "where it reopens");
 });
+
+// A player whose `settled` says undefined doesn't say when its seeks settle
+// (a site's, while the app's player doesn't draw its picture: embed.ts
+// `clocked`): paused, the time shown is the frame shown, with no hold after
+// a seek, as for a player with no `settled` at all.
+test("a player that doesn't say when its seek settled holds no time paused", () => {
+  const reading = new PlayerReading(0);
+  const player = { time: () => 35, shown: () => 5, fps: () => 30, playing: () => false, settled: () => undefined };
+  reading.read(player);
+  reading.at(35);
+  reading.read(player);
+  assert.equal(reading.actual, 5);
+});

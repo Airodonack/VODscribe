@@ -656,28 +656,36 @@ export class App {
   /**
    * Checks the time by the play button is the frame the app's own player
    * shows: by frame, the number of the frame it says is on screen, at its
-   * frame rate; with no picture (sound alone), its time. Exactly, paused; within `slack` seconds of frames, playing
-   * (the two are read a moment apart). The time shown as a clock is switched to frames to
-   * read, and back. Returns what it saw.
+   * frame rate; with no picture (sound alone), its time. Exactly, paused.
+   * Playing, the picture moves on while the time is read (a busy page can
+   * take a few frames to draw it after the click), so the player is asked
+   * before and after the reading, and the time shown may be any frame
+   * between, or `slack` seconds of frames either side. The time shown as a
+   * clock is switched to frames to read, and back. Returns what it saw.
    */
   async timeIsPicture(label, { playing = false, slack = 0.1 } = {}) {
-    const { text, status } = await this.js(`
-      const status = await window.__TAURI_INTERNALS__.invoke("player_set_speed", { speed: 1 });
+    const { text, before, after } = await this.js(`
+      const status = () => window.__TAURI_INTERNALS__.invoke("player_set_speed", { speed: 1 });
+      const before = await status();
       const button = document.querySelector(".bar button.time");
       const byFrame = !!button.querySelector(".stack");
       const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       if (!byFrame) { button.click(); await frames(); }
       const text = button.querySelector(".now:not(.clock) > span:not(.widest)")?.textContent ?? "";
+      const after = await status();
       if (!byFrame) { button.click(); await frames(); }
-      return { text, status };`);
-    if (!status) throw new Error(`${label}: the app's player isn't open`);
-    const fps = status.fps ?? 30;
-    const at = status.shown ?? status.time;
-    const want = Math.floor(at * fps + 1e-3);
+      return { text, before, after };`);
+    if (!before || !after) throw new Error(`${label}: the app's player isn't open`);
+    const fps = before.fps ?? 30;
+    const at = (s) => s.shown ?? s.time;
+    const [from, to] = [before, after].map((s) => Math.floor(at(s) * fps + 1e-3));
     const got = Number(text);
-    const what = status.shown === null ? "no picture: the time is" : "the picture is";
-    const seen = `${label}: the time shows frame ${text}, ${what} frame ${want} (${at.toFixed(3)} s at ${fps} fps)`;
-    if (!Number.isInteger(got) || Math.abs(got - want) > (playing ? Math.ceil(slack * fps) : 0)) throw new Error(seen);
+    const what = before.shown === null ? "no picture: the time is" : "the picture is";
+    const frames = from === to ? `frame ${from}` : `frames ${from} to ${to}`;
+    const seen = `${label}: the time shows frame ${text}, ${what} ${frames} (${at(before).toFixed(3)} s at ${fps} fps)`;
+    const off = playing ? Math.ceil(slack * fps) : 0;
+    if (!Number.isInteger(got) || got < Math.min(from, to) - off || got > Math.max(from, to) + off)
+      throw new Error(seen);
     return seen;
   }
 

@@ -48,8 +48,9 @@ export interface EmbeddedPlayer {
    *  null: none shows). The playhead follows it; `time` may run ahead. */
   shown?(): number | null;
   /** When its last seek's reply came (performance.now()), null while one is
-   *  out (the app's own player: playerReading.svelte.ts). */
-  settled?(): number | null;
+   *  out (the app's own player, also where it draws a site's picture:
+   *  playerReading.svelte.ts); undefined where the player doesn't say. */
+  settled?(): number | null | undefined;
   /** Its sound, where the app's controls set it (0..1): through a site's
    *  API where it has one, read back from its reports (its own controls may
    *  change it too). */
@@ -331,6 +332,12 @@ function clocked(
     time: () => clock.now(),
     shown: () => (bridged?.drawing() ? bridged.own.shown() : clock.shown()),
     fps: () => (bridged?.drawing() ? bridged.own.fps() : null),
+    // Where the app's player draws the picture, the frame shown is its own
+    // while the time is their player's clock, which may run a little ahead
+    // of it after a seek and never come within a frame: the readout's hold
+    // ends a moment after the app's player answered the seek, as for the
+    // app's own player (playerReading.svelte.ts `holds`).
+    settled: () => (bridged?.drawing() ? bridged.settled() : undefined),
     playing: () => clock.playing,
     togglePlay() {
       if (clock.playing) tell.pause();
@@ -743,6 +750,10 @@ function bridge(
   drawing: () => boolean;
   /** The app's controls asked their player to seek. */
   asked: () => void;
+  /** When the app's player answered the seek their player made after the
+   *  app's controls last asked for one (performance.now()), null while it's
+   *  out, -Infinity if it failed or none was asked. */
+  settled: () => number | null;
   adStarted: () => void;
   adEnded: () => void;
 } {
@@ -755,6 +766,10 @@ function bridge(
   // When their player last resumed, and when the app's controls last asked it to seek.
   let resumedAt = -Infinity;
   let askedAt = -Infinity;
+  // When the app's player answered the seek that followed the last asked
+  // (`settled`), and which of the seeks passed on is the latest.
+  let settledAt: number | null = -Infinity;
+  let seeks = 0;
   /** Twitch's player, resumed after a pause, now and then seeks itself to
    *  the very start while what it stands in for is elsewhere (never by
    *  itself, alone). A seek to the start just after resuming, not asked
@@ -878,7 +893,11 @@ function bridge(
           seekTheirs(at);
           return;
         }
-        api.playerSeek(m.time, m.paused === false).catch(() => {});
+        const mine = ++seeks;
+        api.playerSeek(m.time, m.paused === false).then(
+          () => mine === seeks && settledAt === null && (settledAt = performance.now()),
+          () => mine === seeks && settledAt === null && (settledAt = -Infinity),
+        );
       }
       // The sound is the app's player's: their element is silent.
       else if (m.kind === "media" && m.event === "volume")
@@ -958,7 +977,11 @@ function bridge(
     stop,
     own,
     drawing: () => !stopped,
-    asked: () => (askedAt = performance.now()),
+    asked: () => {
+      askedAt = performance.now();
+      settledAt = null;
+    },
+    settled: () => settledAt,
     // An ad began (their player said): the frame hands new sources to their
     // element. If none comes, the ad is in the stream itself: fall back.
     adStarted: () => {
