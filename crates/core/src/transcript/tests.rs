@@ -195,9 +195,9 @@ fn unlike_the_index(texts: &[&str]) -> Vec<String> {
 
 /// A line's terms are the ones the library's search index makes of it, so
 /// what the index finds is found again in the line's words: accents, case,
-/// apostrophes, hyphens and numbers (transcript.rs `terms`: "mirroring
-/// SQLite's `unicode61 remove_diacritics 2` tokenizer closely enough to
-/// locate FTS matches inside a segment").
+/// apostrophes, hyphens and numbers (transcript.rs `terms`: "the terms the
+/// search index makes of it: SQLite's `unicode61 remove_diacritics 2`
+/// tokenizer").
 #[test]
 fn terms_are_the_ones_the_search_index_makes() {
     let differ = unlike_the_index(&[
@@ -214,15 +214,52 @@ fn terms_are_the_ones_the_search_index_makes() {
 }
 
 /// The same in other scripts: Greek with its accents, Korean, Japanese
-/// kana with their voicing marks, and the newer emoji (transcript.rs
-/// `terms`, as above). Today `terms` takes Greek's accents and kana's marks
-/// off where the index keeps them, leaves Korean's syllables in pieces, and
-/// drops emoji the index keeps as words; a search reaches the index with
-/// `terms`' own (search.rs `fts_phrase`), so such words can't be found.
+/// kana with their voicing marks, the newer emoji, and accents typed apart
+/// from their letters (transcript.rs `terms`, as above). A search reaches
+/// the index with `terms`' own (search.rs `fts_phrase`), so a term the
+/// index doesn't make can't be found.
 #[test]
-#[ignore = "disagreement: terms differs from the search index for Greek accents, Hangul, kana voicing marks and newer emoji"]
 fn terms_are_the_ones_the_search_index_makes_in_every_script() {
-    let differ = unlike_the_index(&["Ελληνικά", "한국어 방송", "ガンダム だよ", "the 🦅 landed"]);
+    let differ = unlike_the_index(&[
+        "Ελληνικά",
+        "한국어 방송",
+        "ガンダム だよ",
+        "the 🦅 landed",
+        "e\u{301}te\u{301} a \u{301} b",
+    ]);
+    assert!(differ.is_empty(), "{differ:#?}");
+}
+
+/// Every character, between two letters, is what the index's tokenizer
+/// makes of it: a part between words, dropped, or a letter of the word
+/// (transcript.rs `terms`, as above). transcript/unicode61.rs is its table,
+/// so this is how a newer SQLite that changes the tokenizer is caught.
+#[test]
+fn every_character_is_what_the_search_index_makes_of_it() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE VIRTUAL TABLE t USING fts5 (text, tokenize = 'unicode61 remove_diacritics 2');
+         CREATE VIRTUAL TABLE v USING fts5vocab (t, 'instance');
+         BEGIN",
+    )
+    .unwrap();
+    let every = || (0..=char::MAX as u32).filter_map(char::from_u32);
+    let mut insert = db.prepare("INSERT INTO t (rowid, text) VALUES (?1, ?2)").unwrap();
+    for c in every() {
+        insert.execute(rusqlite::params![c as u32, format!("z{c}z")]).unwrap();
+    }
+    let mut indexed: Vec<Vec<String>> = vec![Vec::new(); char::MAX as usize + 1];
+    let mut stmt = db.prepare("SELECT doc, term FROM v ORDER BY doc, offset").unwrap();
+    for row in stmt.query_map([], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, String>(1)?))).unwrap() {
+        let (doc, term) = row.unwrap();
+        indexed[doc as usize].push(term);
+    }
+    let differ: Vec<String> = every()
+        .map(|c| (c, terms(&format!("z{c}z"))))
+        .filter(|(c, made)| *made != indexed[*c as usize])
+        .take(20)
+        .map(|(c, made)| format!("U+{:04X}: {made:?}, the index {:?}", c as u32, indexed[c as usize]))
+        .collect();
     assert!(differ.is_empty(), "{differ:#?}");
 }
 

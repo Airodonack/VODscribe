@@ -13,6 +13,7 @@ Builds, release packaging and checks, run by hand and by CI.
 - `check-nsis-template.py`: fails when Tauri's installer template moved on from our copy.
 - `check-workflows.mjs`: checks every workflow file's shape.
 - `export-demo-chat.py`: exports a VOD's chat for the website's demo, with made-up names.
+- `unicode61.py`: writes the table of how the search index's tokenizer treats each character, for search's terms.
 - `release.py`: names the build's files, writes `latest.json` and the winget manifests; `--version` prints the version a commit carries.
 - `verify-release.py`: checks a published release as the app and the website see it.
 - `test_release.py`: tests of the two release scripts.

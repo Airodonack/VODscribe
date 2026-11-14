@@ -8,6 +8,7 @@ mod library;
 mod migrations_early;
 mod migrations_late;
 mod search;
+mod search_scripts;
 
 /// A job a part at a time (an erasure) lets a thread waiting for the
 /// library in after the part it's on, not after the whole job.

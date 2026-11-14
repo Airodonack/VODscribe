@@ -1,6 +1,8 @@
+use std::cmp::Ordering;
+
 use serde::{Deserialize, Serialize};
-use unicode_normalization::UnicodeNormalization;
-use unicode_normalization::char::is_combining_mark;
+
+mod unicode61;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Word {
@@ -99,12 +101,62 @@ impl Default for Segmenter {
     }
 }
 
-/// Splits text into lowercase, diacritic-free alphanumeric terms, mirroring
-/// SQLite's `unicode61 remove_diacritics 2` tokenizer closely enough to locate
-/// FTS matches inside a segment.
+/// Splits text into the terms the search index makes of it: SQLite's
+/// `unicode61 remove_diacritics 2` tokenizer, character by character, so
+/// lowercase, accents off Latin letters, and every other script as written.
+/// A search's words reach the index as these terms, and FTS matches are
+/// found again inside a segment by them.
 pub fn terms(text: &str) -> Vec<String> {
-    let folded: String = text.nfd().filter(|c| !is_combining_mark(*c)).flat_map(char::to_lowercase).collect();
-    folded.split(|c: char| !c.is_alphanumeric()).filter(|t| !t.is_empty()).map(str::to_string).collect()
+    let mut out = Vec::new();
+    let mut term = String::new();
+    for c in text.chars() {
+        match fold(c) {
+            Fold::Into(f) => term.push(f),
+            Fold::Dropped => {}
+            Fold::Parts => {
+                if !term.is_empty() {
+                    out.push(std::mem::take(&mut term));
+                }
+            }
+        }
+    }
+    if !term.is_empty() {
+        out.push(term);
+    }
+    out
+}
+
+/// What a character is to the index's tokenizer.
+enum Fold {
+    /// It parts words.
+    Parts,
+    /// It's left out of the word it's in (a combining accent).
+    Dropped,
+    /// It's this in its word.
+    Into(char),
+}
+
+fn fold(c: char) -> Fold {
+    if c.is_ascii() {
+        return if c.is_ascii_alphanumeric() { Fold::Into(c.to_ascii_lowercase()) } else { Fold::Parts };
+    }
+    let n = c as u32;
+    let parts = unicode61::SEPARATORS.binary_search_by(|&(a, b)| {
+        if b < n {
+            Ordering::Less
+        } else if a > n {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    });
+    if parts.is_ok() {
+        return Fold::Parts;
+    }
+    match unicode61::FOLDS.binary_search_by_key(&n, |&(from, _)| from) {
+        Ok(i) => char::from_u32(unicode61::FOLDS[i].1).filter(|&f| f != '\0').map_or(Fold::Dropped, Fold::Into),
+        Err(_) => Fold::Into(c),
+    }
 }
 
 /// Whether a search's last term matches as a prefix (so results update while

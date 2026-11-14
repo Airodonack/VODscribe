@@ -10,7 +10,7 @@ One module per subject.
 - [`db`](db): its tests, the migrations' among them.
 - `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
 - `transcript.rs`: words and lines as the model gives them.
-- [`transcript`](transcript): its tests.
+- [`transcript`](transcript): its tests, and the search index's tokenizer as a table.
 - `fetch.rs`: a VOD's details and audio through yt-dlp.
 - [`fetch`](fetch): fetch's tests.
 - `kick.rs`: Kick's VODs, which yt-dlp can't read yet.

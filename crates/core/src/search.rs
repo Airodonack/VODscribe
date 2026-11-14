@@ -682,7 +682,7 @@ impl Line {
 }
 
 /// `terms` of one word, each given to `f`; plain ASCII (most words) without
-/// the Unicode decomposition `terms` does, the same terms faster.
+/// the table `terms` looks characters up in, the same terms faster.
 fn fold(word: &str, mut f: impl FnMut(String)) {
     if word.is_ascii() {
         for t in word.split(|c: char| !c.is_ascii_alphanumeric()).filter(|t| !t.is_empty()) {
