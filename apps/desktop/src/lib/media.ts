@@ -149,41 +149,31 @@ export function stretchIn(cuts: number[], duration: number, time: number): { sta
 }
 
 /**
- * What plays of `start`..`end` with the `struck` stretches jumped over (as an
- * edit's piece plays; crates/core edits.rs `spans`): what's left, in order,
- * less slivers under 0.04 s.
+ * What an edit's piece of `start`..`end` plays (crates/core edits.rs
+ * `EditPiece::spans`): all of it, or nothing if it's a sliver under 0.04 s.
  */
-export function playedSpans(start: number, end: number, struck: [number, number][]): [number, number][] {
-  const cuts = struck.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
-  const out: [number, number][] = [];
-  let at = start;
-  for (const [a, b] of cuts) {
-    if (a > at) out.push([at, Math.min(a, end)]);
-    at = Math.max(at, b);
-    if (at >= end) break;
-  }
-  if (at < end) out.push([at, end]);
-  return out.filter(([a, b]) => b - a >= 0.04);
+export function playedSpans(start: number, end: number): [number, number][] {
+  return end - start >= 0.04 ? [[start, end]] : [];
 }
 
 /** How long an edit's piece plays: its `playedSpans` end to end. */
-export const playedLength = (piece: { start: number; end: number; struck: [number, number][] }) =>
-  playedSpans(piece.start, piece.end, piece.struck).reduce((sum, [a, b]) => sum + b - a, 0);
+export const playedLength = (piece: { start: number; end: number }) =>
+  playedSpans(piece.start, piece.end).reduce((sum, [a, b]) => sum + b - a, 0);
 
 /**
  * Where the stretch `from`..`to` of an edit's timeline starts in its VOD, for
  * pieces `pieces` played end to end (each its `playedSpans`): the VOD and the
- * stretch of it from there, no further than the span it starts in. Undefined
+ * stretch of it from there, no further than the piece it starts in. Undefined
  * past the edit's end.
  */
 export function inEdit(
-  pieces: { vod_id: number; start: number; end: number; struck: [number, number][] }[],
+  pieces: { vod_id: number; start: number; end: number }[],
   from: number,
   to: number,
 ): { vodId: number; start: number; end: number } | undefined {
   let at = 0;
   for (const piece of pieces)
-    for (const [a, b] of playedSpans(piece.start, piece.end, piece.struck)) {
+    for (const [a, b] of playedSpans(piece.start, piece.end)) {
       if (from < at + b - a - 1e-6) {
         const start = a + Math.max(0, from - at);
         return { vodId: piece.vod_id, start, end: Math.min(b, start + to - from) };

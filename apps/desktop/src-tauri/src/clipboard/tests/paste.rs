@@ -22,14 +22,13 @@ fn library() -> (Db, i64) {
     (db, vod)
 }
 
-fn piece(parent: Option<usize>, vod: i64, start: f64, end: Option<f64>, struck: &[(f64, f64)]) -> ItemState {
+fn piece(parent: Option<usize>, vod: i64, start: f64, end: Option<f64>) -> ItemState {
     ItemState {
         parent,
         vod_id: Some(vod),
         start: Some(Flicks::from_seconds(start)),
         end: end.map(Flicks::from_seconds),
         title: String::new(),
-        struck: struck.iter().map(|&(a, b)| (Flicks::from_seconds(a), Flicks::from_seconds(b))).collect(),
         origin: None,
     }
 }
@@ -39,36 +38,27 @@ fn copy(kind: CopiedKind, items: Vec<ItemState>) -> Copied {
 }
 
 /// What the page is told of a copy: its pieces (its groups aren't), the
-/// first one's stretch, and how long it plays, less what's struck; a
-/// piece with no end runs to its VOD's end, one of a VOD that's gone
-/// plays nothing.
+/// first one's stretch, and how long it plays; a piece with no end runs
+/// to its VOD's end, one of a VOD that's gone plays nothing.
 #[test]
 fn a_copy_is_said_by_its_pieces() {
     let (db, vod) = library();
-    let group = ItemState {
-        parent: None,
-        vod_id: None,
-        start: None,
-        end: None,
-        title: "g".into(),
-        struck: Vec::new(),
-        origin: None,
-    };
+    let group = ItemState { parent: None, vod_id: None, start: None, end: None, title: "g".into(), origin: None };
     let items = vec![
         group.clone(),
-        piece(Some(0), vod, 10.0, Some(20.0), &[(12.0, 14.0)]),
-        piece(None, vod, 30.0, None, &[]),
-        piece(None, 9999, 5.0, None, &[]),
+        piece(Some(0), vod, 10.0, Some(18.0)),
+        piece(None, vod, 30.0, None),
+        piece(None, 9999, 5.0, None),
     ];
     let said_of = said(&db, &copy(CopiedKind::Clip, items)).unwrap();
     assert_eq!((said_of.kind, said_of.title.as_str(), said_of.pieces, said_of.length), ("clip", "c", 3, 38.0));
     let first = said_of.first.unwrap();
-    assert_eq!((first.vod_id, first.vod_title.as_str(), first.start, first.end), (vod, "t", 10.0, 20.0));
+    assert_eq!((first.vod_id, first.vod_title.as_str(), first.start, first.end), (vod, "t", 10.0, 18.0));
 
     // Its first piece with no end: that stretch runs to the VOD's end.
-    let stretch = copy(CopiedKind::Stretch, vec![piece(None, vod, 5.0, None, &[(50.0, 70.0)])]);
+    let stretch = copy(CopiedKind::Stretch, vec![piece(None, vod, 5.0, None)]);
     let said_of = said(&db, &stretch).unwrap();
-    assert_eq!((said_of.kind, said_of.pieces, said_of.length), ("stretch", 1, 45.0));
+    assert_eq!((said_of.kind, said_of.pieces, said_of.length), ("stretch", 1, 55.0));
     let first = said_of.first.unwrap();
     assert_eq!((first.start, first.end), (5.0, 60.0));
 

@@ -1,7 +1,6 @@
 //! Clips as the record keeps them (schema v22): a clip is a document, with
 //! a title, a revision and a tree of items, each a piece (a stretch of one
-//! VOD, less the stretches struck out of it, which are jumped over) or a
-//! group (a whole clip placed inside another; later). A piece is its own:
+//! VOD) or a group (a whole clip placed inside another). A piece is its own:
 //! made from a clip or a stretch of the timeline, it keeps no tie to either,
 //! so changing one piece (trimming it, later growing it) changes no other.
 //!
@@ -27,7 +26,7 @@ use crate::settings::ClipEncoding;
 use crate::time::Flicks;
 use crate::transcript::{Cue, Segment, Word};
 
-/// Stretches shorter than this are left out (a sliver between two struck lines).
+/// Stretches shorter than this are left out (a sliver).
 pub(crate) const SLIVER: f64 = 0.04;
 /// How near a stretch's end a cut is to be at it: within half a
 /// frame (at 25 fps), as marks sit on frames and lines end where they end.
@@ -55,7 +54,7 @@ pub struct Edit {
     pub length: f64,
     /// The VODs its pieces are of.
     pub vod_ids: Vec<i64>,
-    /// What it plays of each VOD, in order: its pieces less what's struck.
+    /// What it plays of each VOD, in order: its pieces.
     pub ranges: Vec<EditRange>,
     /// A snippet (a clip on a clip bar, opened in the editor): whose bar it's
     /// on, a VOD's or an edit's. None for a listed clip.
@@ -142,7 +141,6 @@ pub struct ItemState {
     pub start: Option<Flicks>,
     pub end: Option<Flicks>,
     pub title: String,
-    pub struck: Vec<(Flicks, Flicks)>,
     pub origin: Option<Flicks>,
 }
 
@@ -157,7 +155,6 @@ pub struct ItemRow {
     pub start: Option<Flicks>,
     pub end: Option<Flicks>,
     pub title: String,
-    pub struck: Vec<(Flicks, Flicks)>,
     pub origin: Option<Flicks>,
 }
 
@@ -169,7 +166,7 @@ pub struct GroupOf {
 }
 
 /// A piece of a clip as the record holds it: `start`..`end` of VOD `vod_id`
-/// (`end` None: to the VOD's end), less the `struck` stretches.
+/// (`end` None: to the VOD's end).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PieceRow {
     pub id: i64,
@@ -178,13 +175,12 @@ pub struct PieceRow {
     pub start: Flicks,
     pub end: Option<Flicks>,
     pub title: String,
-    pub struck: Vec<(Flicks, Flicks)>,
     /// A realized piece: the VOD's time its file starts at.
     pub origin: Option<Flicks>,
 }
 
 /// A piece of an edit, in seconds for the interface: `start`..`end` of VOD
-/// `vod_id`, less the `struck` stretches.
+/// `vod_id`.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct EditPiece {
     pub id: i64,
@@ -193,7 +189,6 @@ pub struct EditPiece {
     pub start: f64,
     pub end: f64,
     pub title: String,
-    pub struck: Vec<(f64, f64)>,
     pub vod_title: String,
     /// Its footage is gone for good (its file was deleted outside the app,
     /// say): it plays and renders as black and silence. Said by the app,
@@ -205,9 +200,9 @@ pub struct EditPiece {
 }
 
 impl EditPiece {
-    /// What plays of it, in its VOD's time: `start`..`end` less what's struck.
+    /// What plays of it, in its VOD's time: `start`..`end` (`spans`).
     pub fn spans(&self) -> Vec<(f64, f64)> {
-        spans(self.start, self.end, &self.struck)
+        spans(self.start, self.end)
     }
 }
 
@@ -239,27 +234,9 @@ pub fn played(pieces: &[EditPiece]) -> impl Iterator<Item = Played<'_>> {
     })
 }
 
-/// `start`..`end` less the `struck` stretches (any order, overlapping or
-/// not), leaving out slivers.
-pub fn spans(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    let mut cuts: Vec<(f64, f64)> = struck.iter().copied().filter(|(a, b)| b > a).collect();
-    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut out = Vec::new();
-    let mut at = start;
-    for (a, b) in cuts {
-        if a > at {
-            out.push((at, a.min(end)));
-        }
-        at = at.max(b);
-        if at >= end {
-            break;
-        }
-    }
-    if at < end {
-        out.push((at, end));
-    }
-    out.retain(|(a, b)| b - a >= SLIVER);
-    out
+/// What a piece of `start`..`end` plays: all of it, or nothing if it's a sliver.
+pub fn spans(start: f64, end: f64) -> Vec<(f64, f64)> {
+    if end - start >= SLIVER { vec![(start, end)] } else { Vec::new() }
 }
 
 /// What each piece's VOD has (`of`: things over stretches of a VOD's time,
@@ -391,7 +368,7 @@ pub fn clip_cues(pieces: &[EditPiece], mut segments_of: impl FnMut(i64) -> Resul
 /// moment plays or, if that's trimmed away, where its piece plays again
 /// after it (a chapter keeps its start in what's left). A chapter whose
 /// moment no piece plays, nor plays again after it within its piece (taken
-/// out with Remove, trimmed off, or struck to its piece's end), starts where
+/// out with Remove, or trimmed off), starts where
 /// the next piece of its VOD begins: the first, in the edit's order, that
 /// plays after its moment; one past them all shows nowhere. A moment played
 /// more than once shows where it's first played.
@@ -463,10 +440,9 @@ pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::
 
 /// Where a mark's `end` (seconds of its VOD) is on a clip's timeline, its
 /// start in `spans` (what plays of its piece from there on; the first plays
-/// from `t`): what plays of it up to there, so a stretch struck out of it
-/// shortens it. One that ends where its piece doesn't play (struck, or past
-/// the piece) ends where its piece last plays before then: a highlight
-/// runs as long as it's in the clip.
+/// from `t`): what plays of it up to there. One that ends where its piece
+/// doesn't play (past the piece) ends where its piece last plays before
+/// then: a highlight runs as long as it's in the clip.
 fn placed_end(spans: &[(f64, f64)], mut t: f64, end: f64) -> f64 {
     let mut out = t;
     for &(a, b) in spans {
@@ -495,40 +471,30 @@ pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
 }
 
 /// A piece of a stretch of a clip (`stretch_pieces`): `start`..`end` of VOD
-/// `vod_id`, less `struck`, titled `title`.
+/// `vod_id`, titled `title`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StretchPiece {
     pub vod_id: i64,
     pub start: f64,
     pub end: f64,
-    pub struck: Vec<(f64, f64)>,
     pub title: String,
 }
 
 /// Whether a clip bar's clip of `pieces` is cut straight from its VOD (one
-/// piece, nothing struck, not a group) rather than rendered as an edit is.
+/// piece, not a group) rather than rendered as an edit is.
 pub fn cut_whole(pieces: &[EditPiece]) -> bool {
-    matches!(pieces, [p] if p.struck.is_empty() && p.group.is_none())
+    matches!(pieces, [p] if p.group.is_none())
 }
 
 /// What `from`..`to` of a clip of `pieces`' timeline plays, as pieces of
-/// their own: each piece it reaches, trimmed to it, with what's jumped over
-/// in between struck.
+/// their own: each piece it reaches, trimmed to it.
 pub fn stretch_pieces(pieces: &[EditPiece], from: f64, to: f64) -> Vec<StretchPiece> {
     let mut out = Vec::new();
-    let mut at = 0.0;
-    for p in pieces {
-        let mut reached: Vec<(f64, f64)> = Vec::new();
-        for (a, b) in p.spans() {
-            let (s, e) = (from.max(at), to.min(at + b - a));
-            if e - s >= SLIVER {
-                reached.push((a + s - at, a + e - at));
-            }
-            at += b - a;
-        }
-        if let (Some(first), Some(last)) = (reached.first(), reached.last()) {
-            let struck = reached.windows(2).map(|w| (w[0].1, w[1].0)).collect();
-            out.push(StretchPiece { vod_id: p.vod_id, start: first.0, end: last.1, struck, title: p.title.clone() });
+    for span in played(pieces) {
+        let (s, e) = (from.max(span.at), to.min(span.end()));
+        if e - s >= SLIVER {
+            let (start, end) = (span.from + s - span.at, span.from + e - span.at);
+            out.push(StretchPiece { vod_id: span.piece.vod_id, start, end, title: span.piece.title.clone() });
         }
     }
     out
@@ -549,8 +515,8 @@ pub enum Cutting {
 
 /// Taking `from`..`to` of a clip of `pieces`' timeline out: for each piece
 /// it reaches, what becomes of it. A slice is a slice, however it was
-/// picked: the pieces split at its ends and the middle goes (nothing is
-/// struck). Within a sliver of a piece's edge counts as at it.
+/// picked: the pieces split at its ends and the middle goes. Within a
+/// sliver of a piece's edge counts as at it.
 pub fn cutting_out(pieces: &[EditPiece], from: f64, to: f64) -> Vec<(i64, Cutting)> {
     let mut out = Vec::new();
     let mut at = 0.0;
@@ -640,25 +606,7 @@ pub fn render_pieces(
     Ok(out)
 }
 
-/// Struck stretches as the record keeps them: a JSON list of flick pairs.
-pub(crate) fn struck_json(struck: &[(Flicks, Flicks)]) -> Result<String> {
-    Ok(serde_json::to_string(&struck.iter().map(|(a, b)| (a.0, b.0)).collect::<Vec<_>>())?)
-}
-
-pub(crate) fn parse_struck(json: &str) -> Vec<(Flicks, Flicks)> {
-    serde_json::from_str::<Vec<(i64, i64)>>(json)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(a, b)| (Flicks(a), Flicks(b)))
-        .collect()
-}
-
-/// `struck` in seconds, to the flick.
-pub(crate) fn struck_flicks(struck: &[(f64, f64)]) -> Vec<(Flicks, Flicks)> {
-    struck.iter().map(|&(a, b)| (Flicks::from_seconds(a), Flicks::from_seconds(b))).collect()
-}
-
-pub(crate) const PIECE_COLUMNS: &str = "id, clip_id, vod_id, start, end, struck, title, origin";
+pub(crate) const PIECE_COLUMNS: &str = "id, clip_id, vod_id, start, end, title, origin";
 
 pub(crate) fn piece_from_row(r: &Row) -> rusqlite::Result<PieceRow> {
     Ok(PieceRow {
@@ -667,7 +615,6 @@ pub(crate) fn piece_from_row(r: &Row) -> rusqlite::Result<PieceRow> {
         vod_id: r.get("vod_id")?,
         start: Flicks(r.get("start")?),
         end: r.get::<_, Option<i64>>("end")?.map(Flicks),
-        struck: parse_struck(&r.get::<_, String>("struck")?),
         title: r.get("title")?,
         origin: r.get::<_, Option<i64>>("origin")?.map(Flicks),
     })
@@ -996,7 +943,7 @@ impl Db {
     /// it, depth first.
     pub fn item_rows(&self, clip_id: i64) -> Result<Vec<ItemRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, parent, position, vod_id, start, end, struck, title, origin FROM items
+            "SELECT id, parent, position, vod_id, start, end, title, origin FROM items
              WHERE clip_id = ?1 ORDER BY position, id",
         )?;
         let all: Vec<ItemRow> = stmt
@@ -1008,9 +955,8 @@ impl Db {
                     vod_id: r.get(3)?,
                     start: r.get::<_, Option<i64>>(4)?.map(Flicks),
                     end: r.get::<_, Option<i64>>(5)?.map(Flicks),
-                    struck: parse_struck(&r.get::<_, String>(6)?),
-                    title: r.get(7)?,
-                    origin: r.get::<_, Option<i64>>(8)?.map(Flicks),
+                    title: r.get(6)?,
+                    origin: r.get::<_, Option<i64>>(7)?.map(Flicks),
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -1056,7 +1002,6 @@ impl Db {
                 start: row.start.seconds(),
                 end,
                 title: row.title,
-                struck: row.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect(),
                 vod_title: vod_title.unwrap_or_default(),
                 hole: false,
                 group: top.get(&item.id).cloned(),
@@ -1112,8 +1057,8 @@ impl Db {
             let within = item.parent.map_or(parent, |p| ids.get(p).copied());
             let position = state.items[..i].iter().filter(|o| o.parent == item.parent).count() as i64;
             self.conn.execute(
-                "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, struck, title, origin)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, title, origin)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     into,
                     within,
@@ -1122,7 +1067,6 @@ impl Db {
                     item.vod_id,
                     item.start.map(|f| f.0),
                     item.end.map(|f| f.0),
-                    struck_json(&item.struck)?,
                     item.title,
                     item.origin.map(|f| f.0)
                 ],
@@ -1156,7 +1100,7 @@ impl Db {
                 params![into, title],
             )?;
             let group = db.conn.last_insert_rowid();
-            let piece = db.insert_piece(into, vod_id, (start, end), title, &[])?;
+            let piece = db.insert_piece(into, vod_id, (start, end), title)?;
             db.conn.execute("UPDATE items SET parent = ?2 WHERE id = ?1", params![piece, group])?;
             db.copy_vod_marks(into, vod_id, start, end)?;
             db.place(into, group, index)?;
@@ -1212,7 +1156,7 @@ impl Db {
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
             for (i, p) in parts.iter().enumerate() {
                 let range = (Flicks::from_seconds(p.start), Flicks::from_seconds(p.end));
-                let piece = db.insert_piece(id, p.vod_id, range, &p.title, &struck_flicks(&p.struck))?;
+                let piece = db.insert_piece(id, p.vod_id, range, &p.title)?;
                 db.conn.execute("UPDATE items SET position = ?2 WHERE id = ?1", params![piece, i as i64])?;
             }
             for m in &inside {
@@ -1249,16 +1193,16 @@ impl Db {
     /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) listed
     /// at exactly `start`..`end` seconds of it, its end cut at the VOD's
     /// (`vod_span`), if there's one: its first piece's stretch, whatever the
-    /// editor changed after it (a line struck, a piece added), as the page
-    /// finds it (clips.svelte.ts `find`). The app gives it (C on its
-    /// stretch), as `edit_clip_of` for an edit.
+    /// editor changed after it (a piece added), as the page finds it
+    /// (clips.svelte.ts `find`). The app gives it (C on its stretch), as
+    /// `edit_clip_of` for an edit.
     pub fn vod_clip_of(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
         Ok(self.vod_clips_at(vod_id, start, end)?.into_iter().next())
     }
 
     /// The clip on VOD `vod_id`'s clip bar (in it, or only dragged out) that
     /// plays just `start`..`end` seconds of it, its end cut at the VOD's: one
-    /// piece as it came, nothing struck, as `add_clip` makes it (`Clip::plain`).
+    /// piece as it came, as `add_clip` makes it (`Clip::plain`).
     /// The app gives it for a stretch dragged from a VOD, the one shown or a
     /// piece of an edit, whose file has to be just that stretch of its footage.
     pub fn vod_clip_playing(&self, vod_id: i64, start: f64, end: f64) -> Result<Option<crate::db::Clip>> {
@@ -1294,7 +1238,7 @@ impl Db {
                 && pieces
                     .iter()
                     .zip(parts)
-                    .all(|(p, s)| p.vod_id == s.vod_id && same_spans(&p.spans(), &spans(s.start, s.end, &s.struck)));
+                    .all(|(p, s)| p.vod_id == s.vod_id && same_spans(&p.spans(), &spans(s.start, s.end)));
             if same {
                 return Ok(Some(clip));
             }
@@ -1396,13 +1340,7 @@ impl Db {
     /// What `item` (not a clip of an edit's clip bar) plays, as pieces, and
     /// its name: a stretch's own or for what's said at its start, a VOD's title.
     pub(crate) fn put_parts(&self, item: &Put) -> Result<(String, Vec<StretchPiece>)> {
-        let part = |vod_id, start, end, title: &str| StretchPiece {
-            vod_id,
-            start,
-            end,
-            struck: Vec::new(),
-            title: title.to_string(),
-        };
+        let part = |vod_id, start, end, title: &str| StretchPiece { vod_id, start, end, title: title.to_string() };
         Ok(match item {
             Put::Range { vod_id, start, end, title } => {
                 self.vod(*vod_id)?.context("That VOD is gone.")?;
@@ -1447,7 +1385,7 @@ impl Db {
         self.change(clip, None, |db| {
             for (i, p) in parts.iter().enumerate() {
                 let (start, end) = db.within_vod(p.vod_id, p.start, p.end)?;
-                let new = db.insert_piece(clip, p.vod_id, (start, end), &p.title, &struck_flicks(&p.struck))?;
+                let new = db.insert_piece(clip, p.vod_id, (start, end), &p.title)?;
                 db.copy_vod_marks(clip, p.vod_id, start, end)?;
                 db.place(clip, new, index.map(|n| n + i))?;
             }
@@ -1586,7 +1524,6 @@ impl Db {
                 start: i.start,
                 end: i.end,
                 title: i.title.clone(),
-                struck: i.struck.clone(),
                 origin: i.origin,
             })
             .collect();
@@ -1607,8 +1544,8 @@ impl Db {
                 let position = state.items[..i].iter().filter(|o| o.parent == item.parent).count() as i64;
                 let kind = if item.vod_id.is_some() { "piece" } else { "group" };
                 let made = db.conn.execute(
-                    "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, title, struck, origin)
-                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+                    "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, title, origin)
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
                      WHERE ?5 IS NULL OR EXISTS (SELECT 1 FROM vods WHERE id = ?5)",
                     params![
                         id,
@@ -1619,7 +1556,6 @@ impl Db {
                         item.start.map(|f| f.0),
                         item.end.map(|f| f.0),
                         item.title,
-                        struck_json(&item.struck)?,
                         item.origin.map(|f| f.0)
                     ],
                 )?;
@@ -1707,7 +1643,7 @@ impl Db {
     ) -> Result<()> {
         let (start, end) = self.within_vod(vod_id, start, end)?;
         self.change(edit_id, None, |db| {
-            let new = db.insert_piece(edit_id, vod_id, (start, end), title, &[])?;
+            let new = db.insert_piece(edit_id, vod_id, (start, end), title)?;
             db.copy_vod_marks(edit_id, vod_id, start, end)?;
             db.place(edit_id, new, index)
         })
@@ -1733,11 +1669,10 @@ impl Db {
         vod_id: i64,
         (start, end): (Flicks, Flicks),
         title: &str,
-        struck: &[(Flicks, Flicks)],
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO items (clip_id, position, kind, vod_id, start, end, title, struck) VALUES (?1, 0, 'piece', ?2, ?3, ?4, ?5, ?6)",
-            params![clip_id, vod_id, start.0, end.0, title, struck_json(struck)?],
+            "INSERT INTO items (clip_id, position, kind, vod_id, start, end, title) VALUES (?1, 0, 'piece', ?2, ?3, ?4, ?5)",
+            params![clip_id, vod_id, start.0, end.0, title],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -1796,19 +1731,6 @@ impl Db {
         })
     }
 
-    /// Sets the stretches struck out of piece `id`, in seconds. Nothing
-    /// strikes stretches now (a slice taken out splits pieces), but pieces
-    /// from before may have some: the tests make such pieces with it.
-    #[cfg(test)]
-    pub(crate) fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
-        let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        let struck = struck_json(&struck_flicks(struck))?;
-        self.change(edit_id, None, |db| {
-            db.conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, struck])?;
-            Ok(())
-        })
-    }
-
     /// Takes `from`..`to` of edit `edit`'s timeline out, as one change: the
     /// pieces it reaches split at its ends, and what's between goes
     /// (`cutting_out`); a group left empty goes too. Its cuts at either end,
@@ -1852,8 +1774,7 @@ impl Db {
     }
 
     /// Splits piece `id` in two at `at` seconds (its VOD's time), the second
-    /// right after the first; both keep what's struck. False if `at` isn't
-    /// inside it.
+    /// right after the first. False if `at` isn't inside it.
     pub fn split_piece(&self, id: i64, at: f64) -> Result<bool> {
         let Some(piece) = self.piece_row(id)? else { return Ok(false) };
         let (start, end) = (piece.start.seconds(), self.piece_end(&piece)?);
@@ -1871,7 +1792,7 @@ impl Db {
         self.change(piece.clip_id, None, |db| {
             db.conn.execute("UPDATE items SET end = ?2 WHERE id = ?1", params![id, at.0])?;
             let end = piece.end.unwrap_or(Flicks::from_seconds(end));
-            let new = db.insert_piece(piece.clip_id, piece.vod_id, (at, end), &piece.title, &piece.struck)?;
+            let new = db.insert_piece(piece.clip_id, piece.vod_id, (at, end), &piece.title)?;
             // Beside it, in its group if it's in one, and from where it came from too.
             db.conn.execute(
                 "UPDATE items SET parent = ?2, origin = (SELECT origin FROM items WHERE id = ?3) WHERE id = ?1",
@@ -1974,26 +1895,23 @@ pub(crate) mod tests {
         ClipEncoding::default()
     }
 
+    /// A piece plays its stretch, a sliver nothing (`SLIVER`: "Stretches
+    /// shorter than this are left out").
     #[test]
-    fn struck_lines_are_jumped_over() {
-        assert_eq!(spans(0.0, 10.0, &[]), [(0.0, 10.0)]);
-        assert_eq!(spans(0.0, 10.0, &[(6.0, 7.0), (2.0, 3.0)]), [(0.0, 2.0), (3.0, 6.0), (7.0, 10.0)]);
-        assert_eq!(spans(0.0, 10.0, &[(-1.0, 1.0), (9.0, 12.0)]), [(1.0, 9.0)], "at the ends: trimmed");
-        assert_eq!(spans(0.0, 10.0, &[(2.0, 5.0), (4.0, 6.0)]), [(0.0, 2.0), (6.0, 10.0)], "overlapping");
-        assert_eq!(spans(0.0, 10.0, &[(0.0, 10.0)]), [], "all of it");
-        assert_eq!(spans(0.0, 10.0, &[(2.0, 5.0), (5.02, 8.0)]), [(0.0, 2.0), (8.0, 10.0)], "no slivers");
+    fn a_piece_plays_its_stretch_and_a_sliver_nothing() {
+        assert_eq!(spans(0.0, 10.0), [(0.0, 10.0)]);
+        assert_eq!(spans(5.0, 5.02), [], "a sliver");
     }
 
     #[test]
     fn lines_and_captions_follow_the_pieces_with_the_words_that_play() {
-        let piece = |id, vod_id, start, end, struck: &[(f64, f64)]| EditPiece {
+        let piece = |id, vod_id, start, end| EditPiece {
             id,
             edit_id: 1,
             vod_id,
             start,
             end,
             title: String::new(),
-            struck: struck.to_vec(),
             vod_title: String::new(),
             hole: false,
             group: None,
@@ -2013,12 +1931,7 @@ pub(crate) mod tests {
         // VOD 1 from 1 to 2.6 s (b, and most of c), VOD 2 from 101 s (a
         // line without word times), VOD 1 from 3 s (d, the line split
         // between them), then at 10 (all of "ten").
-        let pieces = [
-            piece(1, 1, 1.0, 2.6, &[]),
-            piece(2, 2, 101.0, 102.0, &[]),
-            piece(3, 1, 3.0, 4.0, &[]),
-            piece(4, 1, 10.0, 11.0, &[]),
-        ];
+        let pieces = [piece(1, 1, 1.0, 2.6), piece(2, 2, 101.0, 102.0), piece(3, 1, 3.0, 4.0), piece(4, 1, 10.0, 11.0)];
         let got: Vec<(f64, f64, String)> =
             clip_segments(&pieces, lines).unwrap().into_iter().map(|s| (s.start, s.end, s.text)).collect();
         let want = [(0.0, 1.6, "b c"), (1.6, 2.6, "elsewhere"), (2.6, 3.6, "d"), (3.6, 4.6, "ten")];
@@ -2038,21 +1951,19 @@ pub(crate) mod tests {
 
     #[test]
     fn removing_a_slice_splits_the_pieces_it_reaches() {
-        let piece = |id, start, end, struck: &[(f64, f64)]| EditPiece {
+        let piece = |id, start, end| EditPiece {
             id,
             edit_id: 1,
             vod_id: 1,
             start,
             end,
             title: String::new(),
-            struck: struck.to_vec(),
             vod_title: String::new(),
             hole: false,
             group: None,
         };
-        // Pieces 10-20 (15-16 struck: plays 0-5 and 5-9 of the timeline),
-        // 100-110 (9-19) and 200-210 (19-29).
-        let pieces = [piece(1, 10.0, 20.0, &[(15.0, 16.0)]), piece(2, 100.0, 110.0, &[]), piece(3, 200.0, 210.0, &[])];
+        // Pieces 10-19 (0-9 of the timeline), 100-110 (9-19) and 200-210 (19-29).
+        let pieces = [piece(1, 10.0, 19.0), piece(2, 100.0, 110.0), piece(3, 200.0, 210.0)];
         assert_eq!(
             cutting_out(&pieces, 4.0, 11.0),
             [(1, Cutting::Keep(10.0, 14.0)), (2, Cutting::Keep(102.0, 110.0))],
@@ -2064,11 +1975,6 @@ pub(crate) mod tests {
             "the middle of one: split"
         );
         assert_eq!(cutting_out(&pieces, 8.98, 19.01), [(2, Cutting::Whole)], "all of one, give or take a sliver");
-        assert_eq!(
-            cutting_out(&pieces, 5.0, 7.0),
-            [(1, Cutting::Split { first_end: 15.0, second_start: 18.0 })],
-            "across a struck stretch: what played before it, and from 2 s after it"
-        );
         assert_eq!(cutting_out(&pieces, 29.0, 40.0), [], "past the end");
     }
 
@@ -2109,35 +2015,30 @@ pub(crate) mod tests {
     }
 
     /// The clip of a VOD's stretch is the one its clip bar lists there (its
-    /// first piece's stretch), whatever the editor changed in it: a line
-    /// struck, or a piece added. The page finds it so (clips.svelte.ts
-    /// `find`), and the app gives it (plans/clips-pilot.md, Decided 1; the
-    /// clips-fixes review, M1).
+    /// first piece's stretch), whatever the editor changed in it: a piece
+    /// added. The page finds it so (clips.svelte.ts `find`), and the app
+    /// gives it (plans/clips-pilot.md, Decided 1; the clips-fixes review, M1).
     #[test]
-    fn a_vod_s_clip_of_a_stretch_is_the_one_listed_there_struck_or_added_to() {
+    fn a_vod_s_clip_of_a_stretch_is_the_one_listed_there_added_to_or_not() {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
-        let struck = db.add_clip(vod, 10.0, 20.0, "a", true).unwrap().id;
-        let piece = db.piece_rows(struck).unwrap()[0].id;
-        db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
         let added = db.add_clip(vod, 30.0, 40.0, "b", true).unwrap().id;
         db.add_piece(added, vod, (50.0, 52.0), "c", None).unwrap();
         let of = |start, end| db.vod_clip_of(vod, start, end).unwrap().map(|c| c.id);
-        assert_eq!(of(10.0, 20.0), Some(struck), "a line struck");
         assert_eq!(of(30.0, 40.0), Some(added), "a piece added");
-        assert_eq!(of(10.0, 19.0), None, "a stretch of its own");
+        assert_eq!(of(30.0, 39.0), None, "a stretch of its own");
         assert_eq!(of(50.0, 52.0), None, "a piece after the first");
-        // What plays just the stretch: neither of those, but one as it came.
+        // What plays just the stretch: not that one, but one as it came.
         let playing = |start, end| db.vod_clip_playing(vod, start, end).unwrap().map(|c| c.id);
-        assert_eq!((playing(10.0, 20.0), playing(30.0, 40.0)), (None, None), "a changed clip");
+        assert_eq!(playing(30.0, 40.0), None, "a changed clip");
         let whole = db.add_clip(vod, 30.0, 40.0, "d", true).unwrap().id;
         assert_eq!(playing(30.0, 40.0), Some(whole));
         // The page tells them apart as listed (clips.svelte.ts `find`).
         let plain: Vec<_> = db.clips(vod).unwrap().iter().map(|c| (c.id, c.plain)).collect();
-        assert_eq!(plain, [(struck, false), (added, false), (whole, true)]);
-        // A line struck and put back is just the stretch again; a group isn't.
-        db.set_piece_struck(piece, &[]).unwrap();
-        assert_eq!(playing(10.0, 20.0), Some(struck), "struck and put back");
+        assert_eq!(plain, [(added, false), (whole, true)]);
+        // A piece added and taken away is just the stretch again; a group isn't.
+        db.remove_piece(db.piece_rows(added).unwrap()[1].id).unwrap();
+        assert_eq!(playing(30.0, 40.0), Some(added), "added to and taken away from");
         let grouped = db.add_clip(vod, 60.0, 70.0, "e", true).unwrap().id;
         let into = db.add_clip(vod, 80.0, 90.0, "f", true).unwrap().id;
         db.add_group(into, grouped, Some(0)).unwrap();
@@ -2158,7 +2059,7 @@ pub(crate) mod tests {
         db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
         let piece = db.piece_rows(edit).unwrap()[0].id;
         db.set_piece_range(piece, 10.0, 30.0).unwrap();
-        db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
+        db.add_clip_mark(edit, vod, "chapter", 12.0, None).unwrap();
         assert!(db.split_piece(piece, 20.0).unwrap());
         db.move_piece(piece, 1).unwrap();
         db.rename_edit(edit, "f").unwrap();
@@ -2348,11 +2249,10 @@ pub(crate) mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let edit = db.add_edit("e").unwrap().id;
-        // 10-20 s with 12-14 struck (plays 0-2, 2-8), then 30-35 s (8-13).
+        // 10-20 s with 12-14 taken out (plays 0-2, 2-8), then 30-35 s (8-13).
         db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
         db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
-        let first = db.piece_rows(edit).unwrap()[0].id;
-        db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+        db.remove_edit_stretch(edit, 2.0, 4.0).unwrap();
         let pieces = db.edit_pieces(edit).unwrap();
         let mark = |kind: &str, at: f64| db.add_clip_mark(edit, vod, kind, at, None).unwrap();
         let shown = mark("highlight", 15.0);
@@ -2363,8 +2263,8 @@ pub(crate) mod tests {
         let placed = place_marks(&pieces, &db.clip_marks(edit).unwrap());
         let at = |id| placed.iter().find(|m| m.id == id).map(|m| m.start);
         assert_eq!(at(shown), Some(3.0));
-        assert_eq!(at(hidden), None, "a highlight whose moment is struck hides");
-        assert_eq!(at(kept), Some(2.0), "a chapter whose start is struck starts where its piece plays again");
+        assert_eq!(at(hidden), None, "a highlight whose moment is taken out hides");
+        assert_eq!(at(kept), Some(2.0), "a chapter whose start is taken out starts where what's left plays");
         assert_eq!(at(later), Some(9.0));
         assert_eq!(at(outside), None, "a moment the edit doesn't play");
         assert_eq!(source_at(&pieces, 3.0), Some((vod, 15.0)));
@@ -2390,21 +2290,20 @@ pub(crate) mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let edit = db.add_edit("e").unwrap().id;
-        // 10-20 s with 18-20 struck (plays 0-8), then 30-35 s (8-13).
+        // 10-20 s with 18-20 taken out (plays 0-8), then 30-35 s (8-13).
         db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
         db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
-        let first = db.piece_rows(edit).unwrap()[0].id;
-        db.set_piece_struck(first, &[(18.0, 20.0)]).unwrap();
+        db.remove_edit_stretch(edit, 8.0, 10.0).unwrap();
         let pieces = db.edit_pieces(edit).unwrap();
         let mark = |kind: &str, at: f64| db.add_clip_mark(edit, vod, kind, at, None).unwrap();
-        let struck = mark("chapter", 19.0);
+        let cut_away = mark("chapter", 19.0);
         let between = mark("chapter", 25.0);
         let before = mark("chapter", 5.0);
         let highlight = mark("highlight", 25.0);
         let cut = mark("cut", 25.0);
         let placed = place_marks(&pieces, &db.clip_marks(edit).unwrap());
         let at = |id| placed.iter().find(|m| m.id == id).map(|m| m.start);
-        assert_eq!(at(struck), Some(8.0), "struck to its piece's end: where the next piece begins");
+        assert_eq!(at(cut_away), Some(8.0), "taken out to its piece's end: where the next piece begins");
         assert_eq!(at(between), Some(8.0), "between two pieces: where the next one begins");
         assert_eq!(at(before), Some(0.0), "before every piece: where the first begins");
         assert_eq!(at(highlight), None, "a highlight shows only where its moment plays");
@@ -2427,17 +2326,15 @@ pub(crate) mod tests {
         db.remove_edit_stretch(edit, 3.01, 5.99).unwrap();
         let ids: Vec<i64> = db.clip_marks(edit).unwrap().iter().map(|(id, _)| *id).collect();
         assert!(!ids.contains(&left) && !ids.contains(&right), "the marks at its ends are a real split now");
-        assert!(ids.contains(&star), "a highlight in it stays, hidden while its moment is struck");
+        assert!(ids.contains(&star), "a highlight in it stays, hidden while its moment is out");
         let now = placed();
         assert_eq!(now.len(), 1);
         assert!(now[0].id == after && (now[0].start - 5.02).abs() < 1e-6, "18 s, 2.98 s sooner");
-        // Two pieces now, nothing struck: 10-13.01 s and 15.99-20 s.
-        let now: Vec<(f64, f64, usize)> =
-            db.edit_pieces(edit).unwrap().iter().map(|p| (p.start, p.end, p.struck.len())).collect();
+        // Two pieces now: 10-13.01 s and 15.99-20 s.
+        let now: Vec<(f64, f64)> = db.edit_pieces(edit).unwrap().iter().map(|p| (p.start, p.end)).collect();
         assert_eq!(now.len(), 2);
         let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
         assert!(near(now[0].0, 10.0) && near(now[0].1, 13.01) && near(now[1].0, 15.99) && near(now[1].1, 20.0));
-        assert!(now.iter().all(|p| p.2 == 0), "nothing struck");
     }
 
     #[test]
@@ -2579,19 +2476,19 @@ pub(crate) mod tests {
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let other = db.add_vod(&info("y")).unwrap().0.id;
         let edit = db.add_edit("e").unwrap().id;
-        // 10-20 s of x with 12-14 struck (plays 0-2, 2-8), then 30-35 s of y (8-13).
+        // 10-20 s of x with 12-14 taken out (plays 0-2, 2-8), then 30-35 s of y (8-13).
         db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
         db.add_piece(edit, other, (30.0, 35.0), "b", None).unwrap();
-        let first = db.piece_rows(edit).unwrap()[0].id;
-        db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+        db.remove_edit_stretch(edit, 2.0, 4.0).unwrap();
         db.add_clip_mark(edit, other, "chapter", 31.0, Some("inside")).unwrap();
         db.add_clip_mark(edit, other, "chapter", 34.0, Some("outside")).unwrap();
         let pieces = db.edit_pieces(edit).unwrap();
         assert_eq!(
             stretch_pieces(&pieces, 1.0, 10.0),
             [
-                StretchPiece { vod_id: vod, start: 11.0, end: 20.0, struck: vec![(12.0, 14.0)], title: "a".into() },
-                StretchPiece { vod_id: other, start: 30.0, end: 32.0, struck: vec![], title: "b".into() },
+                StretchPiece { vod_id: vod, start: 11.0, end: 12.0, title: "a".into() },
+                StretchPiece { vod_id: vod, start: 14.0, end: 20.0, title: "a".into() },
+                StretchPiece { vod_id: other, start: 30.0, end: 32.0, title: "b".into() },
             ]
         );
 
@@ -2600,10 +2497,10 @@ pub(crate) mod tests {
         assert!(db.revision(edit).unwrap().unwrap() > before, "a change to the edit: its clip bar");
         assert_eq!(
             (clip.bar, clip.vod_id, clip.start, clip.end),
-            (Some(crate::db::ClipBar::Edit { id: edit }), vod, 11.0, 20.0)
+            (Some(crate::db::ClipBar::Edit { id: edit }), vod, 11.0, 12.0)
         );
         assert_eq!(db.bar_clips(edit).unwrap().iter().map(|c| c.id).collect::<Vec<_>>(), [clip.id]);
-        assert_eq!(db.edit_pieces(clip.id).unwrap().len(), 2);
+        assert_eq!(db.edit_pieces(clip.id).unwrap().len(), 3);
         assert_eq!(db.clip(clip.id).unwrap().unwrap().length, 9.0, "7 s of x, 2 of y");
         let marks: Vec<_> = db.clip_marks(clip.id).unwrap().into_iter().map(|(_, m)| m.text).collect();
         assert_eq!(marks, [Some("inside".to_string())], "the edit's marks in the stretch come with it");
@@ -2837,17 +2734,15 @@ pub(crate) mod tests {
             db.put(edit, &[Put::Range { vod_id: vod, start: 4.0, end: 20.0, title: None }], Onto::Bar).unwrap();
         assert_eq!(shown(on_bar[0]), whole, "put on the clip bar");
 
-        // A highlight whose end is cut off ends where its stretch does; one
-        // whose middle is struck is shorter by that much.
+        // A highlight whose end is cut off ends where its stretch does, as
+        // it does where a stretch of it is taken out: at its piece's end.
         let short = db.add_edit("s").unwrap().id;
         db.add_piece(short, vod, (8.0, 12.0), "a", None).unwrap();
         assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(4.0), &funny))], "ends at the piece's end");
         let first = db.piece_rows(short).unwrap()[0].id;
         db.set_piece_range(first, 8.0, 20.0).unwrap();
-        db.set_piece_struck(first, &[(11.0, 12.0)]).unwrap();
-        assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(5.0), &funny))], "less what's struck");
-        db.set_piece_struck(first, &[(13.0, 16.0)]).unwrap();
-        assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(5.0), &funny))], "to where it's struck");
+        db.remove_edit_stretch(short, 3.0, 4.0).unwrap();
+        assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(3.0), &funny))], "a stretch of it taken out");
     }
 
     #[test]
@@ -2965,26 +2860,21 @@ pub(crate) mod tests {
         let pieces = db.edit_pieces(edit.id).unwrap();
         db.move_piece(pieces[0].id, 1).unwrap();
         assert_eq!(titles(&db), ["a", "b"]);
-        // Grown or trimmed within the VOD, and a line struck.
+        // Grown or trimmed within the VOD.
         let a_piece = db.edit_pieces(edit.id).unwrap()[0].id;
         assert!(db.set_piece_range(a_piece, -5.0, 18.0).is_err(), "not before the VOD");
         db.set_piece_range(a_piece, 0.0, 18.0).unwrap();
-        db.set_piece_struck(a_piece, &[(12.0, 14.0)]).unwrap();
         let p = &db.edit_pieces(edit.id).unwrap()[0];
         assert_eq!((p.start, p.end), (0.0, 18.0));
         db.set_piece_range(a_piece, 10.0, 18.0).unwrap();
         let p = &db.edit_pieces(edit.id).unwrap()[0];
-        assert_eq!(p.spans(), [(10.0, 12.0), (14.0, 18.0)]);
+        assert_eq!(p.spans(), [(10.0, 18.0)]);
         let ranges = db.edit(edit.id, at_first()).unwrap().unwrap().ranges;
-        assert_eq!(
-            ranges.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
-            [(10.0, 12.0), (14.0, 18.0), (30.0, 35.0)]
-        );
-        assert_eq!(db.edit(edit.id, at_first()).unwrap().unwrap().length, 6.0 + 5.0);
+        assert_eq!(ranges.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(), [(10.0, 18.0), (30.0, 35.0)]);
+        assert_eq!(db.edit(edit.id, at_first()).unwrap().unwrap().length, 8.0 + 5.0);
         // Kept in flicks: what went in comes out, to the flick.
         let row = db.piece_row(a_piece).unwrap().unwrap();
         assert_eq!((row.start, row.end), (Flicks::from_seconds(10.0), Some(Flicks::from_seconds(18.0))));
-        assert_eq!(row.struck, [(Flicks::from_seconds(12.0), Flicks::from_seconds(14.0))]);
         // Split in two where it's asked, the second right after the first.
         let before = db.edit_pieces(edit.id).unwrap();
         assert!(db.split_piece(before[0].id, 16.0).unwrap());
@@ -2992,7 +2882,6 @@ pub(crate) mod tests {
         let split = db.edit_pieces(edit.id).unwrap();
         assert_eq!(split.len(), 3);
         assert_eq!(((split[0].start, split[0].end), (split[1].start, split[1].end)), ((10.0, 16.0), (16.0, 18.0)));
-        assert_eq!(split[1].struck, [(12.0, 14.0)]);
         assert_eq!(split[1].title, "a");
         // Pieces are their own: changing one leaves the others be.
         db.set_piece_range(split[1].id, 16.0, 40.0).unwrap();
@@ -3062,7 +2951,6 @@ pub(crate) mod tests {
         db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
         db.add_piece(edit, vod, (30.0, 34.0), "b", None).unwrap();
         let a = db.edit_pieces(edit).unwrap()[0].id;
-        db.set_piece_struck(a, &[(12.0, 13.0)]).unwrap();
         let before = db.edit_state(edit).unwrap().unwrap();
 
         db.remove_piece(a).unwrap();
@@ -3071,7 +2959,7 @@ pub(crate) mod tests {
         assert_ne!(db.edit_state(edit).unwrap().unwrap(), before);
 
         db.restore_edit(edit, &before).unwrap();
-        assert_eq!(db.edit_state(edit).unwrap().unwrap(), before, "title, pieces, order and strikes");
+        assert_eq!(db.edit_state(edit).unwrap().unwrap(), before, "title, pieces and order");
         assert_eq!(db.edit_state(9999).unwrap(), None);
     }
 
@@ -3084,8 +2972,8 @@ pub(crate) mod tests {
         let none = |_: i64, _: f64, _: f64| vec![];
         let err = render_pieces(&db.edit_pieces(edit.id).unwrap(), none).unwrap_err();
         assert!(err.to_string().contains("isn't here yet"), "{err}");
-        let piece = db.edit_pieces(edit.id).unwrap()[0].id;
-        db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
+        // 12-13 s taken out: two pieces.
+        db.remove_edit_stretch(edit.id, 2.0, 3.0).unwrap();
         // Footage of 5 s to 30 s of the VOD: its time 0 is the VOD's 5 s.
         let file = |path: &str, offset: f64| Source { path: path.into(), offset, section: None };
         let found = |_: i64, a: f64, b: f64| vec![(a, b, file("/f/x.mp4", 5.0))];
@@ -3107,7 +2995,7 @@ pub(crate) mod tests {
         };
         assert!(render_pieces(&db.edit_pieces(edit.id).unwrap(), partly).is_err());
         let mut gone = db.edit_pieces(edit.id).unwrap();
-        gone[0].hole = true;
+        gone.iter_mut().for_each(|p| p.hole = true);
         assert_eq!(
             render_pieces(&gone, partly).unwrap(),
             [

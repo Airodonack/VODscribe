@@ -216,7 +216,7 @@ export default {
     // takes out the stretch from it to the piece's end, the cut then a real
     // split (gone as a mark); Ctrl+Z brings both back, and B takes it away.
     const editCuts = async () => (await app.invoke("edit_marks", { id: made.id })).filter((m) => m.kind === "cut");
-    // How long the edit plays (nothing's struck: a slice taken out splits the pieces).
+    // How long the edit plays (a slice taken out splits the pieces).
     const lengthNow = async () => (await edit()).pieces.reduce((t, p) => t + p.end - p.start, 0);
     await app.key("b");
     const [cut] = await until(
@@ -496,10 +496,11 @@ export default {
     const rows = "section.edit-view ~ .below .body .transcript .line button.row";
     const lineCount = () => app.js(`return document.querySelectorAll(arguments[0]).length`, rows);
     const lines = await until("the edit's transcript", lineCount, 10_000);
-    const struckCount = async () => (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);
+    const piecesNow = async () => JSON.stringify((await edit()).pieces.map((p) => [p.id, p.start, p.end]));
+    const unclicked = await piecesNow();
     await app.click(rows);
     await new Promise((r) => setTimeout(r, 1000));
-    if (await struckCount()) throw new Error("a click on a line struck it");
+    if ((await piecesNow()) !== unclicked) throw new Error("a click on a line changed the edit");
     // The timeline shows all of the edit, before the removal and after it's undone.
     const spanNow = () =>
       app.js(`return Number(document.querySelector("section.edit-view .scrubber")?.dataset.span ?? 0)`);
@@ -517,7 +518,7 @@ export default {
     await app.key("Delete");
     await until(
       "the line taken out",
-      async () => (await lengthNow()) < played - 0.01 && (await lineCount()) < lines && (await struckCount()) === 0,
+      async () => (await lengthNow()) < played - 0.01 && (await lineCount()) < lines,
       10_000,
     );
     const shorter = await until(

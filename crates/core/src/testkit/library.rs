@@ -186,8 +186,8 @@ pub fn at_version(path: &Path, version: usize) -> Connection {
 /// format (`at_version`) with every row of each table both have, in the
 /// columns both have. A column or table added since is gone, one dropped
 /// since is back and empty, and the triggers and indexes are that format's;
-/// a value whose meaning changed since (struck spans in seconds before 22)
-/// is copied as it is. Nothing may have the library open. The connection is
+/// a value whose meaning changed since (times in seconds before 22) is
+/// copied as it is. Nothing may have the library open. The connection is
 /// to the library at `version`, for a test to change rows as that version
 /// would.
 pub fn back_to(path: &Path, version: usize) -> Connection {

@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(Timeline::covering(600.0, Vec::new()).stretches().len(), 1);
     }
 
-    fn piece(id: i64, vod_id: i64, start: f64, end: f64, struck: &[(f64, f64)]) -> EditPiece {
+    fn piece(id: i64, vod_id: i64, start: f64, end: f64) -> EditPiece {
         EditPiece {
             id,
             edit_id: 1,
@@ -239,7 +239,6 @@ mod tests {
             start,
             end,
             title: String::new(),
-            struck: struck.to_vec(),
             vod_title: String::new(),
             hole: false,
             group: None,
@@ -286,7 +285,7 @@ mod tests {
 
     #[test]
     fn an_edit_is_laid_end_to_end_from_the_footage_found() {
-        let pieces = [piece(1, 7, 10.0, 20.0, &[(14.0, 16.0)]), piece(2, 8, 5.0, 8.0, &[])];
+        let pieces = [piece(1, 7, 10.0, 14.0), piece(3, 7, 16.0, 20.0), piece(2, 8, 5.0, 8.0)];
         // VOD 7's footage is a section from 8 s; VOD 8 has none yet.
         let find = |vod: i64, a: f64, b: f64| {
             let source = Source { path: PathBuf::from("7.mkv"), offset: 8.0, section: Some("s".into()) };
@@ -314,7 +313,7 @@ mod tests {
 
     #[test]
     fn footage_still_coming_plays_as_far_as_it_is_in() {
-        let pieces = [piece(1, 7, 10.0, 20.0, &[])];
+        let pieces = [piece(1, 7, 10.0, 20.0)];
         let source = Source { path: PathBuf::from("7.mkv"), offset: 0.0, section: Some("s".into()) };
         let upto = |until: f64| {
             let source = source.clone();
@@ -342,7 +341,7 @@ mod tests {
     #[test]
     fn a_long_piece_plays_from_each_section_and_waits_between() {
         // A whole VOD of 600 s: sections 0-100 and 300-400 here.
-        let pieces = [piece(1, 7, 0.0, 600.0, &[])];
+        let pieces = [piece(1, 7, 0.0, 600.0)];
         let section = |from: f64| Source { path: PathBuf::from(format!("{from}.mkv")), offset: from, section: None };
         let t = Timeline::of(&pieces, |_, _, _| vec![(0.0, 100.0, section(0.0)), (300.0, 400.0, section(300.0))]);
         let s: Vec<(f64, f64, f64, bool)> =

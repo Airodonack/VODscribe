@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::OptionalExtension;
 
 use crate::db::Db;
-use crate::edits::{EditState, ItemState, MarkAt, Place, Put, SLIVER, spans, struck_flicks};
+use crate::edits::{EditState, ItemState, MarkAt, Place, Put, SLIVER, spans};
 use crate::time::Flicks;
 
 /// What a copy goes in a timeline as.
@@ -80,7 +80,6 @@ impl Db {
                 start: Some(start),
                 end: Some(end),
                 title: p.title.clone(),
-                struck: struck_flicks(&p.struck),
                 origin: None,
             });
         }
@@ -262,8 +261,7 @@ impl Db {
         let mut want = Vec::with_capacity(state.items.len());
         for i in &state.items {
             let (Some(vod), Some(start), Some(end)) = (i.vod_id, i.start, i.end) else { return Ok(None) };
-            let struck: Vec<(f64, f64)> = i.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect();
-            want.push((vod, spans(start.seconds(), end.seconds(), &struck)));
+            want.push((vod, spans(start.seconds(), end.seconds())));
         }
         for clip in self.bar_clips(bar)? {
             let pieces = self.edit_pieces(clip.id)?;
@@ -356,8 +354,8 @@ impl Db {
         Ok((top.len(), t))
     }
 
-    /// How long `state`'s pieces play, end to end, less what's struck: a
-    /// piece with no end to its VOD's end (nothing if that isn't known).
+    /// How long `state`'s pieces play, end to end: a piece with no end to
+    /// its VOD's end (nothing if that isn't known).
     pub fn played_of(&self, state: &EditState) -> Result<f64> {
         let mut total = 0.0;
         for i in &state.items {
@@ -366,8 +364,7 @@ impl Db {
                 Some(end) => end.seconds(),
                 None => self.vod_duration(vod)?.unwrap_or(0.0),
             };
-            let struck: Vec<(f64, f64)> = i.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect();
-            total += spans(start.seconds(), end, &struck).iter().map(|(a, b)| b - a).sum::<f64>();
+            total += spans(start.seconds(), end).iter().map(|(a, b)| b - a).sum::<f64>();
         }
         Ok(total)
     }
@@ -381,9 +378,8 @@ fn group_marks(state: &EditState) -> Vec<MarkAt> {
         state.items.iter().any(|i| match (i.vod_id, i.start) {
             (Some(vod), Some(start)) if vod == m.vod_id => {
                 let end = i.end.map_or(f64::INFINITY, |e| e.seconds());
-                let struck: Vec<(f64, f64)> = i.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect();
                 let t = m.at.seconds();
-                spans(start.seconds(), end, &struck).iter().any(|&(a, b)| t >= a && t < b)
+                spans(start.seconds(), end).iter().any(|&(a, b)| t >= a && t < b)
             }
             _ => false,
         })

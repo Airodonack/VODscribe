@@ -323,8 +323,8 @@ impl Drop for Giving {
 }
 
 /// What the clips' queue does with clip or edit `id`: a snippet of one
-/// piece as it came is cut; one changed in the editor (more pieces, lines
-/// struck, groups), or a listed edit, is rendered as an edit is.
+/// piece as it came is cut; one changed in the editor (more pieces,
+/// groups), or a listed edit, is rendered as an edit is.
 fn make(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) {
     let snippet = is_cut(&app.state::<AppState>().db.lock().unwrap(), id);
     match snippet {

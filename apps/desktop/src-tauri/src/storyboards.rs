@@ -619,7 +619,6 @@ mod tests {
             start,
             end,
             title: String::new(),
-            struck: Vec::new(),
             vod_title: String::new(),
             hole: false,
             group: None,

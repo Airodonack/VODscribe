@@ -59,14 +59,13 @@ fn an_edits_chat_is_its_pieces_vods_where_they_play() {
     let messages: Vec<_> = at.iter().map(|&t| message(t, "a", &format!("at {t}"))).collect();
     db.add_chat(vod, &messages, &[]).unwrap();
     let edit = db.add_edit("e").unwrap().id;
-    // 10-20 s with 12-14 struck (plays 0-2, 2-8), then 30-35 s (8-13).
+    // 10-20 s with 12-14 taken out (plays 0-2, 2-8), then 30-35 s (8-13).
     db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
     db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
-    let first = db.piece_rows(edit).unwrap()[0].id;
-    db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+    db.remove_edit_stretch(edit, 2.0, 4.0).unwrap();
     let w = db.edit_chat_windows(edit, &[(0.0, 13.0), (2.0, 9.5)], 2).unwrap();
     let times = |i: usize| w[i].messages.iter().map(|m| m.time).collect::<Vec<_>>();
-    assert_eq!((times(0), w[0].total), (vec![1.0, 3.0], 3), "11 and 15 s; 31 s counted; 13 s struck");
+    assert_eq!((times(0), w[0].total), (vec![1.0, 3.0], 3), "11 and 15 s; 31 s counted; 13 s taken out");
     assert_eq!((times(1), w[1].total), (vec![3.0, 9.0], 2));
     assert_eq!(w[0].messages[0].platform.as_deref(), Some("youtube"));
     let (count, histogram) = db.edit_chat_histogram(edit, 13.0, 13).unwrap();
@@ -74,7 +73,7 @@ fn an_edits_chat_is_its_pieces_vods_where_they_play() {
     assert_eq!((histogram[1], histogram[3], histogram[9]), (1, 1, 1));
     // Before the page knows the edit's length, it still learns there's chat.
     assert_eq!(db.edit_chat_histogram(edit, 0.0, 13).unwrap(), (3, vec![0; 13]));
-    // Its events, where they play: a sub at 16 s (4 s in) and one at 13 s (struck).
+    // Its events, where they play: a sub at 16 s (4 s in) and one at 13 s (taken out).
     let sub = |time| ChatMessage { kind: Kind::Sub, amount: Some(1.0), ..message(time, "b", "subbed") };
     db.add_chat(vod, &[sub(16.0), sub(13.0)], &[]).unwrap();
     let events = db.edit_chat_events(edit).unwrap();

@@ -88,10 +88,12 @@ fn vods_clips_and_edits_become_documents_with_the_vods_own_clip_listing_it() {
     let file = edit.file_path.expect("a file, gone");
     assert_eq!(file, shown(&db.files().clip_file(edit.id, "mp4")));
     assert!(!Path::new(&file).exists());
+    // Piece 4's stretch struck is taken out (V46): two pieces in its place.
     let pieces = db.edit_pieces(edit.id).unwrap();
+    let split = pieces[1].id;
     assert_eq!(
         pieces.iter().map(|p| (p.id, p.vod_id, p.start, p.end)).collect::<Vec<_>>(),
-        [(4, 2, 5.0, 18.0), (5, 1, 100.0, 130.0)]
+        [(4, 2, 5.0, 12.0), (split, 2, 13.5, 18.0), (5, 1, 100.0, 130.0)]
     );
     // Each VOD has its own clip, over all of it, listing it.
     for vod in [1, 2] {
@@ -117,7 +119,7 @@ fn vods_clips_and_edits_become_documents_with_the_vods_own_clip_listing_it() {
     db.delete_vod(1).unwrap();
     assert!(db.vod_clip(1).unwrap().is_none() && db.clips(1).unwrap().is_empty() && db.marks(1).unwrap().is_empty());
     assert_eq!(db.clip(2).unwrap(), None);
-    assert_eq!(db.edit_pieces(edit.id).unwrap().len(), 1, "the edit keeps its piece of the other VOD");
+    assert_eq!(db.edit_pieces(edit.id).unwrap().len(), 2, "the edit keeps its pieces of the other VOD");
 }
 
 /// Spec 30: a VOD's own clip comes "with the VOD's place in the library's
@@ -183,17 +185,19 @@ fn marks_stay_on_their_moment_through_the_clip_model() {
 
 /// Spec 33: "the struck stretches, JSON seconds till now, are put in flicks
 /// by `Db::open` in the same transaction" (db.rs:517, `MIGRATE_V22`;
-/// `struck_to_flicks`, db.rs:1426): they read the same, in seconds, from a
-/// library from before the clip model and from one already in flicks.
+/// `struck_to_flicks`): they're read in seconds, from a library from before
+/// the clip model and from one already in flicks, then taken out (V46,
+/// `struck_stretches_become_splits`): the piece is split there, to the flick.
 #[test]
 fn struck_stretches_read_the_same_in_flicks() {
     let (_dir, path) = library("migrate-v22-struck");
     at_21(&path);
     let db = upgraded(&path);
     let edit = db.edits(crate::edits::tests::at_first()).unwrap().remove(0).id;
-    let struck: Vec<_> = db.edit_pieces(edit).unwrap().into_iter().map(|p| (p.id, p.struck)).collect();
-    assert_eq!(struck, [(4, vec![(12.0, 13.5)]), (5, vec![])]);
-    assert_eq!(db.piece_row(4).unwrap().unwrap().struck, [(Flicks::from_seconds(12.0), Flicks::from_seconds(13.5))]);
+    let pieces: Vec<_> = db.edit_pieces(edit).unwrap().into_iter().map(|p| (p.start, p.end, p.title)).collect();
+    assert_eq!(pieces, [(5.0, 12.0, "a".into()), (13.5, 18.0, "a".into()), (100.0, 130.0, "b".into())]);
+    let row = db.piece_row(4).unwrap().unwrap();
+    assert_eq!((row.start, row.end), (Flicks::from_seconds(5.0), Some(Flicks::from_seconds(12.0))));
 
     // At V22 they're in flicks already: put in flicks again, they'd be far off.
     let (_dir, path) = library("migrate-v23-struck");
@@ -212,7 +216,8 @@ fn struck_stretches_read_the_same_in_flicks() {
         ))
         .unwrap();
     let db = upgraded(&path);
-    assert_eq!(db.edit_pieces(2).unwrap()[0].struck, [(12.0, 13.5)]);
+    let pieces: Vec<_> = db.edit_pieces(2).unwrap().into_iter().map(|p| (p.start, p.end)).collect();
+    assert_eq!(pieces, [(5.0, 12.0), (13.5, 18.0)]);
 }
 
 /// Spec 34: "what's been rendered of a clip (its status, file, error, the
@@ -1004,6 +1009,434 @@ fn a_library_from_before_video_heights_has_no_video_download_to_carry_on() {
     assert_eq!(db.wanted_videos().unwrap(), [(vod, 480)]);
 }
 
+/// Struck stretches become stretches taken out (V46): "Struck lines are
+/// functionally like deleted video, so the migration should really have been
+/// turning struck lines into deleted stretches (and a split)" (owner,
+/// 2026-11-13, plans/0.7.4.md "Struck stretches become removed stretches").
+/// Each spec builds a library with this version, takes it back to 0.7.3's
+/// format (45), strikes stretches of its pieces as 0.4.x did, and opens it.
+mod struck_stretches_become_splits {
+    use super::*;
+    use crate::edits::EditPiece;
+
+    /// What 0.7.3 played of `start`..`end` less the `struck` stretches (its
+    /// `edits::spans`, kept here as the rule the upgrade must play the same
+    /// as): what's between them, slivers left out.
+    fn played_before(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
+        let mut cuts: Vec<(f64, f64)> = struck.iter().copied().filter(|(a, b)| b > a).collect();
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut out = Vec::new();
+        let mut at = start;
+        for (a, b) in cuts {
+            if a > at {
+                out.push((at, a.min(end)));
+            }
+            at = at.max(b);
+            if at >= end {
+                break;
+            }
+        }
+        if at < end {
+            out.push((at, end));
+        }
+        out.retain(|(a, b)| b - a >= 0.04);
+        out
+    }
+
+    /// A library made by `build` (given VOD `edits::tests::info("x")`, 600 s long), taken
+    /// back to format 45 with the `strikes` (pieces' struck stretches, in
+    /// seconds, from what `build` gave), then opened by this version.
+    fn struck<T>(
+        name: &str,
+        build: impl FnOnce(&Db, i64) -> T,
+        strikes: impl FnOnce(&T) -> Vec<(i64, Vec<(f64, f64)>)>,
+    ) -> (crate::TempDir, Db, i64, T) {
+        let (dir, path) = library(name);
+        let (vod, built) = {
+            let db = Db::open(&path).unwrap();
+            let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
+            (vod, build(&db, vod))
+        };
+        let conn = back_to(&path, 45);
+        for (piece, stretches) in strikes(&built) {
+            let flicked: Vec<(i64, i64)> = stretches.iter().map(|&(a, b)| (flicks(a), flicks(b))).collect();
+            let json = serde_json::to_string(&flicked).unwrap();
+            conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![piece, json]).unwrap();
+        }
+        drop(conn);
+        (dir, upgraded(&path), vod, built)
+    }
+
+    /// Each piece of clip `id`: its id, stretch and title.
+    fn pieces(db: &Db, id: i64) -> Vec<(i64, f64, f64, String)> {
+        db.edit_pieces(id).unwrap().into_iter().map(|p| (p.id, p.start, p.end, p.title)).collect()
+    }
+
+    /// What clip `id` plays, in order: each VOD's stretches.
+    fn plays(db: &Db, id: i64) -> Vec<(i64, f64, f64)> {
+        let pieces: Vec<EditPiece> = db.edit_pieces(id).unwrap();
+        crate::edits::played(&pieces).map(|s| (s.piece.vod_id, s.from, s.to)).collect()
+    }
+
+    /// `played_before`'s stretches, of VOD `vod`.
+    fn of(vod: i64, stretches: Vec<(f64, f64)>) -> Vec<(i64, f64, f64)> {
+        stretches.into_iter().map(|(a, b)| (vod, a, b)).collect()
+    }
+
+    /// Puts `start`..`end` of `vod` last in clip `clip`, titled `title`: its id.
+    fn add(db: &Db, clip: i64, vod: i64, (start, end): (f64, f64), title: &str) -> i64 {
+        db.add_piece(clip, vod, (start, end), title, None).unwrap();
+        db.item_rows(clip).unwrap().into_iter().map(|i| i.id).max().unwrap()
+    }
+
+    /// "Delete then takes the selected lines' stretch out, as any stretch
+    /// taken out: the piece splits in two there, each part its own band"
+    /// (CHANGELOG.md, 0.5.0): a piece with a stretch struck is two pieces in
+    /// its place, with its title, that play what it played.
+    #[test]
+    fn a_piece_with_a_struck_stretch_becomes_two_pieces_that_play_the_same() {
+        let (_dir, db, vod, (edit, a, b)) = struck(
+            "struck-one",
+            |db, vod| {
+                let edit = db.add_edit("Best of").unwrap().id;
+                (edit, add(db, edit, vod, (10.0, 20.0), "a"), add(db, edit, vod, (30.0, 35.0), "b"))
+            },
+            |&(_, a, _)| vec![(a, vec![(12.0, 14.0)])],
+        );
+        let now = pieces(&db, edit);
+        assert_eq!(now.len(), 3, "{now:?}");
+        assert_eq!(now, [(a, 10.0, 12.0, "a".into()), (now[1].0, 14.0, 20.0, "a".into()), (b, 30.0, 35.0, "b".into())]);
+        let mut before = played_before(10.0, 20.0, &[(12.0, 14.0)]);
+        before.push((30.0, 35.0));
+        assert_eq!(plays(&db, edit), of(vod, before));
+        // The column stays, emptied, for 0.5.0 to 0.7.3, which read it (`MIGRATE_V46`).
+        let struck: i64 =
+            db.conn.query_row("SELECT count(*) FROM items WHERE struck != '[]'", [], |r| r.get(0)).unwrap();
+        assert_eq!(struck, 0);
+    }
+
+    /// As a split does (`Db::split_piece`), both parts of a realized piece
+    /// (sources.rs `realize_piece`) keep where it came from.
+    #[test]
+    fn a_realized_pieces_parts_keep_where_it_came_from() {
+        let (_dir, db, _vod, (edit, a)) = struck(
+            "struck-origin",
+            |db, vod| {
+                let edit = db.add_edit("Best of").unwrap().id;
+                let a = add(db, edit, vod, (10.0, 20.0), "a");
+                db.conn.execute("UPDATE items SET origin = ?2 WHERE id = ?1", params![a, flicks(100.0)]).unwrap();
+                (edit, a)
+            },
+            |&(_, a)| vec![(a, vec![(12.0, 14.0)])],
+        );
+        let rows = db.piece_rows(edit).unwrap();
+        assert_eq!(rows.iter().map(|p| p.origin).collect::<Vec<_>>(), [Some(Flicks::from_seconds(100.0)); 2]);
+        assert_eq!(rows[0].id, a);
+    }
+
+    /// Several stretches struck, in any order and overlapping: a piece for
+    /// each stretch left between them, a sliver between two left out, as it
+    /// played (plans/0.7.4.md: "the piece split at its ends, what's between
+    /// gone").
+    #[test]
+    fn several_struck_stretches_split_a_piece_at_each_one() {
+        let strikes = [(25.0, 27.0), (5.0, 8.0), (26.0, 30.0), (10.0, 12.0), (12.02, 14.0)];
+        let (_dir, db, vod, (edit, a)) = struck(
+            "struck-several",
+            |db, vod| {
+                let edit = db.add_edit("Best of").unwrap().id;
+                (edit, add(db, edit, vod, (0.0, 40.0), "a"))
+            },
+            |&(_, a)| vec![(a, strikes.to_vec())],
+        );
+        let now = pieces(&db, edit);
+        let stretches: Vec<_> = now.iter().map(|(_, s, e, t)| (*s, *e, t.as_str())).collect();
+        assert_eq!(stretches, [(0.0, 5.0, "a"), (8.0, 10.0, "a"), (14.0, 25.0, "a"), (30.0, 40.0, "a")]);
+        assert_eq!(plays(&db, edit), of(vod, played_before(0.0, 40.0, &strikes)));
+        assert_eq!(now[0].0, a, "the first part is the piece");
+    }
+
+    /// A stretch struck at a piece's start or end trims it, as one taken out
+    /// there does ("the pieces it reaches are trimmed, or split at its ends",
+    /// commit 29146934), and a sliver left at an edge goes with it.
+    #[test]
+    fn a_stretch_struck_at_a_pieces_start_or_end_trims_it() {
+        let (a_struck, b_struck) = ([(10.0, 12.0), (19.0, 20.0)], [(32.0, 39.98)]);
+        let (_dir, db, vod, (edit, a, b)) = struck(
+            "struck-edges",
+            |db, vod| {
+                let edit = db.add_edit("Best of").unwrap().id;
+                (edit, add(db, edit, vod, (10.0, 20.0), "a"), add(db, edit, vod, (30.0, 40.0), "b"))
+            },
+            |&(_, a, b)| vec![(a, a_struck.to_vec()), (b, b_struck.to_vec())],
+        );
+        assert_eq!(pieces(&db, edit), [(a, 12.0, 19.0, "a".into()), (b, 30.0, 32.0, "b".into())]);
+        let mut before = played_before(10.0, 20.0, &a_struck);
+        before.extend(played_before(30.0, 40.0, &b_struck));
+        assert_eq!(plays(&db, edit), of(vod, before));
+    }
+
+    /// A piece struck whole, or but for a sliver, played nothing: it goes,
+    /// and a group it leaves empty goes too, as `remove_edit_stretch` takes
+    /// away groups left empty.
+    #[test]
+    fn a_wholly_struck_piece_goes_with_a_group_it_leaves_empty() {
+        let (_dir, db, vod, (edit, gone, kept)) = struck(
+            "struck-whole",
+            |db, vod| {
+                let edit = db.add_edit("Best of").unwrap().id;
+                let whole = add(db, edit, vod, (10.0, 20.0), "whole");
+                let sliver = add(db, edit, vod, (30.0, 40.0), "sliver");
+                let snippet = db.add_clip(vod, 50.0, 55.0, "g", true).unwrap().id;
+                db.add_group(edit, snippet, None).unwrap();
+                let grouped = db.item_rows(edit).unwrap().into_iter().map(|i| i.id).max().unwrap();
+                (edit, [whole, sliver, grouped], add(db, edit, vod, (60.0, 65.0), "kept"))
+            },
+            |&(_, [whole, sliver, grouped], _)| {
+                vec![(whole, vec![(9.0, 21.0)]), (sliver, vec![(30.02, 40.0)]), (grouped, vec![(50.0, 55.0)])]
+            },
+        );
+        assert!(gone.iter().all(|id| db.piece_row(*id).unwrap().is_none()));
+        assert_eq!(pieces(&db, edit), [(kept, 60.0, 65.0, "kept".into())]);
+        assert_eq!(db.item_rows(edit).unwrap().len(), 1, "the group went too");
+        assert_eq!(plays(&db, edit), [(vod, 60.0, 65.0)]);
+    }
+
+    /// A piece inside a group (a clip dropped in) is split where it is: its
+    /// parts in the group, in order, before what came after it there.
+    #[test]
+    fn a_grouped_pieces_parts_stay_in_its_group_in_order() {
+        let (_dir, db, vod, (edit, _)) = struck(
+            "struck-group",
+            |db, vod| {
+                let edit = db.add_edit("Best of").unwrap().id;
+                add(db, edit, vod, (0.0, 5.0), "x");
+                let snippet = db.add_clip(vod, 10.0, 20.0, "g", true).unwrap().id;
+                db.add_piece(snippet, vod, (40.0, 45.0), "g2", None).unwrap();
+                db.add_group(edit, snippet, None).unwrap();
+                add(db, edit, vod, (70.0, 75.0), "y");
+                (edit, db.edit_pieces(edit).unwrap()[1].id)
+            },
+            |&(_, grouped)| vec![(grouped, vec![(12.0, 14.0)])],
+        );
+        let now: Vec<_> =
+            db.edit_pieces(edit).unwrap().into_iter().map(|p| (p.start, p.end, p.group.map(|g| g.title))).collect();
+        let g = || Some("g".to_string());
+        assert_eq!(
+            now,
+            [(0.0, 5.0, None), (10.0, 12.0, g()), (14.0, 20.0, g()), (40.0, 45.0, g()), (70.0, 75.0, None)]
+        );
+        assert_eq!(db.item_rows(edit).unwrap().iter().filter(|i| i.vod_id.is_none()).count(), 1, "one group");
+        let before = vec![(0.0, 5.0), (10.0, 12.0), (14.0, 20.0), (40.0, 45.0), (70.0, 75.0)];
+        assert_eq!(plays(&db, edit), of(vod, before));
+    }
+
+    /// Where clip `id` shows its marks: each kind, title and start.
+    fn shown(db: &Db, id: i64) -> Vec<(String, Option<String>, f64)> {
+        crate::edits::place_marks(&db.edit_pieces(id).unwrap(), &db.clip_marks(id).unwrap())
+            .into_iter()
+            .map(|m| (m.kind, m.text, m.start))
+            .collect()
+    }
+
+    /// "a chapter whose moment was struck moves to the start of the part
+    /// after the stretch, where 0.7.3 showed it, so no made file goes out of
+    /// date" (owner, 2026-11-13, plans/0.7.4.md): where 0.7.3 showed it
+    /// (its piece playing again after the stretch), in each case the review
+    /// found (reports/master/074/review-struck-to-splits.md M1): an earlier
+    /// piece of the same VOD starting after the moment, and a later piece
+    /// playing the moment itself. The file 0.7.3 made of each, chapters and
+    /// all, stays made. A highlight there stays hidden, as 0.7.3 hid it.
+    #[test]
+    fn a_chapter_whose_moment_was_struck_shows_where_0_7_3_showed_it() {
+        let (_dir, db, _vod, (simple, earlier, later)) = struck(
+            "struck-chapter",
+            |db, vod| {
+                let edit = |title: &str, pieces: &[(f64, f64)]| {
+                    let edit = db.add_edit(title).unwrap().id;
+                    let ids: Vec<i64> = pieces.iter().map(|&s| add(db, edit, vod, s, "p")).collect();
+                    db.add_clip_mark(edit, vod, "chapter", 13.0, Some("Raid")).unwrap();
+                    db.add_clip_mark(edit, vod, "highlight", 13.5, Some("Clutch")).unwrap();
+                    (edit, ids)
+                };
+                let simple = edit("Simple", &[(10.0, 20.0), (30.0, 35.0)]);
+                let earlier = edit("Earlier", &[(50.0, 60.0), (10.0, 20.0)]);
+                let later = edit("Later", &[(10.0, 20.0), (12.5, 16.0)]);
+                (simple, earlier, later)
+            },
+            |(simple, earlier, later)| {
+                let strike = vec![(12.0, 14.0)];
+                vec![(simple.1[0], strike.clone()), (earlier.1[1], strike.clone()), (later.1[0], strike)]
+            },
+        );
+        let raid = |at: f64| vec![("chapter".to_string(), Some("Raid".to_string()), at)];
+        // As 0.7.3 placed them: in the struck piece, where it played again (14 s).
+        assert_eq!(shown(&db, simple.0), raid(2.0));
+        assert_eq!(shown(&db, earlier.0), raid(12.0), "not at the earlier piece's start");
+        let mut both = raid(2.0);
+        both.push(("highlight".to_string(), Some("Clutch".to_string()), 9.0));
+        assert_eq!(shown(&db, later.0), both, "not where the later piece plays it; the highlight there, as then");
+        let moved: Vec<f64> = db.clip_marks(later.0).unwrap().iter().map(|(_, m)| m.at.seconds()).collect();
+        assert_eq!(moved, [13.5, 14.0], "the chapter on the part's start, the highlight where it was");
+    }
+
+    /// As `a_chapter_whose_moment_was_struck_shows_where_0_7_3_showed_it`, for
+    /// a file 0.7.3 made: what it recorded the file made of (`Db::made_of`:
+    /// title, what plays, chapters) is still what the edit is, so it isn't
+    /// made again.
+    #[test]
+    fn a_file_made_with_a_struck_chapter_stays_made() {
+        let (_dir, path) = library("struck-chapter-made");
+        let (vod, earlier, later) = {
+            let db = Db::open(&path).unwrap();
+            let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
+            let edit = |title: &str, pieces: &[(f64, f64)]| {
+                let edit = db.add_edit(title).unwrap().id;
+                for &s in pieces {
+                    add(&db, edit, vod, s, "p");
+                }
+                db.add_clip_mark(edit, vod, "chapter", 13.0, Some("Raid")).unwrap();
+                edit
+            };
+            (vod, edit("Earlier", &[(50.0, 60.0), (10.0, 20.0)]), edit("Later", &[(10.0, 20.0), (12.5, 16.0)]))
+        };
+        let conn = back_to(&path, 45);
+        let struck = serde_json::to_string(&[(flicks(12.0), flicks(14.0))]).unwrap();
+        for (clip, start) in [(earlier, 10.0), (later, 10.0)] {
+            conn.execute(
+                "UPDATE items SET struck = ?3 WHERE clip_id = ?1 AND start = ?2",
+                params![clip, flicks(start), struck],
+            )
+            .unwrap();
+        }
+        // What 0.7.3 recorded of each file: its title, what played, its chapters.
+        let made = |clip: i64, made_of: String| {
+            conn.execute(
+                "UPDATE renders SET status = 'ready', file_ext = 'mp4', made_of = ?2 WHERE clip_id = ?1",
+                params![clip, made_of],
+            )
+            .unwrap();
+        };
+        made(
+            earlier,
+            format!(
+                r#"["Earlier",[[{vod},50000000,60000000],[{vod},10000000,12000000],[{vod},14000000,20000000]],[[12000000,"Raid"]]]"#
+            ),
+        );
+        made(
+            later,
+            format!(
+                r#"["Later",[[{vod},10000000,12000000],[{vod},14000000,20000000],[{vod},12500000,16000000]],[[2000000,"Raid"]]]"#
+            ),
+        );
+        drop(conn);
+        let db = upgraded(&path);
+        let current = |id| db.edit(id, crate::edits::tests::at_first()).unwrap().unwrap().current;
+        assert!(current(earlier), "{}", db.made_of_now(earlier).unwrap());
+        assert!(current(later), "{}", db.made_of_now(later).unwrap());
+    }
+
+    /// A chapter struck to its piece's very end has no part after it there:
+    /// it stays on its moment, and shows where the next piece of its VOD
+    /// begins ("A chapter cut away by Remove starts at the next piece",
+    /// CHANGELOG.md, 0.7.4), as 0.7.4 shows it with the stretch still struck.
+    #[test]
+    fn a_chapter_struck_to_its_pieces_end_starts_at_the_next_piece() {
+        let (_dir, db, _vod, (edit, a)) = struck(
+            "struck-chapter-end",
+            |db, vod| {
+                let edit = db.add_edit("e").unwrap().id;
+                let a = add(db, edit, vod, (10.0, 20.0), "a");
+                add(db, edit, vod, (30.0, 35.0), "b");
+                db.add_clip_mark(edit, vod, "chapter", 19.0, Some("End")).unwrap();
+                (edit, a)
+            },
+            |&(_, a)| vec![(a, vec![(18.0, 20.0)])],
+        );
+        assert_eq!(shown(&db, edit), [("chapter".to_string(), Some("End".to_string()), 8.0)]);
+        assert_eq!(db.clip_marks(edit).unwrap()[0].1.at.seconds(), 19.0, "on its moment");
+        assert_eq!(db.piece_row(a).unwrap().unwrap().end, Some(Flicks::from_seconds(18.0)));
+    }
+
+    /// "a clip on a clip bar struck all the way through is not deleted ...
+    /// its pieces are left unsplit, so it stays on the bar and plays its
+    /// whole stretch again" (owner, 2026-11-13, plans/0.7.4.md; review L1).
+    /// A piece struck whole inside an edit with others still goes
+    /// (`a_wholly_struck_piece_goes_with_a_group_it_leaves_empty`).
+    #[test]
+    fn a_clip_struck_all_the_way_through_stays_on_its_bar_whole() {
+        let (_dir, db, vod, (clip, piece)) = struck(
+            "struck-bar-whole",
+            |db, vod| {
+                let clip = db.add_clip(vod, 30.0, 40.0, "Dinner", true).unwrap().id;
+                (clip, db.piece_rows(clip).unwrap()[0].id)
+            },
+            |&(_, piece)| vec![(piece, vec![(29.0, 41.0)])],
+        );
+        let on_bar: Vec<i64> = db.clips(vod).unwrap().iter().map(|c| c.id).collect();
+        assert_eq!(on_bar, [clip], "on its bar");
+        assert_eq!(pieces(&db, clip), [(piece, 30.0, 40.0, String::new())], "its piece as it was");
+        assert_eq!(plays(&db, clip), [(vod, 30.0, 40.0)], "its whole stretch");
+        let struck: i64 =
+            db.conn.query_row("SELECT count(*) FROM items WHERE struck != '[]'", [], |r| r.get(0)).unwrap();
+        assert_eq!(struck, 0);
+    }
+
+    /// A clip (on a VOD's clip bar) with lines struck becomes pieces as an
+    /// edit does, and what was made stays made: its file is of what it still
+    /// plays (`Db::made_of`, "A change that leaves this as it was … leaves its
+    /// file as it is"). One left a single piece is cut straight from its VOD
+    /// from now on (`cut_whole`), and its file, of that stretch, counts as
+    /// made so.
+    #[test]
+    fn a_clip_with_struck_lines_becomes_pieces_and_stays_made() {
+        let (_dir, path) = library("struck-clip");
+        let (vod, middle, edge, edit) = {
+            let db = Db::open(&path).unwrap();
+            let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
+            let middle = db.add_clip(vod, 10.0, 20.0, "Lunch", true).unwrap().id;
+            let edge = db.add_clip(vod, 30.0, 40.0, "Dinner", true).unwrap().id;
+            let edit = db.add_edit("Best of").unwrap().id;
+            db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+            db.add_clip_mark(edit, vod, "chapter", 11.0, Some("Start")).unwrap();
+            (vod, middle, edge, edit)
+        };
+        let conn = back_to(&path, 45);
+        // As 0.7.3 left them: struck, each made of what it played then.
+        let strike = |clip: i64, a: f64, b: f64| {
+            let json = serde_json::to_string(&[(flicks(a), flicks(b))]).unwrap();
+            conn.execute("UPDATE items SET struck = ?2 WHERE clip_id = ?1", params![clip, json]).unwrap();
+        };
+        strike(middle, 12.0, 13.0);
+        strike(edge, 30.0, 32.0);
+        strike(edit, 12.0, 13.0);
+        let made = |clip: i64, made_of: String| {
+            conn.execute(
+                "UPDATE renders SET status = 'ready', file_ext = 'mp4', made_of = ?2 WHERE clip_id = ?1",
+                params![clip, made_of],
+            )
+            .unwrap();
+        };
+        made(middle, format!(r#"["Lunch",[[{vod},10000000,12000000],[{vod},13000000,20000000]],[]]"#));
+        made(edge, format!(r#"["Dinner",[[{vod},32000000,40000000]],[]]"#));
+        made(edit, format!(r#"["Best of",[[{vod},10000000,12000000],[{vod},13000000,20000000]],[[1000000,"Start"]]]"#));
+        drop(conn);
+        let db = upgraded(&path);
+        let now = crate::edits::tests::at_first();
+        let current = |id| db.edit(id, now).unwrap().unwrap().current;
+        assert_eq!(plays(&db, middle), [(vod, 10.0, 12.0), (vod, 13.0, 20.0)]);
+        assert_eq!(plays(&db, edge), [(vod, 32.0, 40.0)]);
+        assert_eq!(plays(&db, edit), [(vod, 10.0, 12.0), (vod, 13.0, 20.0)]);
+        assert!(current(middle), "made of what it plays");
+        assert!(current(edge), "left one piece: made of what it plays, as a clip cut straight is");
+        assert!(current(edit), "the edit too, its chapter where it was");
+        let clip = |id| db.clip(id).unwrap().unwrap();
+        assert_eq!((clip(middle).status, clip(middle).plain), (ClipStatus::Ready, false));
+        assert_eq!((clip(edge).status, clip(edge).plain), (ClipStatus::Ready, true), "one piece of its VOD");
+        assert_eq!((clip(edge).start, clip(edge).end), (32.0, 40.0));
+    }
+}
+
 /// Spec 56: each library a release left (tests/e2e/fixtures, `Released`)
 /// opens in this version with every row it kept: "the library is at this
 /// version's format, a copy of the old one kept beside it …; the library
@@ -1122,29 +1555,31 @@ mod each_released_library_opens_with_every_row_it_kept {
         );
         assert_eq!(marks(&twitch), [("chapter".into(), 7.0, Some("The skip".into()))]);
 
-        // Edits with their pieces, struck stretches in seconds and the landing's group.
+        // Edits with their pieces, a stretch struck taken out (V46), and the landing's group.
         let edits = db.edits(crate::edits::tests::at_first()).unwrap();
         let edit = |title: &str| edits.iter().find(|e| e.title == title).unwrap().id;
         assert_eq!(edits.len(), 2);
         let landing = db.edit_pieces(edit("Landing highlights")).unwrap();
         let stream = db.edit_pieces(edit("Stream highlights")).unwrap();
         assert_eq!(landing.len(), pieces);
-        assert_eq!(landing.iter().filter(|p| p.group.is_some()).count(), pieces - 3);
-        let piece = |p: &crate::edits::EditPiece| (p.vod_id, p.title.clone(), p.start, p.end, p.struck.clone());
+        assert_eq!(landing.iter().filter(|p| p.group.is_some()).count(), pieces - 4);
+        let piece = |p: &crate::edits::EditPiece| (p.vod_id, p.title.clone(), p.start, p.end);
         assert_eq!(
-            landing[..3].iter().map(piece).collect::<Vec<_>>(),
+            landing[..4].iter().map(piece).collect::<Vec<_>>(),
             [
-                (local.id, "Houston".into(), 0.9, 2.0, vec![]),
-                (local.id, "Base".into(), 2.2, 4.0, vec![(2.6, 3.0)]),
-                (local.id, "Landed".into(), 4.2, 5.2, vec![]),
+                (local.id, "Houston".into(), 0.9, 2.0),
+                (local.id, "Base".into(), 2.2, 2.6),
+                (local.id, "Base".into(), 3.0, 4.0),
+                (local.id, "Landed".into(), 4.2, 5.2),
             ]
         );
         assert_eq!(
             stream.iter().map(piece).collect::<Vec<_>>(),
             [
-                (youtube.id, "Calm wind".into(), 16.0, 24.0, vec![]),
-                (twitch.id, "Pelican".into(), 7.0, 15.0, vec![(10.0, 11.5)]),
-                (kick.id, "Boardwalk".into(), 20.0, 45.0, vec![]),
+                (youtube.id, "Calm wind".into(), 16.0, 24.0),
+                (twitch.id, "Pelican".into(), 7.0, 10.0),
+                (twitch.id, "Pelican".into(), 11.5, 15.0),
+                (kick.id, "Boardwalk".into(), 20.0, 45.0),
             ]
         );
     }
@@ -1165,7 +1600,7 @@ mod each_released_library_opens_with_every_row_it_kept {
 
     #[test]
     fn v0_4_0() {
-        the_matrix("0.4.0", 21, &[(0.0, None, Status::Paused, None)], 3);
+        the_matrix("0.4.0", 21, &[(0.0, None, Status::Paused, None)], 4);
     }
 
     #[test]
@@ -1192,7 +1627,7 @@ mod each_released_library_opens_with_every_row_it_kept {
 
     #[test]
     fn v0_5_1() {
-        the_matrix("0.5.1", 26, &[(0.0, None, Status::Paused, None)], 5);
+        the_matrix("0.5.1", 26, &[(0.0, None, Status::Paused, None)], 6);
     }
 
     #[test]
@@ -1201,7 +1636,7 @@ mod each_released_library_opens_with_every_row_it_kept {
             "0.5.2-dev",
             27,
             &[(0.0, Some(60.0), Status::Done, Some(60.0)), (60.0, Some(120.0), Status::Paused, Some(90.0))],
-            5,
+            6,
         );
     }
 }

@@ -850,6 +850,15 @@ ALTER TABLE stretches DROP COLUMN note;";
 const MIGRATE_V45: &str = "
 ALTER TABLE vods ADD COLUMN video_height INTEGER;";
 
+/// Version 46: no piece has stretches struck out of it. Each one (0.4.x
+/// struck lines; splits, pastes and clips of an edit carried them on) is
+/// taken out as Delete takes a stretch out, by `struck_to_splits`, which
+/// `Db::open` runs right after this. Nothing reads `items.struck` from here
+/// on. The column is kept, always `[]`, only so that 0.7.3 (which reads it,
+/// as 0.5.0 on did) can still open a library this version has opened; it is
+/// to be dropped after 0.8.0.
+const MIGRATE_V46: &str = "-- struck_to_splits";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -1008,7 +1017,7 @@ pub struct Clip {
     /// was made before this was recorded.
     pub encoding: Option<ClipEncoding>,
     /// On a VOD's clip bar, whether it still plays just its stretch of that
-    /// VOD: one piece of it, nothing struck, not in a group (as
+    /// VOD: one piece of it, not in a group (as
     /// `edits::cut_whole`), not changed in the editor. A drag of the stretch
     /// from the VOD gives only such a clip (`Db::vod_clip_playing`).
     pub plain: bool,
@@ -1142,8 +1151,7 @@ pub struct MarkState {
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
      c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path, r.encoding, r.make,
-     coalesce((SELECT count(*) = 1 AND max(json_array_length(p.struck)) = 0
-                      AND max(p.vod_id) IS (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)
+     coalesce((SELECT count(*) = 1 AND max(p.vod_id) IS (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)
                FROM items p WHERE p.clip_id = c.id), 0)";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
@@ -1231,6 +1239,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     MIGRATE_V43,
     MIGRATE_V44,
     MIGRATE_V45,
+    MIGRATE_V46,
 ];
 
 /// How many copies of the library from before upgrades are kept.
@@ -1451,8 +1460,235 @@ fn struck_to_flicks(conn: &Connection) -> Result<()> {
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
     for (id, struck) in rows {
         let seconds: Vec<(f64, f64)> = serde_json::from_str(&struck).unwrap_or_default();
-        let flicks = crate::edits::struck_json(&crate::edits::struck_flicks(&seconds))?;
-        conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, flicks])?;
+        let flicks: Vec<(i64, i64)> =
+            seconds.iter().map(|&(a, b)| (Flicks::from_seconds(a).0, Flicks::from_seconds(b).0)).collect();
+        conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, serde_json::to_string(&flicks)?])?;
+    }
+    Ok(())
+}
+
+/// v46 (`MIGRATE_V46`): each stretch struck out of a piece taken out, as
+/// Delete takes a stretch out (`edits::cutting_out`, `Db::remove_edit_stretch`):
+/// the piece split at its ends, what's between gone, each part a piece of its
+/// own in the piece's place (its group, its order), with its title and where
+/// it came from. The parts are what the piece played, slivers left out, so it
+/// plays as it did; a piece that played nothing goes, and a group it leaves
+/// empty with it. A chapter 0.7.3 showed where its piece played again after
+/// its struck moment moves there (`struck_chapters`), so it shows where it
+/// did. A clip of a clip bar that would be left with no piece (struck all the
+/// way through) is left whole instead, its struck stretches emptied: it stays
+/// on its bar and plays its stretch again (owner, 2026-11-13). No revision
+/// moves: what's made of a clip is still of what it plays (`Db::made_of`),
+/// and a clip bar's clip left one piece (`made_straight`) is recorded as made so.
+fn struck_to_splits(conn: &Connection) -> Result<()> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT clip_id FROM items WHERE kind = 'piece' AND struck != '[]' ORDER BY clip_id")?;
+    let clips: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    for &clip in &clips {
+        let pieces = struck_pieces(conn, clip)?;
+        let on_bar: bool =
+            conn.query_row("SELECT bar_of IS NOT NULL FROM clips WHERE id = ?1", [clip], |r| r.get(0))?;
+        if on_bar && pieces.iter().all(|p| p.parts.is_empty()) {
+            conn.execute("UPDATE items SET struck = '[]' WHERE clip_id = ?1", [clip])?;
+            continue;
+        }
+        struck_chapters(conn, clip, &pieces)?;
+        for piece in pieces.iter().filter(|p| p.struck) {
+            split_struck(conn, clip, piece)?;
+        }
+        // Groups left empty, from the innermost out.
+        while conn.execute(
+            "DELETE FROM items WHERE clip_id = ?1 AND kind = 'group'
+             AND NOT EXISTS (SELECT 1 FROM items i WHERE i.parent = items.id)",
+            [clip],
+        )? > 0
+        {}
+        made_straight(conn, clip)?;
+    }
+    Ok(())
+}
+
+/// A piece of a clip as v46 meets it: its row's stretch (flicks, `end` None
+/// to its VOD's end), its stretch in seconds (`to` its VOD's end, however
+/// long that turns out to be), and what it played (`parts`).
+struct StruckPiece {
+    id: i64,
+    parent: Option<i64>,
+    vod_id: i64,
+    start: i64,
+    end: Option<i64>,
+    from: f64,
+    to: f64,
+    struck: bool,
+    parts: Vec<(f64, f64)>,
+}
+
+/// Clip `clip`'s pieces in its order (each group's where the group is, as
+/// `Db::item_rows` walks them), as v46 meets them.
+fn struck_pieces(conn: &Connection, clip: i64) -> Result<Vec<StruckPiece>> {
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.parent, i.vod_id, i.start, i.end, i.struck, v.duration
+         FROM items i LEFT JOIN vods v ON v.id = i.vod_id WHERE i.clip_id = ?1 ORDER BY i.position, i.id",
+    )?;
+    type Item = (i64, Option<i64>, Option<i64>, Option<i64>, Option<i64>, String, Option<f64>);
+    let items: Vec<Item> = stmt
+        .query_map([clip], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    fn walk(items: &[Item], parent: Option<i64>, out: &mut Vec<StruckPiece>) {
+        for (id, within, vod_id, start, end, struck, duration) in items.iter().filter(|i| i.1 == parent) {
+            let Some(vod_id) = vod_id else {
+                walk(items, Some(*id), out);
+                continue;
+            };
+            let start = start.unwrap_or(0);
+            let stretches: Vec<(f64, f64)> = serde_json::from_str::<Vec<(i64, i64)>>(struck)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(a, b)| (Flicks(a).seconds(), Flicks(b).seconds()))
+                .collect();
+            let from = Flicks(start).seconds();
+            let to = end.map(|e| Flicks(e).seconds()).or(*duration).unwrap_or(f64::INFINITY);
+            out.push(StruckPiece {
+                id: *id,
+                parent: *within,
+                vod_id: *vod_id,
+                start,
+                end: *end,
+                from,
+                to,
+                struck: struck != "[]",
+                parts: played_less(from, to, &stretches),
+            });
+        }
+    }
+    let mut out = Vec::new();
+    walk(&items, None, &mut out);
+    Ok(out)
+}
+
+/// v46: clip `clip`'s chapters as 0.7.3 placed them in its `pieces`
+/// (`edits::place_marks` then, each in the first piece of its VOD that
+/// plays its moment, or plays again after it within the piece). One placed
+/// where a piece played again after a struck stretch moves to where that
+/// part now starts, so it shows there still, and the chapters of a file
+/// made of the clip are as they were. A highlight stays on its moment,
+/// hidden as 0.7.3 hid it; a chapter struck to its piece's very end, with
+/// no part after it there, stays too, and is placed by today's rule.
+fn struck_chapters(conn: &Connection, clip: i64, pieces: &[StruckPiece]) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT id, vod_id, at FROM marks WHERE clip_id = ?1 AND kind = 'chapter'")?;
+    let chapters: Vec<(i64, i64, i64)> =
+        stmt.query_map([clip], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    for (id, vod_id, at) in chapters {
+        let moment = Flicks(at).seconds();
+        let placed = pieces.iter().filter(|p| p.vod_id == vod_id).find_map(|p| {
+            p.parts.iter().find_map(|&(a, b)| {
+                if moment >= a && moment < b {
+                    Some(None)
+                } else if moment < a && moment >= p.from {
+                    Some(Some(a))
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(Some(a)) = placed {
+            conn.execute("UPDATE marks SET at = ?2 WHERE id = ?1", params![id, Flicks::from_seconds(a).0])?;
+        }
+    }
+    Ok(())
+}
+
+/// v46: struck piece `piece` of clip `clip` split into its parts (none: it goes).
+fn split_struck(conn: &Connection, clip: i64, piece: &StruckPiece) -> Result<()> {
+    let id = piece.id;
+    conn.execute("UPDATE items SET struck = '[]' WHERE id = ?1", [id])?;
+    let Some((first, rest)) = piece.parts.split_first() else {
+        conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
+        return Ok(());
+    };
+    // A part's ends as the record keeps them: the piece's own where they're
+    // its, so one to its VOD's end still is.
+    let at = |t: f64| if t == piece.from { piece.start } else { Flicks::from_seconds(t).0 };
+    let until = |t: f64| if t == piece.to { piece.end } else { Some(Flicks::from_seconds(t).0) };
+    conn.execute("UPDATE items SET start = ?2, end = ?3 WHERE id = ?1", params![id, at(first.0), until(first.1)])?;
+    let mut made = Vec::with_capacity(rest.len());
+    for &(a, b) in rest {
+        conn.execute(
+            "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, title, origin, fps_num, fps_den)
+             SELECT clip_id, parent, position, kind, vod_id, ?2, ?3, title, origin, fps_num, fps_den
+             FROM items WHERE id = ?1",
+            params![id, at(a), until(b)],
+        )?;
+        made.push(conn.last_insert_rowid());
+    }
+    if made.is_empty() {
+        return Ok(());
+    }
+    // The parts right after the piece, among what's beside it.
+    let mut stmt = conn.prepare("SELECT id FROM items WHERE clip_id = ?1 AND parent IS ?2 ORDER BY position, id")?;
+    let mut order: Vec<i64> =
+        stmt.query_map(params![clip, piece.parent], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    order.retain(|i| !made.contains(i));
+    let after = order.iter().position(|&i| i == id).map_or(order.len(), |i| i + 1);
+    order.splice(after..after, made);
+    for (position, item) in order.iter().enumerate() {
+        conn.execute("UPDATE items SET position = ?2 WHERE id = ?1", params![item, position as i64])?;
+    }
+    Ok(())
+}
+
+/// What 0.7.3 played of `start`..`end` less the `struck` stretches (any
+/// order, overlapping or not), slivers left out: v46's parts.
+fn played_less(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut cuts: Vec<(f64, f64)> = struck.iter().copied().filter(|(a, b)| b > a).collect();
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = Vec::new();
+    let mut at = start;
+    for (a, b) in cuts {
+        if a > at {
+            out.push((at, a.min(end)));
+        }
+        at = at.max(b);
+        if at >= end {
+            break;
+        }
+    }
+    if at < end {
+        out.push((at, end));
+    }
+    out.retain(|(a, b)| b - a >= crate::edits::SLIVER);
+    out
+}
+
+/// v46: clip `clip`, if it's a clip bar's left one piece, not in a group, is
+/// cut straight from its VOD from now on (`edits::cut_whole`), and what its
+/// file is made of counts only what plays (`Db::made_of`). Its file, made as
+/// an edit is, was of `(title, plays, chapters)`: if that title and what
+/// plays are still the clip's, the file is of what it plays now, and is
+/// recorded so rather than made again.
+fn made_straight(conn: &Connection, clip: i64) -> Result<()> {
+    // What its file was made of, its title, and its piece: VOD, start, end, the VOD's length.
+    type Row = (Option<String>, String, i64, i64, Option<i64>, Option<f64>);
+    let row: Option<Row> = conn
+        .query_row(
+            "SELECT r.made_of, c.title, i.vod_id, i.start, i.end, v.duration
+             FROM clips c JOIN renders r ON r.clip_id = c.id JOIN items i ON i.clip_id = c.id
+             LEFT JOIN vods v ON v.id = i.vod_id
+             WHERE c.id = ?1 AND c.bar_of IS NOT NULL AND i.kind = 'piece' AND i.parent IS NULL
+               AND (SELECT count(*) FROM items WHERE clip_id = c.id) = 1",
+            [clip],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .optional()?;
+    let Some((Some(made_of), title, vod, start, end, duration)) = row else { return Ok(()) };
+    type MadeOf = (String, Vec<(i64, i64, i64)>, serde_json::Value);
+    let Ok((made_title, plays, _chapters)) = serde_json::from_str::<MadeOf>(&made_of) else { return Ok(()) };
+    let us = |t: f64| (t * 1e6).round() as i64;
+    let end = end.map(|e| Flicks(e).seconds()).or(duration).unwrap_or(0.0);
+    let now = crate::edits::spans(Flicks(start).seconds(), end).into_iter().map(|(a, b)| (vod, us(a), us(b)));
+    if made_title == title && plays == now.collect::<Vec<_>>() {
+        let straight = serde_json::to_string(&("", plays, ()))?;
+        conn.execute("UPDATE renders SET made_of = ?2 WHERE clip_id = ?1", params![clip, straight])?;
     }
     Ok(())
 }
@@ -1605,11 +1841,16 @@ impl Db {
             if version > 0 {
                 keep_before_upgrade(&conn, path, version)?;
             }
-            let pending = MIGRATIONS[version as usize..].join("\n").replace("FLICKS", FLICKS);
             let latest = MIGRATIONS.len();
-            conn.execute_batch(&format!("BEGIN; {pending}"))?;
-            if version < 22 {
-                struck_to_flicks(&conn)?;
+            conn.execute_batch("BEGIN")?;
+            for (done, migration) in MIGRATIONS.iter().enumerate().skip(version as usize) {
+                conn.execute_batch(&migration.replace("FLICKS", FLICKS))?;
+                // What SQL alone can't do, after the migration it belongs to.
+                match done + 1 {
+                    22 => struck_to_flicks(&conn)?,
+                    46 => struck_to_splits(&conn)?,
+                    _ => {}
+                }
             }
             conn.execute_batch(&format!("PRAGMA user_version = {latest}; COMMIT;"))?;
         } else if version as usize > MIGRATIONS.len() {
@@ -1701,7 +1942,7 @@ impl Db {
             let id = db.new_clip(title, crate::edits::Place::Bar(bar))?;
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
             let range = (Flicks::from_seconds(start), Flicks::from_seconds(end));
-            db.insert_piece(id, vod_id, range, "", &[])?;
+            db.insert_piece(id, vod_id, range, "")?;
             db.copy_vod_marks(id, vod_id, range.0, range.1)?;
             Ok(id)
         };

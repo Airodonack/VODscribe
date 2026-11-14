@@ -5,7 +5,7 @@ import { upgradeScenario } from "../fixtures/upgrade-matrix.mjs";
 
 export default upgradeScenario("0.5.1", {
   from: 26,
-  pieces: 5,
-  bands: 4,
+  pieces: 6,
+  bands: 5,
   paused: [[0, null, "paused", "last"]],
 });

@@ -171,20 +171,31 @@ export function upgradeScenario(version, expect) {
       same(
         "the stream edit's VODs",
         streamed.pieces.map((p) => p.vod_id),
-        [by("youtube").id, by("twitch").id, kick.id],
+        [by("youtube").id, by("twitch").id, by("twitch").id, kick.id],
+      );
+      // Each stretch struck (0.4.x) taken out, its piece split there (format 46).
+      same(
+        "the stream edit's pieces",
+        streamed.pieces.map((p) => [p.start, p.end]),
+        [
+          [16, 24],
+          [7, 10],
+          [11.5, 15],
+          [20, 45],
+        ],
       );
       same(
-        "the stretches struck from the stream edit",
-        streamed.pieces.map((p) => p.struck.length),
-        [0, 1, 0],
-      );
-      same(
-        "the stretches struck from the landing edit",
-        landed.pieces.slice(0, 3).map((p) => p.struck.length),
-        [0, 1, 0],
+        "the landing edit's pieces",
+        landed.pieces.slice(0, 4).map((p) => [p.title, p.start, p.end]),
+        [
+          ["Houston", 0.9, 2],
+          ["Base", 2.2, 2.6],
+          ["Base", 3, 4],
+          ["Landed", 4.2, 5.2],
+        ],
       );
       const groups = landed.pieces.filter((p) => p.group);
-      if (groups.length !== expect.pieces - 3) fail(`the landing edit's group has ${groups.length} pieces`);
+      if (groups.length !== expect.pieces - 4) fail(`the landing edit's group has ${groups.length} pieces`);
 
       // The edit opens in the page with its pieces.
       await app.click(`.vod.edit[data-key="-${landing.id}"] button.main`);

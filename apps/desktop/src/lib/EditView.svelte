@@ -87,7 +87,7 @@
     const out: Played[] = [];
     let at = 0;
     for (const piece of pieces) {
-      for (const [a, b] of playedSpans(piece.start, piece.end, piece.struck)) {
+      for (const [a, b] of playedSpans(piece.start, piece.end)) {
         out.push({ piece, at, vodFrom: a, length: b - a });
         at += b - a;
       }
@@ -99,8 +99,7 @@
   $effect(() => {
     if (edit && cuts.isOf({ kind: "edit", id: edit.id })) cuts.length = total;
   });
-  // The real splits: wherever what plays jumps, between pieces or over a
-  // stretch struck out.
+  // The real splits: wherever what plays jumps, between pieces.
   const joins = $derived(segments.slice(1).map((s) => s.at));
 
   // The waveform: each segment's stretch of its VOD's, end to end.

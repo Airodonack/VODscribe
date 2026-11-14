@@ -575,7 +575,8 @@ fn a_library_from_before_edits_has_none() {
 /// within the clip they were of and titled as it was (db.rs `MIGRATE_V20`:
 /// "an edit's pieces are their own stretches of VODs, with a title, rather
 /// than of clips (so one can change without another)"; CHANGELOG.md, 0.4.0:
-/// "What's put in an edit is its own copy.").
+/// "What's put in an edit is its own copy."). Its stretch struck is taken
+/// out (V46: `struck_stretches_become_splits`).
 #[test]
 fn an_edits_pieces_of_clips_become_their_own_stretches() {
     let dir = crate::TempDir::new("migrate-v19");
@@ -591,14 +592,13 @@ fn an_edits_pieces_of_clips_become_their_own_stretches() {
     );
     let db = Db::open(&path).unwrap();
     let edit = db.edits(crate::edits::tests::at_first()).unwrap()[0].id;
-    let pieces = db.edit_pieces(edit).unwrap();
-    assert_eq!(pieces.len(), 1);
-    let p = &pieces[0];
-    assert_eq!((p.vod_id, p.start, p.end, p.title.as_str()), (1, 10.0, 18.0, "Lunch"), "within the clip it was of");
-    assert_eq!(p.struck, [(12.0, 13.0)]);
-    // The clip's gone; the piece stays.
+    let pieces: Vec<_> =
+        db.edit_pieces(edit).unwrap().into_iter().map(|p| (p.vod_id, p.start, p.end, p.title)).collect();
+    let lunch = |start, end| (1, start, end, "Lunch".to_string());
+    assert_eq!(pieces, [lunch(10.0, 12.0), lunch(13.0, 18.0)], "within the clip it was of");
+    // The clip's gone; the pieces stay.
     db.delete_clip(1).unwrap();
-    assert_eq!(db.edit_pieces(edit).unwrap().len(), 1);
+    assert_eq!(db.edit_pieces(edit).unwrap().len(), 2);
 }
 
 /// A clip whose file was dragged out before V20 counts as not handed out:

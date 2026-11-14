@@ -474,7 +474,7 @@ fn a_made_clip_is_shown_with_its_own_file_s_extension() {
     assert_eq!(shown.extension().unwrap(), "mp4", "{shown:?}");
 }
 
-/// A clip changed in the editor (lines struck) is shown by its own title
+/// A clip changed in the editor (a stretch taken out) is shown by its own title
 /// (clips.rs:1322, `drag_name`: "an edit's (or a snippet changed in the
 /// editor) its title").
 #[test]

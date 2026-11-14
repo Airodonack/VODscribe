@@ -98,7 +98,7 @@
     if (edit === null) return time;
     let at = 0;
     for (const p of edits.pieces) {
-      for (const [a, b] of playedSpans(p.start, p.end, p.struck)) {
+      for (const [a, b] of playedSpans(p.start, p.end)) {
         if (p.vod_id === vodId && time >= a && time < b) return at + time - a;
         at += b - a;
       }

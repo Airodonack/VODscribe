@@ -425,12 +425,12 @@ export interface Edit {
   vod_ids: number[];
   /** A clip on a clip bar opened in the editor: whose bar it's on, a VOD's or an edit's; null for an edit. */
   snippet_of: Doc | null;
-  /** What it plays of each VOD, in order: its pieces less what's struck. */
+  /** What it plays of each VOD, in order: its pieces. */
   ranges: { vod_id: number; start: number; end: number }[];
 }
 
-/** A piece of an edit: `start`..`end` of its VOD, less what's `struck`; its
- *  own, copied from a clip or the timeline (crates/core `edits::EditPiece`). */
+/** A piece of an edit: `start`..`end` of its VOD; its own, copied from a clip
+ *  or the timeline (crates/core `edits::EditPiece`). */
 export interface EditPiece {
   id: number;
   edit_id: number;
@@ -438,7 +438,6 @@ export interface EditPiece {
   start: number;
   end: number;
   title: string;
-  struck: [number, number][];
   vod_title: string;
   /** Its video is gone for good (deleted outside VODscribe): it plays and renders as black and silence. */
   hole: boolean;

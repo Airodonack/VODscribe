@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, params};
 
 use crate::db::{CHAT_COLUMNS, Db, SEGMENT_COLUMNS, now};
-use crate::edits::{PIECE_COLUMNS, PieceRow, piece_from_row, struck_json};
+use crate::edits::{PIECE_COLUMNS, PieceRow, piece_from_row};
 use crate::time::Flicks;
 use crate::transcript::Word;
 
@@ -115,12 +115,11 @@ impl Db {
             return Ok(false);
         }
         let shift = row.start;
-        let struck: Vec<(Flicks, Flicks)> = row.struck.iter().map(|&(a, b)| (a - shift, b - shift)).collect();
         let origin = row.origin.unwrap_or(Flicks::ZERO) + shift;
         self.change(row.clip_id, Some(base), |db| {
             db.conn.execute(
-                "UPDATE items SET vod_id = ?2, start = 0, end = ?3, struck = ?4, origin = ?5 WHERE id = ?1",
-                params![piece, to, (end - shift).0, struck_json(&struck)?, origin.0],
+                "UPDATE items SET vod_id = ?2, start = 0, end = ?3, origin = ?4 WHERE id = ?1",
+                params![piece, to, (end - shift).0, origin.0],
             )?;
             Ok(())
         })?;
@@ -198,7 +197,6 @@ mod tests {
         let edit = db.add_edit("e").unwrap().id;
         db.add_piece(edit, vod, (10.0, 15.0), "p", None).unwrap();
         let piece = db.piece_rows(edit).unwrap()[0].id;
-        db.set_piece_struck(piece, &[(11.0, 12.0)]).unwrap();
         // Only the edit's piece: the VOD's own clip and its snippet go with it.
         assert_eq!(db.pieces_using(vod).unwrap().iter().map(|p| p.id).collect::<Vec<_>>(), [piece]);
 
@@ -217,7 +215,6 @@ mod tests {
             (row.id, row.vod_id, row.start, row.end),
             (piece, new, Flicks::ZERO, Some(Flicks::from_seconds(5.0)))
         );
-        assert_eq!(row.struck, [(Flicks::from_seconds(1.0), Flicks::from_seconds(2.0))]);
         assert_eq!(row.origin, Some(Flicks::from_seconds(10.0)));
         assert_eq!((db.uses(vod).unwrap(), db.uses(new).unwrap()), (2, 1));
         assert!(db.pieces_using(vod).unwrap().is_empty());

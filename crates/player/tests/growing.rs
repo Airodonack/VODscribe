@@ -29,7 +29,6 @@ fn plan(path: &Path) -> Timeline {
         start: 0.0,
         end: 10.0,
         title: String::new(),
-        struck: Vec::new(),
         vod_title: String::new(),
         hole: false,
         group: None,

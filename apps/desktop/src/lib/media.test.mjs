@@ -103,58 +103,10 @@ test("a seek to a cut lands a quarter of a frame into the frame it starts, short
   assert.equal(inFrame(10, 30, 10), 10);
 });
 
-test("an edit's piece plays what isn't struck, as the render does", () => {
-  assert.deepEqual(playedSpans(0, 10, []), [[0, 10]]);
-  assert.equal(
-    playedLength({
-      start: 0,
-      end: 10,
-      struck: [
-        [2, 3],
-        [6, 7],
-      ],
-    }),
-    8,
-  );
-  assert.deepEqual(
-    playedSpans(0, 10, [
-      [6, 7],
-      [2, 3],
-    ]),
-    [
-      [0, 2],
-      [3, 6],
-      [7, 10],
-    ],
-  );
-  assert.deepEqual(
-    playedSpans(0, 10, [
-      [-1, 1],
-      [9, 12],
-    ]),
-    [[1, 9]],
-  );
-  assert.deepEqual(
-    playedSpans(0, 10, [
-      [2, 5],
-      [4, 6],
-    ]),
-    [
-      [0, 2],
-      [6, 10],
-    ],
-  );
-  assert.deepEqual(playedSpans(0, 10, [[0, 10]]), []);
-  assert.deepEqual(
-    playedSpans(0, 10, [
-      [2, 5],
-      [5.02, 8],
-    ]),
-    [
-      [0, 2],
-      [8, 10],
-    ],
-  );
+test("an edit's piece plays its stretch, a sliver nothing, as the render does", () => {
+  assert.deepEqual(playedSpans(0, 10), [[0, 10]]);
+  assert.equal(playedLength({ start: 2, end: 10 }), 8);
+  assert.deepEqual(playedSpans(5, 5.02), []);
 });
 
 test("the stretch the playhead is in, the last one at the very end", () => {
@@ -235,13 +187,13 @@ test("a site VOD's waveform has gaps where nothing is transcribed or fetched", (
 });
 
 test("a stretch of an edit's timeline starts in the VOD of the piece it starts in", () => {
-  /** @type {{ vod_id: number; start: number; end: number; struck: [number, number][] }[]} */
   const pieces = [
-    { vod_id: 1, start: 10, end: 20, struck: [[12, 14]] },
-    { vod_id: 2, start: 100, end: 105, struck: [] },
+    { vod_id: 1, start: 10, end: 12 },
+    { vod_id: 1, start: 14, end: 20 },
+    { vod_id: 2, start: 100, end: 105 },
   ];
   assert.deepEqual(inEdit(pieces, 1, 1.5), { vodId: 1, start: 11, end: 11.5 });
-  // Past the struck stretch, and no further than the span it starts in.
+  // Past the first piece, and no further than the piece it starts in.
   assert.deepEqual(inEdit(pieces, 3, 20), { vodId: 1, start: 15, end: 20 });
   // At a join: the next piece's start.
   assert.deepEqual(inEdit(pieces, 8, 9), { vodId: 2, start: 100, end: 101 });
