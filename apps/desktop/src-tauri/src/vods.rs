@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use serde::Serialize;
@@ -415,7 +415,7 @@ async fn erase_in_parts(
 /// (otherwise none). With `anyway` too, it's erased without that: the
 /// pieces other clips have of it are holes. Its transcription stops first
 /// (a moment); still stopping after a while, it's erased once it has, by
-/// the sweeper's job.
+/// the sweeper's job. Added back meanwhile, it's left as it is.
 #[tauri::command]
 pub(crate) async fn delete_vod(
     app: AppHandle,
@@ -443,6 +443,15 @@ pub(crate) async fn delete_vod(
             crate::clips::remove(&app, &db, clip.id)?;
         }
         db.remove_entry(id)?;
+        // With its video, gone at once, its pieces holes: so it's still
+        // erased if the app quits first or its work outlasts the waits for
+        // it (the next start's `Sweeper::run`), what its work writes as it
+        // ends goes (`worker::forget_if_erased`), and added back meanwhile
+        // it's a VOD like any other (`add_to_library`). Failing, its erasure
+        // below, or the sweeper's job, has it gone once it's erased.
+        if delete_video && let Err(e) = db.set_gone(id) {
+            eprintln!("VOD {id} gone: {e:#}");
+        }
         anyhow::Ok(())
     })();
     state.clips.vod_removed(&state.db.lock().unwrap(), id);
@@ -453,43 +462,56 @@ pub(crate) async fn delete_vod(
     if let Err(e) = cancel_requests(&state, id, |_| true) {
         eprintln!("VOD {id}'s requests: {e:#}");
     }
-    let mut erased = false;
+    let (mut erased, mut added_back) = (false, false);
     if delete_video {
+        // Each step looks first that it's still out of the list: added back
+        // meanwhile, it's left as it is.
+        let unlisted = move |db: &Db| -> anyhow::Result<bool> { Ok(db.vod(id)?.is_some_and(|v| !v.listed)) };
         // Its transcription stopped first: one still stopping would write its
         // last lines after them and end done over lines erased. Still
         // stopping after a while, it's left to the sweeper's job, below,
         // which waits for it.
         let handle = app.clone();
-        let stopped = tauri::async_runtime::spawn_blocking(move || cancel_and_wait(&handle, id)).await.map_err(err)?;
-        if stopped.is_ok() {
-            // Its chat and transcript a part at a time, then the rest.
-            erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
-            let db = state.db.lock().unwrap();
-            state
-                .worker
-                .control_vod(id, Stop::Pause, |running| {
-                    erased = running.is_empty();
-                    if erased { erase_source(&app, &db, id, false) } else { Ok(()) }
-                })
-                .map_err(err)?;
+        let stopped = tauri::async_runtime::spawn_blocking(move || cancel_and_wait_while(&handle, id, unlisted))
+            .await
+            .map_err(err)?;
+        match stopped {
+            Ok(false) => added_back = true,
+            Ok(true) => {
+                // Its chat and transcript a part at a time, then the rest.
+                let part = move |db: &Db| if unlisted(db)? { db.delete_some_of(id, ERASE_PART) } else { Ok(0) };
+                erase_in_parts(&app, part).await?;
+                let db = state.db.lock().unwrap();
+                state
+                    .worker
+                    .control_vod(id, Stop::Pause, |running| {
+                        added_back = !unlisted(&db)?;
+                        erased = !added_back && running.is_empty();
+                        if erased { erase_source(&app, &db, id, false) } else { Ok(()) }
+                    })
+                    .map_err(err)?;
+            }
+            // Still stopping: added back meanwhile, the sweeper's job isn't
+            // needed either.
+            Err(_) => added_back = !unlisted(&state.db.lock().unwrap()).map_err(err)?,
         }
     }
-    if !erased {
+    if !erased && !added_back {
         if delete_video {
-            // Gone now, its pieces holes: so it's still erased if the app
-            // quits first or its work outlasts the job's wait too (the next
-            // start's `Sweeper::run`), and what its work writes as it ends
-            // goes (`worker::forget_if_erased`).
-            if let Err(e) = state.db.lock().unwrap().set_gone(id) {
-                eprintln!("VOD {id} gone: {e:#}");
-            }
             // Whatever uses it: with `anyway`, clips may still.
             state.sweeper.removed_anyway(id);
         } else if state.db.lock().unwrap().uses(id).map_err(err)? <= 0 {
             state.sweeper.removed(id);
         }
     }
-    crate::page::emit(&app, "vod-removed", id);
+    if added_back {
+        // The page keeps its row, as it is now (`removeVod` ends its
+        // "removing" with the answer): told it was removed, it would drop it,
+        // and close it if it's open.
+        emit_vod(&app, &state.db.lock().unwrap(), id)?;
+    } else {
+        crate::page::emit(&app, "vod-removed", id);
+    }
     Ok(None)
 }
 
@@ -771,7 +793,7 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
     // open elsewhere can't be deleted): it may have been at work on it as
     // it was removed.
     state.storyboards.let_go(id);
-    let began = Instant::now();
+    let began = crate::system::now(app);
     loop {
         let db = state.db.lock().unwrap();
         // Added back meanwhile, work begun on it since isn't paused.
@@ -791,7 +813,10 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
         if erased || !unused(&state.db.lock().unwrap())? {
             return Ok(());
         }
-        if stop.load(std::sync::atomic::Ordering::Relaxed) || began.elapsed() > WORK_STOPPING {
+        #[cfg(test)]
+        crate::testkit::work_waits(app);
+        let waited = crate::system::now(app).duration_since(began);
+        if stop.load(std::sync::atomic::Ordering::Relaxed) || waited > WORK_STOPPING {
             // Its work still stopping: the next start erases it
             // (`unused_sources`, or `unfinished_erasures` for one that goes
             // `anyway`; what its work writes as it ends goes meanwhile:
@@ -982,10 +1007,14 @@ pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i
 /// one was running.
 fn cancel_requests(state: &AppState, id: i64, which: impl Fn(&Stretch) -> bool) -> anyhow::Result<bool> {
     // The library's lock before the queue's (`Worker::control`).
-    let db = state.db.lock().unwrap();
+    cancel_requests_in(state, &state.db.lock().unwrap(), id, which)
+}
+
+/// `cancel_requests`, the library's lock taken already (`db`).
+fn cancel_requests_in(state: &AppState, db: &Db, id: i64, which: impl Fn(&Stretch) -> bool) -> anyhow::Result<bool> {
     state.worker.control_vod(id, Stop::Cancel, |running| {
         for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id) && which(s)) {
-            worker::cancel(&db, &state.paths, stretch.id)?;
+            worker::cancel(db, &state.paths, stretch.id)?;
         }
         Ok(())
     })
@@ -995,15 +1024,32 @@ fn cancel_requests(state: &AppState, id: i64, which: impl Fn(&Stretch) -> bool) 
 /// request stays as it is), and waits till none of it is running, so
 /// nothing reads its files once this returns.
 pub(crate) fn cancel_and_wait(app: &AppHandle, id: i64) -> CmdResult<()> {
+    cancel_and_wait_while(app, id, |_| Ok(true)).map(|_| ())
+}
+
+/// `cancel_and_wait` for as long as `wanted` holds, asked under the
+/// library's lock before each look: whether it still did once nothing was
+/// running. Once it doesn't, what's running is left as it is.
+fn cancel_and_wait_while(app: &AppHandle, id: i64, wanted: impl Fn(&Db) -> anyhow::Result<bool>) -> CmdResult<bool> {
     let state = app.state::<AppState>();
-    let began = Instant::now();
-    while cancel_requests(&state, id, |s| busy(s.status)).map_err(err)? {
-        if began.elapsed() > WORK_STOPPING {
+    let began = crate::system::now(app);
+    loop {
+        {
+            let db = state.db.lock().unwrap();
+            if !wanted(&db).map_err(err)? {
+                return Ok(false);
+            }
+            if !cancel_requests_in(&state, &db, id, |s| busy(s.status)).map_err(err)? {
+                return Ok(true);
+            }
+        }
+        #[cfg(test)]
+        crate::testkit::work_waits(app);
+        if crate::system::now(app).duration_since(began) > WORK_STOPPING {
             return Err("Its transcription is still stopping. Try again in a moment.".into());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Ok(())
 }
 
 /// Ends request `id` alone (the transcript's Stop), keeping the lines it

@@ -2,7 +2,9 @@
 //! chat's download, erasing those nothing uses (`Sweeper`), and deleting a
 //! VOD's kept video (`delete_video`, Settings' `delete_all_videos`).
 //! Transcriptions run on the kit's faked worker (`TestApp::worker`), chats
-//! on its chat queue (`TestApp::fetches_chats`).
+//! on its chat queue (`TestApp::fetches_chats`). Work slow to stop runs till
+//! the test lets it go (`TestApp::busy_till`), and a wait for it runs out
+//! when the test moves the app's clock on (`wait_runs_out`).
 //!
 //! Stated elsewhere, cited here and not repeated: removing a VOD while its
 //! clips wait to be made makes none of them (CHANGELOG.md, 0.4.1 Fixes:
@@ -13,6 +15,7 @@
 use super::*;
 
 use std::path::PathBuf;
+use std::sync::mpsc;
 
 use serde_json::{Value, json};
 use vodscribe_core::db::ChatStatus;
@@ -21,7 +24,7 @@ use vodscribe_core::settings::ClipCodec;
 use vodscribe_core::testkit::{Gate, Media, eventually, yt_dlp};
 use vodscribe_core::transcript::Segment;
 
-use crate::testkit::TestApp;
+use crate::testkit::{TestApp, near};
 
 /// A minute of YouTube VOD, "A talk"; the fake site serves it.
 fn a_site_vod(app: &TestApp) -> Vod {
@@ -47,6 +50,32 @@ fn removing_with_video(app: &TestApp, id: i64) -> std::thread::JoinHandle<CmdRes
         let state = handle.state::<AppState>();
         tauri::async_runtime::block_on(delete_vod(handle.clone(), state, id, Some(true), None))
     })
+}
+
+/// Remove on VOD `id`'s row with its video deleted anyway, whatever edits
+/// use of it, on a thread of its own as the page awaits it while it goes on:
+/// its answer, once it's done. The app's end waits for it.
+fn removing_anyway(app: &TestApp, id: i64) -> mpsc::Receiver<CmdResult<Option<String>>> {
+    let (answer, answered) = mpsc::channel();
+    let handle = app.handle().clone();
+    let thread = std::thread::spawn(move || {
+        let state = handle.state::<AppState>();
+        let _ =
+            answer.send(tauri::async_runtime::block_on(delete_vod(handle.clone(), state, id, Some(true), Some(true))));
+    });
+    crate::testkit::started(app.handle(), thread);
+    answered
+}
+
+/// Has the wait for a VOD's work held at `waits` (`TestApp::holds_work_waits`)
+/// run out: once it has come to the gate, the app's clock is moved past
+/// `WORK_STOPPING` and the gate opened. The waits after it are held at
+/// `next` (`Gate::opened()`: none are).
+fn wait_runs_out(app: &TestApp, waits: &Gate, next: &Gate) {
+    waits.reached();
+    app.holds_work_waits(next);
+    app.clock().advance(WORK_STOPPING + Duration::from_millis(1));
+    waits.open();
 }
 
 /// The ids of the VODs in the library's list, in its order.
@@ -77,11 +106,6 @@ fn video_of(app: &TestApp, id: i64) -> Media {
 /// millisecond (a cut seeks half a millisecond early: core clips.rs `cut`).
 fn cut_of(media: &Media, link: &str, at: f64) -> bool {
     media.cut_from.as_ref().is_some_and(|(from, its)| from == link && near(*its, at))
-}
-
-/// Whether two lengths in seconds are the same to the millisecond.
-fn near(a: f64, b: f64) -> bool {
-    (a - b).abs() < 0.001
 }
 
 /// The lines of VOD `id`'s transcript, as the page reads them.
@@ -437,31 +461,26 @@ fn deleting_a_vods_video_while_its_transcription_waits_cancels_it_keeping_its_li
 /// running (decided for 0.7.4: deleting a VOD's video while it's
 /// transcribed cancels the transcription;
 /// CHANGELOG.md, 0.4.0 Fixes: "Removing a VOD, or deleting its downloaded
-/// video, didn't stop what was still using it."). The transcription is held
-/// downloading its audio, begun before the video was kept; the kit fakes no
-/// transcriber, so one held transcribing can't be reached yet.
+/// video, didn't stop what was still using it."). The transcription reads
+/// the kept video, and is held after its first minute.
 #[test]
 fn deleting_a_vods_video_while_it_is_transcribed_stops_the_transcription() {
-    let app = TestApp::new();
-    let vod = a_site_vod(&app);
-    let begun = Gate::new();
-    app.yt_dlp.holds(&begun);
-    app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
-    begun.reached();
-    // Its video kept meanwhile; only the transcription's download is held.
-    let open = Gate::new();
-    open.open();
-    app.yt_dlp.holds(&open);
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed."), (200.0, "Later on.")]);
+    let vod = app.add_site_vod("youtube", "noa29qsTc4g", "A talk", 600.0);
     keep_video(&app, vod.id);
     let file = app.db().playable_path(vod.id).unwrap().unwrap();
+    let gate = Gate::new();
+    app.worker().holds(&gate);
+    app.asked(vod.id, 0.0, None);
+    app.held(vod.id, &gate);
     assert_eq!(app.invoke("delete_video", json!({ "id": vod.id })), Ok(Value::Null));
     assert!(!Path::new(&file).exists(), "its video is still there");
     assert!(!app.db().vod(vod.id).unwrap().unwrap().media, "it says its video is kept");
-    // The gate stays shut: the download was stopped, not let go on.
+    // The gate stays shut: the transcription was stopped, not let go on.
     assert!(app.db().requests(vod.id).unwrap().is_empty(), "its transcription is still there");
-    assert!(!app.paths().source_audio(vod.id, "m4a").exists(), "its download went on");
-    let status = app.invoke("list_vods", json!({})).unwrap()[0]["status"].clone();
-    assert!(!["queued", "downloading", "ready", "transcribing"].contains(&status.as_str().unwrap()), "{status}");
+    assert!(!app.transcribing(vod.id), "its transcription is still running");
+    assert_eq!(app.lines(vod.id), lines(&[(10.0, "The Eagle has landed.")]));
 }
 
 /// A removed VOD's chat download stops where it is (CHANGELOG.md, 0.3.0:
@@ -779,10 +798,15 @@ fn removed_with_its_video_anyway_a_vod_whose_work_is_slow_to_stop_is_erased_once
     let app = TestApp::new();
     let vod = a_site_vod(&app).id;
     let (edit, _) = an_edit(&app, vod, 10.0, 20.0);
-    app.state().worker.e2e_busy(vod, WORK_STOPPING + Duration::from_secs(1));
-    let answer = app.invoke("delete_vod", json!({ "id": vod, "deleteVideo": true, "anyway": true })).unwrap();
-    assert_eq!(answer, Value::Null);
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod);
+    wait_runs_out(&app, &waits, &Gate::opened());
+    assert_eq!(removing.recv().unwrap(), Ok(None));
     assert_eq!(listed(&app), Vec::<i64>::new());
+    assert_ne!(app.state().sweeper.listed(), (None, vec![]), "its erasure done before its work stopped");
+    work.open();
     app.erasures_done();
     assert!(app.db().is_gone(vod).unwrap(), "kept as a source, its video with it ({KEEPS_ONLY})");
     assert_eq!(pieces(&app, edit)[0]["hole"], json!(true), "the edit's piece still plays");
@@ -804,9 +828,12 @@ fn removed_with_its_video_anyway_and_added_back_before_its_erasure_a_vod_is_left
     let vod = a_site_vod(&app);
     app.says(vod.id, 12.0, "The Eagle has landed");
     an_edit(&app, vod.id, 10.0, 20.0);
-    app.state().worker.e2e_busy(vod.id, WORK_STOPPING + Duration::from_secs(1));
-    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
-    assert_eq!(answer, Value::Null);
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod.id);
+    wait_runs_out(&app, &waits, &Gate::opened());
+    assert_eq!(removing.recv().unwrap(), Ok(None));
     app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
     assert_eq!(listed(&app), [vod.id]);
     app.says(vod.id, 30.0, "Said since");
@@ -833,15 +860,14 @@ fn removed_with_its_video_anyway_a_vod_whose_work_outlasts_both_waits_is_erased_
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, b"made").unwrap();
     }
-    app.state().worker.e2e_busy(vod.id, 2 * WORK_STOPPING + Duration::from_secs(5));
-    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
-    assert_eq!(answer, Value::Null);
-    // The job waits up to WORK_STOPPING for the work: longer than `eventually`.
-    let began = std::time::Instant::now();
-    while app.state().sweeper.listed() != (None, vec![]) {
-        assert!(began.elapsed() < Duration::from_secs(30), "the erasure never ended");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    let (work, waits, erasure_waits) = (Gate::new(), Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod.id);
+    wait_runs_out(&app, &waits, &erasure_waits);
+    assert_eq!(removing.recv().unwrap(), Ok(None));
+    wait_runs_out(&app, &erasure_waits, &Gate::opened());
+    app.erasures_done();
     let left = || files.iter().filter(|f| f.exists()).cloned().collect::<Vec<PathBuf>>();
     let app = TestApp::on(app.quit());
     app.erasures_done();
@@ -865,9 +891,12 @@ fn removed_with_its_video_anyway_then_quit_before_its_erasure_a_vod_is_erased_at
     let vod = a_site_vod(&app);
     app.says(vod.id, 12.0, "The Eagle has landed");
     an_edit(&app, vod.id, 10.0, 20.0);
-    app.state().worker.e2e_busy(vod.id, WORK_STOPPING + Duration::from_secs(1));
-    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
-    assert_eq!(answer, Value::Null);
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod.id);
+    wait_runs_out(&app, &waits, &Gate::opened());
+    assert_eq!(removing.recv().unwrap(), Ok(None));
     let app = TestApp::on(app.quit());
     app.erasures_done();
     assert!(app.db().is_gone(vod.id).unwrap(), "removed with its video, kept whole");
@@ -1059,23 +1088,23 @@ fn a_vod_added_back_while_its_erasure_waits_is_transcribed_unpaused() {
     let vod = app.file("Ten minutes.mp4", 10.0);
     an_edit(&app, vod, 300.0, 360.0);
     let file = app.db().vod(vod).unwrap().unwrap().source_path.unwrap();
-    app.state().worker.e2e_busy(vod, WORK_STOPPING + Duration::from_secs(3));
-    let answer = app.invoke("delete_vod", json!({ "id": vod, "deleteVideo": true, "anyway": true })).unwrap();
-    assert_eq!(answer, Value::Null);
+    let (work, waits, erasure_waits) = (Gate::new(), Gate::new(), Gate::new());
+    app.busy_till(vod, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod);
+    wait_runs_out(&app, &waits, &erasure_waits);
+    assert_eq!(removing.recv().unwrap(), Ok(None));
     // Its chat and transcript erased: the erasure waits for the work.
-    eventually("its erasure waiting", || {
-        app.state().sweeper.listed().0 == Some(vod) && app.db().erase_left(vod).unwrap() == 0
-    });
-    std::thread::sleep(Duration::from_millis(300));
+    erasure_waits.reached();
     app.invoke("add_files", json!({ "paths": [file] })).unwrap();
     assert_eq!(listed(&app), [vod]);
     let gate = Gate::new();
     app.worker().holds(&gate);
     app.asked(vod, 0.0, Some(180.0));
-    eventually("it's transcribed, or stopped", || {
-        app.requests(vod).iter().any(|s| matches!(s.status, Status::Transcribing | Status::Paused))
-    });
-    std::thread::sleep(Duration::from_millis(600));
+    app.held(vod, &gate);
+    // The erasure looks again, and ends.
+    erasure_waits.open();
+    app.erasures_done();
     let statuses: Vec<Status> = app.requests(vod).iter().map(|s| s.status).collect();
     assert_eq!(statuses, [Status::Transcribing], "paused by the erasure of the VOD before it was added back");
     gate.open();
@@ -1103,9 +1132,12 @@ fn a_vod_added_back_before_its_erasure_keeps_no_video_it_does_not_know_of() {
     app.holds_erasures(&gate);
     remove(&app, ahead.id);
     gate.reached();
-    app.state().worker.e2e_busy(vod.id, WORK_STOPPING + Duration::from_secs(1));
-    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
-    assert_eq!(answer, Value::Null);
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod.id);
+    wait_runs_out(&app, &waits, &Gate::opened());
+    assert_eq!(removing.recv().unwrap(), Ok(None));
     app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
     gate.open();
     app.erasures_done();
@@ -1114,4 +1146,135 @@ fn a_vod_added_back_before_its_erasure_keeps_no_video_it_does_not_know_of() {
     let row = app.db().vod(vod.id).unwrap().unwrap();
     assert!(row.listed && !app.db().is_gone(vod.id).unwrap());
     assert!(row.media || !video.exists(), "its video file stays, the VOD not knowing it");
+}
+
+/// Removed with its video anyway while an edit uses it, its work slower to
+/// stop than Remove waits for it, and added back by its link while Remove
+/// waits, a VOD is one like any other again, now and after a restart:
+/// listed, not gone, the edit's piece of it playing (vods.rs
+/// `add_to_library`: "One removed with its video while clips use it has its
+/// files deleted first, and is listed again, not gone"; vods.rs
+/// `erase_unused`: "Added back meanwhile, it's left as it is").
+#[test]
+fn a_vod_added_back_while_remove_waits_for_work_that_outlasts_the_wait_is_a_vod_like_any_other() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    app.says(vod.id, 12.0, "The Eagle has landed");
+    let (edit, _) = an_edit(&app, vod.id, 10.0, 20.0);
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod.id);
+    waits.reached();
+    app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+    assert_eq!(listed(&app), [vod.id]);
+    wait_runs_out(&app, &waits, &Gate::opened());
+    assert_eq!(removing.recv().unwrap(), Ok(None));
+    work.open();
+    app.erasures_done();
+    let like_any_other = |app: &TestApp, when: &str| {
+        assert_eq!(listed(app), [vod.id], "{when}");
+        assert!(!app.db().is_gone(vod.id).unwrap(), "{when}: listed, and gone for good");
+        assert_eq!(pieces(app, edit)[0]["hole"], json!(false), "{when}: the edit's piece of it a hole");
+    };
+    like_any_other(&app, "added back");
+    let app = TestApp::on(app.quit());
+    app.erasures_done();
+    like_any_other(&app, "after a restart");
+}
+
+/// Removed with its video anyway while an edit uses it, and added back by
+/// its link while Remove waits for its work, which then stops in time, a VOD
+/// is left as it is by the Remove: not gone, and what it's transcribed
+/// since is kept (vods.rs `add_to_library`: "is listed again, not gone, new
+/// to the library as one added anew is"; vods.rs `erase_unused`: "Added back
+/// meanwhile, it's left as it is").
+#[test]
+fn a_vod_added_back_while_remove_waits_for_work_that_stops_in_time_is_left_as_it_is() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    app.says(vod.id, 12.0, "The Eagle has landed");
+    let (edit, _) = an_edit(&app, vod.id, 10.0, 20.0);
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let removing = removing_anyway(&app, vod.id);
+    waits.reached();
+    app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+    assert_eq!(listed(&app), [vod.id]);
+    app.says(vod.id, 30.0, "Said since");
+    work.open();
+    waits.open();
+    assert_eq!(removing.recv().unwrap(), Ok(None));
+    app.erasures_done();
+    assert_eq!(listed(&app), [vod.id]);
+    assert!(!app.db().is_gone(vod.id).unwrap(), "added back, then erased by the Remove before it");
+    assert_eq!(pieces(&app, edit)[0]["hole"], json!(false));
+    assert_eq!(transcript(&app, vod.id), ["Said since"]);
+}
+
+/// Removed with its video anyway while an edit uses it, and VODscribe quit
+/// while Remove waits for its work, a VOD is erased at the next start, its
+/// files too (`KEEPS_ONLY`; vods.rs `delete_vod`: "so it's still erased if
+/// the app quits first"; vods.rs `Sweeper::run`: "those removed with their
+/// videos whose erasure didn't finish").
+#[test]
+fn quit_while_remove_waits_for_its_work_a_vod_removed_with_its_video_is_erased_at_the_next_start() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    app.says(vod.id, 12.0, "The Eagle has landed");
+    an_edit(&app, vod.id, 10.0, 20.0);
+    let paths = app.paths();
+    let files = [paths.source_audio(vod.id, "m4a"), paths.source_video(vod.id, "mp4"), paths.source_info(vod.id)];
+    for file in &files {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"made").unwrap();
+    }
+    let (work, waits) = (Gate::new(), Gate::new());
+    app.busy_till(vod.id, &work);
+    app.holds_work_waits(&waits);
+    let _removing = removing_anyway(&app, vod.id);
+    waits.reached();
+    // Its work outlasts the wait, the app quitting meanwhile.
+    app.clock().advance(WORK_STOPPING + Duration::from_millis(1));
+    let app = TestApp::on(app.quit());
+    app.erasures_done();
+    assert!(app.db().is_gone(vod.id).unwrap(), "removed with its video, kept whole");
+    assert_eq!(transcript(&app, vod.id), Vec::<String>::new());
+    let left: Vec<PathBuf> = files.iter().filter(|f| f.exists()).cloned().collect();
+    assert_eq!(left, Vec::<PathBuf>::new(), "the video it was removed with stays");
+}
+
+/// Removed with its video anyway while an edit uses it, and added back by
+/// its link while Remove waits for its work, a VOD stays in the page's list:
+/// the page doesn't hear it was removed, and hears it as it is now, listed,
+/// whether its work outlasts Remove's wait or stops in time (vods.rs
+/// `delete_vod`: "Added back meanwhile, it's left as it is"; App.svelte, the
+/// `vodRemoved` it's told drops the row).
+#[test]
+fn a_vod_added_back_while_remove_waits_for_its_work_stays_in_the_pages_list() {
+    for outlasts in [true, false] {
+        let app = TestApp::new();
+        let vod = a_site_vod(&app);
+        an_edit(&app, vod.id, 10.0, 20.0);
+        let (work, waits) = (Gate::new(), Gate::new());
+        app.busy_till(vod.id, &work);
+        app.holds_work_waits(&waits);
+        let removing = removing_anyway(&app, vod.id);
+        waits.reached();
+        app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+        let before = app.heard("vod").len();
+        if outlasts {
+            wait_runs_out(&app, &waits, &Gate::opened());
+        } else {
+            work.open();
+            waits.open();
+        }
+        assert_eq!(removing.recv().unwrap(), Ok(None));
+        let case = if outlasts { "its work outlasting the wait" } else { "its work stopping in time" };
+        assert_eq!(app.heard("vod-removed"), Vec::<Value>::new(), "{case}: the page drops its row");
+        let since = app.heard("vod").split_off(before);
+        let shown = since.iter().rfind(|v| v["id"] == json!(vod.id));
+        assert_eq!(shown.map(|v| &v["listed"]), Some(&json!(true)), "{case}: the page isn't shown it again");
+    }
 }

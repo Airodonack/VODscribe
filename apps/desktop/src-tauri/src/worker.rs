@@ -249,18 +249,25 @@ impl Worker {
         Ok(!running.is_empty())
     }
 
-    /// For the tests (readd-stuck.mjs, vods/tests/removing.rs): VOD
-    /// `vod_id` has work running that doesn't stop when told, for `busy`, as
-    /// a download stuck on the network would. A job of no request, which no
-    /// stage runs.
-    #[cfg(any(test, feature = "e2e"))]
+    /// For the e2e tests (readd-stuck.mjs): VOD `vod_id` has work running
+    /// that doesn't stop when told, for `busy` (`busy_while`).
+    #[cfg(feature = "e2e")]
     pub fn e2e_busy(&self, vod_id: i64, busy: Duration) {
+        self.busy_while(vod_id, move || std::thread::sleep(busy));
+    }
+
+    /// For the tests: VOD `vod_id` has work running that doesn't stop when
+    /// told, till `busy` returns, as a download stuck on the network would
+    /// (`e2e_busy`; a unit test's ends when the test says,
+    /// `TestApp::busy_till`). A job of no request, which no stage runs.
+    #[cfg(any(test, feature = "e2e"))]
+    pub fn busy_while(&self, vod_id: i64, busy: impl FnOnce() + Send + 'static) {
         let flag = Arc::new(AtomicBool::new(false));
         let job = Job { stretch_id: -1, vod_id, flag: flag.clone(), reason: Arc::default() };
         self.queue.lock().unwrap().jobs.push(job);
         let queue = self.queue.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(busy);
+            busy();
             queue.lock().unwrap().jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
         });
     }

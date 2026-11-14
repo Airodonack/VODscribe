@@ -10,7 +10,8 @@ import { listed } from "./platform";
 
 /** The VODs being removed: their rows say so meanwhile (a long transcript
  *  takes a few seconds to erase), until the news that each is gone
- *  (App.svelte), or it fails. */
+ *  (App.svelte), or its Remove answers or fails: one added back meanwhile
+ *  isn't gone, and the news is its row as it is now. */
 export const removing = new SvelteSet<number>();
 
 /** The two ways to remove a VOD that edits use. */
@@ -42,7 +43,10 @@ export async function removeVod(vod: Vod, deleteVideo: boolean, onerror: (messag
       onerror(String(e));
       return;
     }
-    if (unkept === null) return;
+    if (unkept === null) {
+      removing.delete(vod.id);
+      return;
+    }
     const answer = await choose(
       `The stretches of “${vod.title}”${inEdits(vod.id, " in ", "")} couldn't be kept: ${unkept} Deleting the video anyway leaves gaps in them.`,
       "Try again",

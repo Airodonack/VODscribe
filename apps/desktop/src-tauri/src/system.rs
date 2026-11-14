@@ -46,7 +46,7 @@ pub(crate) fn var(app: &AppHandle, name: &str) -> Option<String> {
 }
 
 /// The time now, for what goes by it (a cut's progress, sent at most so
-/// often). In a test, the test's clock, which stands still till the test
+/// often; how long a VOD's work is waited for). In a test, the test's clock, which stands still till the test
 /// moves it (`TestApp::clock`).
 pub(crate) fn now(app: &AppHandle) -> Instant {
     #[cfg(test)]

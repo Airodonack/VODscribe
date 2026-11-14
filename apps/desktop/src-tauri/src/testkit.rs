@@ -403,6 +403,24 @@ impl TestApp {
         self.holds(Held::InAPart, gate);
     }
 
+    /// Each wait from now for a VOD's work to stop (Remove's and Delete
+    /// video's, `vods::cancel_and_wait`, and its erasure's,
+    /// `vods::erase_unused`) waits at `gate` each time it finds the work
+    /// still running, before it looks at the time: the test moves the clock
+    /// on meanwhile (`clock`) to have the wait run out.
+    pub(crate) fn holds_work_waits(&self, gate: &Gate) {
+        self.holds(Held::WorkWaits, gate);
+    }
+
+    /// VOD `vod_id` has work running that doesn't stop when told, till
+    /// `gate` opens, as a download stuck on the network would
+    /// (`Worker::busy_while`). The app's end opens it.
+    pub(crate) fn busy_till(&self, vod_id: i64, gate: &Gate) {
+        held().push((Held::Busy, self.paths().clips(), gate.clone()));
+        let gate = gate.clone();
+        self.state().worker.busy_while(vod_id, move || gate.wait());
+    }
+
     /// Each plan of an edit the page asks for from now (`player_plan`) waits
     /// at `gate` once it's worked out, before it's played: one that takes
     /// longer than the next asked for.
@@ -1016,6 +1034,12 @@ enum Held {
     Sweep,
     /// The worker's start (`Folder::holds_worker_start`).
     WorkerStart,
+    /// A wait for a VOD's work to stop, the work still running
+    /// (`TestApp::holds_work_waits`).
+    WorkWaits,
+    /// Work that doesn't stop when told (`TestApp::busy_till`): never waited
+    /// at, only opened as the app ends.
+    Busy,
 }
 
 /// The gates the app's own code waits at, each with where (`Held`) and the
@@ -1063,6 +1087,12 @@ pub(crate) fn between_parts(app: &AppHandle) {
 /// its test holds erasures' parts (`TestApp::holds_erasure_parts`).
 pub(crate) fn in_a_part(app: &AppHandle) {
     hold(Held::InAPart, &app.state::<AppState>().paths.clips());
+}
+
+/// A wait for a VOD's work to stop has found it still running: it waits
+/// there if its test holds those waits (`TestApp::holds_work_waits`).
+pub(crate) fn work_waits(app: &AppHandle) {
+    hold(Held::WorkWaits, &app.state::<AppState>().paths.clips());
 }
 
 /// An edit's plan is worked out: it waits there if its test holds plans
