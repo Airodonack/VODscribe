@@ -19,6 +19,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Paused requests show their whole waveform. A request paused or failed after its audio came showed levels only up to where it stopped.
   - VODscribe starts on a newer library. A library a later version changed no longer keeps it from opening, and it says what doesn't work.
   - Unreadable settings are kept, not overwritten. A settings file that can't be read is set aside beside your library, and VODscribe says so.
+  - Settings from a newer version load. A choice this version doesn't have, such as a newer codec, falls back alone, and the newer version still finds it.
   - Captions show a stretch just transcribed. Captions read just before a stretch finished no longer replace the newer ones.
   - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".
   - A linked folder's files stay put. VODscribe no longer takes or deletes your files at start when a folder in its library is a link to one of yours.

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 /// A settings folder of its own, and the file as the app reads it.
 struct File {
-    _dir: crate::TempDir,
+    dir: crate::TempDir,
     path: PathBuf,
 }
 
@@ -16,7 +16,7 @@ impl File {
     fn none(name: &str) -> Self {
         let dir = crate::TempDir::new(name);
         let path = dir.join("settings.json");
-        File { _dir: dir, path }
+        File { dir, path }
     }
 
     /// A folder with a settings file written as `text`, by hand or by an
@@ -72,12 +72,14 @@ fn no_settings_file_is_every_default() {
     assert!(!file.path.exists(), "reading writes nothing");
 }
 
-/// Unreadable settings are the defaults (settings.rs `load`: "Missing or
-/// unreadable settings fall back to defaults"). What becomes of the file is
-/// `an_unreadable_settings_file_is_set_aside_not_saved_over`.
+/// Unreadable settings are the defaults (settings.rs `load`: "A file that
+/// isn't a JSON object ... is read as the defaults too"). What becomes of the
+/// file is `an_unreadable_settings_file_is_set_aside_not_saved_over`; a value
+/// that can't be read in a file that can is
+/// `a_value_a_newer_version_wrote_loses_only_itself`.
 #[test]
 fn an_unreadable_settings_file_is_every_default() {
-    for text in ["", "{", "not settings", r#"["theme"]"#, r#"{"theme": "purple"}"#, r#"{"video_height": "tall"}"#] {
+    for text in ["", "{", "not settings", r#"["theme"]"#, "null", r#""dark""#] {
         let loaded = read(text);
         assert_eq!(loaded.theme, Theme::System, "{text:?}");
         assert_eq!(loaded.video_height, None, "{text:?}");
@@ -516,4 +518,88 @@ mod every_released_settings_file_reads_with_its_values {
     fn v0_5_2_dev() {
         reads("0.5.2-dev", Theme::Light, ["ffz", "7tv", "bttv"], Some(720), ClipFormat::Mov);
     }
+}
+
+/// What a settings file holds besides `settings.json`, and whether it's there.
+fn left_alone(file: &File) -> (Vec<(String, String)>, bool) {
+    (beside(&file.dir), file.path.exists())
+}
+
+/// Each setting is read on its own: a value a later version wrote that this
+/// one doesn't know (a fifth codec, a fourth theme) loses only itself, and
+/// the file isn't set aside (settings.rs `load`: "a value this version
+/// doesn't know (a codec or theme a later version adds) or of the wrong type
+/// loses only itself"). Decided for 0.7.4: each setting read on its own, an
+/// unknown or unreadable value dropping only itself.
+#[test]
+fn a_value_a_newer_version_wrote_loses_only_itself() {
+    let file = File::with(
+        "settings-newer-value",
+        r#"{"theme": "dark", "video_height": 720, "show_keys": true, "clip_codec": "av1", "clip_quality": "high"}"#,
+    );
+    let loaded = file.load();
+    assert_eq!((loaded.theme, loaded.video_height, loaded.show_keys), (Theme::Dark, Some(720), true));
+    assert_eq!(loaded.clip_encoding(), ClipEncoding { codec: ClipCodec::H264, quality: ClipQuality::High });
+    assert_eq!(left_alone(&file), (vec![], true), "not set aside");
+    assert_eq!(Settings::taken_aside(&file.path), None);
+    let loaded = read(r#"{"theme": "sepia", "use_vodscription": "sometimes", "ask_to_use_vodscription": false}"#);
+    assert_eq!(loaded.theme, Theme::System);
+    assert_eq!(loaded.use_vodscription(), UseVodscription::Never, "read from the switch before it");
+}
+
+/// A value of the wrong type (the file edited by hand) loses only itself
+/// (settings.rs `load`: "or of the wrong type loses only itself").
+#[test]
+fn a_value_of_the_wrong_type_loses_only_itself() {
+    let file = File::with(
+        "settings-wrong-type",
+        r#"{"theme": "light", "video_height": "tall", "show_keys": "yes", "ask_for_annotations": false, "device": null}"#,
+    );
+    let loaded = file.load();
+    assert_eq!((loaded.theme, loaded.ask_for_annotations), (Theme::Light, false));
+    assert_eq!((loaded.video_height, loaded.show_keys, loaded.device), (None, false, Device::Cpu));
+    assert_eq!(left_alone(&file), (vec![], true), "not set aside");
+}
+
+/// A setting this version doesn't have (one a later version added) loses
+/// only itself (settings.rs `read_each`: "every key this version doesn't
+/// have").
+#[test]
+fn an_unknown_setting_loses_only_itself() {
+    let file = File::with("settings-unknown-key", r#"{"theme": "dark", "captions_size": 3, "show_keys": true}"#);
+    let loaded = file.load();
+    assert_eq!((loaded.theme, loaded.show_keys), (Theme::Dark, true));
+    assert_eq!(left_alone(&file), (vec![], true), "not set aside");
+}
+
+/// What this version left out is written back as it was when another
+/// setting changes, for the later version that wrote it; a setting the user
+/// changes is written as changed (settings.rs `kept_from`: "Each is written
+/// back as it was unless the user changed that setting since").
+#[test]
+fn what_a_newer_version_wrote_is_kept_until_its_setting_changes() {
+    let file = File::with(
+        "settings-newer-kept",
+        r#"{"theme": "sepia", "clip_codec": "av1", "clip_format": "mkv", "captions_size": 3, "video_height": "tall"}"#,
+    );
+    file.saved_and_loaded(&Settings { show_keys: true, ..file.load() });
+    let written = file.written();
+    assert_eq!(written["show_keys"], true, "the change is saved");
+    for (key, was) in [("theme", json!("sepia")), ("clip_codec", json!("av1")), ("clip_format", json!("mkv"))] {
+        assert_eq!(written[key], was, "{key}");
+    }
+    assert_eq!((&written["captions_size"], &written["video_height"]), (&json!(3), &json!("tall")));
+    file.saved_and_loaded(&Settings {
+        theme: Theme::Light,
+        clip_codec: Some(ClipCodec::Prores),
+        video_height: Some(720),
+        ..file.load()
+    });
+    let written = file.written();
+    assert_eq!(
+        (&written["theme"], &written["clip_codec"], &written["clip_format"], &written["video_height"]),
+        (&json!("light"), &json!("prores"), &json!("mov"), &json!(720))
+    );
+    assert_eq!(written["captions_size"], 3, "a setting this version doesn't have stays");
+    assert_eq!(file.load().theme, Theme::Light);
 }

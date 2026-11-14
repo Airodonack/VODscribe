@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -259,10 +260,10 @@ fn providers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EmoteProviders, D
 }
 
 /// The key bindings that are lists of keys; any other (the file edited by
-/// hand) is left out, so that action has its defaults, rather than making
-/// the whole file unreadable and every setting its default.
+/// hand) is left out, so that action has its defaults, rather than every
+/// binding going with it (`read_each`).
 fn bindings<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
-    let serde_json::Value::Object(all) = serde_json::Value::deserialize(d)? else { return Ok(BTreeMap::new()) };
+    let Value::Object(all) = Value::deserialize(d)? else { return Ok(BTreeMap::new()) };
     Ok(all.into_iter().filter_map(|(id, keys)| Some((id, serde_json::from_value(keys).ok()?))).collect())
 }
 
@@ -311,11 +312,13 @@ impl Settings {
         self
     }
 
-    /// Missing settings are the defaults. Unreadable ones (a damaged file,
-    /// or one edited by hand into what isn't settings) are the defaults too,
-    /// and the file is set aside (`set_aside`), so the next change doesn't
-    /// save the defaults over it; `taken_aside` says where it went. A key
-    /// binding in the wrong shape loses only itself (`bindings`).
+    /// Missing settings are the defaults. A file that isn't a JSON object (a
+    /// damaged file, or one edited by hand into what isn't settings) is read
+    /// as the defaults too, and set aside (`set_aside`), so the next change
+    /// doesn't save the defaults over it; `taken_aside` says where it went.
+    /// Otherwise each setting is read on its own (`read_each`): a value this
+    /// version doesn't know (a codec or theme a later version adds) or of the
+    /// wrong type loses only itself, and is kept in the file (`save`).
     pub fn load(path: &Path) -> Self {
         let read = match fs::read(path) {
             Ok(bytes) => Ok(bytes),
@@ -323,8 +326,9 @@ impl Settings {
             Err(e) => Err(e.to_string()),
         };
         let unreadable = match &read {
-            Ok(bytes) => match serde_json::from_slice::<Self>(bytes) {
-                Ok(settings) => return settings.normalized(),
+            Ok(bytes) => match serde_json::from_slice::<Value>(bytes) {
+                Ok(Value::Object(file)) => return read_each(file).0.normalized(),
+                Ok(_) => "not a JSON object".to_string(),
                 Err(e) => e.to_string(),
             },
             Err(e) => e.clone(),
@@ -347,15 +351,61 @@ impl Settings {
         lock(&ASIDE).remove(path)
     }
 
+    /// Writes the settings over the file at `path`, keeping what `load`
+    /// left out of it (`kept_from`) for the version that wrote it.
     pub fn save(&self, path: &Path) -> Result<()> {
         #[cfg(any(test, feature = "testkit"))]
         crate::testkit::tools::held_at(crate::testkit::tools::At::SettingsSave, path);
         let _turn = lock(&SAVING);
+        let settings = self.clone().normalized();
+        let text = match kept_from(path, &settings)? {
+            None => serde_json::to_string_pretty(&settings)?,
+            Some(written) => serde_json::to_string_pretty(&written)?,
+        };
         let tmp = path.with_extension("tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(&self.clone().normalized())?)?;
+        fs::write(&tmp, text)?;
         fs::rename(tmp, path)?;
         Ok(())
     }
+}
+
+/// The settings in `file`, each read on its own, as a missing one would be
+/// when its value can't be read (a value of the wrong type, or one this
+/// version doesn't know); and those left out, with every key this version
+/// doesn't have, as they were written.
+fn read_each(file: Map<String, Value>) -> (Settings, Map<String, Value>) {
+    let known = serde_json::to_value(Settings::default()).expect("settings are written as JSON");
+    let (read, left_out): (Map<_, _>, Map<_, _>) = file.into_iter().partition(|(key, value)| {
+        known.get(key).is_some() && serde_json::from_value::<Settings>(serde_json::json!({ key: value })).is_ok()
+    });
+    // Each was read alone, and no setting is read from another, so together
+    // they read too.
+    (serde_json::from_value(Value::Object(read)).unwrap_or_default(), left_out)
+}
+
+/// What to write for `settings` over the file at `path`, if that file holds
+/// what `load` left out (`read_each`): a later version's value, or a setting
+/// it added. Each is written back as it was unless the user changed that
+/// setting since, so going back a version and changing another setting
+/// doesn't lose it for the later one. `None` when there's nothing to keep.
+fn kept_from(path: &Path, settings: &Settings) -> Result<Option<Value>> {
+    let Some(Value::Object(file)) = fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()) else {
+        return Ok(None);
+    };
+    let (read_as, left_out) = read_each(file);
+    if left_out.is_empty() {
+        return Ok(None);
+    }
+    let read_as = serde_json::to_value(read_as.normalized())?;
+    let mut written = serde_json::to_value(settings)?;
+    if let Some(out) = written.as_object_mut() {
+        for (key, value) in left_out {
+            if out.get(&key) == read_as.get(&key) {
+                out.insert(key, value);
+            }
+        }
+    }
+    Ok(Some(written))
 }
 
 /// Taken by each save, and by setting a file aside: two saves at once (quick
