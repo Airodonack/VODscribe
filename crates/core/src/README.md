@@ -30,6 +30,7 @@ One module per subject.
 - `search.rs`: a query run against what was said and what chat wrote.
 - `searcher.rs`: search's own read connection, so a slow search never holds up the views.
 - `chat.rs`: chat replays from Kick, Twitch and YouTube.
+- [`chat`](chat): chat replays' tests.
 - `emotes.rs`: local copies of emote images.
 - `word_emotes.rs`: 7TV, BetterTTV and FrankerFaceZ emotes that chat writes as words.
 - `layers.rs`: saved chat searches drawn on the timeline.
