@@ -8,6 +8,7 @@ One module per subject.
 - `db.rs`: the library, one SQLite file with full-text indexes over transcripts and chat.
 - `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
 - `transcript.rs`: words and lines as the model gives them.
+- [`transcript`](transcript): its tests.
 - `fetch.rs`: a VOD's details and audio through yt-dlp.
 - [`fetch`](fetch): fetch's tests.
 - `kick.rs`: Kick's VODs, which yt-dlp can't read yet.
@@ -33,7 +34,9 @@ One module per subject.
 - `chat.rs`: chat replays from Kick, Twitch and YouTube.
 - [`chat`](chat): chat replays' tests.
 - `emotes.rs`: local copies of emote images.
+- [`emotes`](emotes): its tests.
 - `word_emotes.rs`: 7TV, BetterTTV and FrankerFaceZ emotes that chat writes as words.
+- [`word_emotes`](word_emotes): its tests.
 - `layers.rs`: saved chat searches drawn on the timeline.
 - `clips.rs`: clips cut to the frame with ffmpeg, in the codec and quality Settings picks.
 - [`clips`](clips): clips' tests.
@@ -42,6 +45,7 @@ One module per subject.
 - `footage.rs`: where a stretch's picture and sound come from.
 - `sources.rs`: the VODs clips are made of, kept while any clip uses them.
 - `mkv.rs`: how much of a Matroska file still being written is whole.
+- [`mkv`](mkv): its tests.
 - `time.rs`: time in flicks, a whole number per frame at every common rate.
 - [`time`](time): time's tests.
 - `clipboard.rs`: what Ctrl+C copies and Ctrl+V puts back.

@@ -55,22 +55,4 @@ pub fn get(url: &str, dir: &Path) -> Result<(Vec<u8>, &'static str)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fetches_only_from_emote_cdns() {
-        assert!(allowed("https://files.kick.com/emotes/4085540/fullsize"));
-        assert!(allowed("https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0"));
-        assert!(allowed("https://yt3.ggpht.com/abc=w24-h24-c-k-nd"));
-        assert!(allowed("https://cdn.7tv.app/emote/01G3WEGZN0000ET2J0MQP5YJ0G/1x.webp"));
-        assert!(allowed("https://cdn.betterttv.net/emote/5f1b0186cf6d2144653d2970/1x"));
-        assert!(allowed("https://cdn.frankerfacez.com/emote/9/1"));
-        assert!(!allowed("http://files.kick.com/emotes/1/fullsize"), "https only");
-        assert!(!allowed("https://files.kick.com.evil.example/x"));
-        assert!(!allowed("https://evil.example/files.kick.com"));
-        assert!(!allowed("https://user@files.kick.com/x"));
-        assert!(!allowed("file:///etc/passwd"));
-        assert!(get("https://localhost/x", Path::new("/nonexistent")).is_err());
-    }
-}
+mod tests;
