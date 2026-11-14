@@ -272,19 +272,32 @@ fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vo
 /// added back, it's added anew. Otherwise the add would take its row from
 /// under the sweep, which would stop there and leave its files. One whose
 /// work doesn't stop in time (`WORK_STOPPING`) is set aside instead
-/// (`Db::set_aside`), its files erased once it has (`Sweeper::left`).
+/// (`Db::set_aside`), its files erased once it has (`Sweeper::left`). One
+/// removed with its video while clips use it has its files deleted first,
+/// and is listed again, not gone (`Db::clear_gone`).
 fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
-    let erasing = {
+    let (erasing, gone) = {
         let db = state.db.lock().unwrap();
         match db.find_vod(&info.platform, &info.platform_id)? {
-            Some(vod) if !vod.listed && db.uses(vod.id)? <= 0 => Some(vod.id),
-            _ => None,
+            Some(vod) if !vod.listed && db.uses(vod.id)? <= 0 => (Some(vod.id), None),
+            Some(vod) if !vod.listed && db.is_gone(vod.id)? => (None, Some(vod.id)),
+            _ => (None, None),
         }
     };
+    if let Some(id) = gone {
+        // Removed with its video while clips use it, its erasure maybe not
+        // done (it stops once it's listed): its files go first, as the
+        // erasure would delete them, or its kept video would stay, its
+        // record forgotten (`Db::set_gone`). Nothing new starts on it while
+        // it's gone and out of the list; added back, it's a VOD to download
+        // again (`Db::clear_gone`).
+        remove_kept(&state.storyboards, &state.paths, id);
+        pipeline::remove_work_files(&state.paths.work(), id);
+    }
     if let Some(id) = erasing {
         state.sweeper.hand_over(id);
-        erase_unused(app, Sweep { vod: id, kept: false }, &AtomicBool::new(false))?;
+        erase_unused(app, Sweep { vod: id, kept: false, anyway: false }, &AtomicBool::new(false))?;
     }
     let db = state.db.lock().unwrap();
     let mut left = None;
@@ -399,7 +412,9 @@ async fn erase_in_parts(
 /// is realized (`realize_all`); if one can't be (offline, a full disk),
 /// nothing is removed and the answer is why, for the page to ask what then
 /// (otherwise none). With `anyway` too, it's erased without that: the
-/// pieces other clips have of it are holes.
+/// pieces other clips have of it are holes. Its transcription stops first
+/// (a moment); still stopping after a while, it's erased once it has, by
+/// the sweeper's job.
 #[tauri::command]
 pub(crate) async fn delete_vod(
     app: AppHandle,
@@ -439,20 +454,39 @@ pub(crate) async fn delete_vod(
     }
     let mut erased = false;
     if delete_video {
-        // Its chat and transcript a part at a time, then the rest; one whose
-        // work is still stopping is left to the sweeper's job, below.
-        erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
-        let db = state.db.lock().unwrap();
-        state
-            .worker
-            .control_vod(id, Stop::Pause, |running| {
-                erased = running.is_empty();
-                if erased { erase_source(&app, &db, id, false) } else { Ok(()) }
-            })
-            .map_err(err)?;
+        // Its transcription stopped first: one still stopping would write its
+        // last lines after them and end done over lines erased. Still
+        // stopping after a while, it's left to the sweeper's job, below,
+        // which waits for it.
+        let handle = app.clone();
+        let stopped = tauri::async_runtime::spawn_blocking(move || cancel_and_wait(&handle, id)).await.map_err(err)?;
+        if stopped.is_ok() {
+            // Its chat and transcript a part at a time, then the rest.
+            erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
+            let db = state.db.lock().unwrap();
+            state
+                .worker
+                .control_vod(id, Stop::Pause, |running| {
+                    erased = running.is_empty();
+                    if erased { erase_source(&app, &db, id, false) } else { Ok(()) }
+                })
+                .map_err(err)?;
+        }
     }
-    if !erased && state.db.lock().unwrap().uses(id).map_err(err)? <= 0 {
-        state.sweeper.removed(id);
+    if !erased {
+        if delete_video {
+            // Gone now, its pieces holes: so it's still erased if the app
+            // quits first or its work outlasts the job's wait too (the next
+            // start's `Sweeper::run`), and what its work writes as it ends
+            // goes (`worker::forget_if_erased`).
+            if let Err(e) = state.db.lock().unwrap().set_gone(id) {
+                eprintln!("VOD {id} gone: {e:#}");
+            }
+            // Whatever uses it: with `anyway`, clips may still.
+            state.sweeper.removed_anyway(id);
+        } else if state.db.lock().unwrap().uses(id).map_err(err)? <= 0 {
+            state.sweeper.removed(id);
+        }
     }
     crate::page::emit(&app, "vod-removed", id);
     Ok(None)
@@ -568,11 +602,13 @@ fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &Atomi
 /// A VOD nothing uses any more, to erase (`Sweeper`): one just removed
 /// keeps its row as a gone source till the next start (`kept`), so an undo
 /// in an edit that puts back a piece of it finds it, a hole; one left from
-/// before the app started goes whole.
+/// before the app started goes whole. One removed with its video `anyway`
+/// is erased though clips use it, their pieces of it holes.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Sweep {
     pub(crate) vod: i64,
     kept: bool,
+    anyway: bool,
 }
 
 /// How long an erasure waits for the VOD's download or transcription to
@@ -599,9 +635,16 @@ impl Sweeper {
         self.jobs.close();
     }
 
-    /// Starts erasing, with what was left from before.
+    /// Starts erasing, with what was left from before: the sources nothing
+    /// uses, and those removed with their videos whose erasure didn't finish.
     pub(crate) fn run(&self, app: AppHandle) -> anyhow::Result<()> {
         let left = app.state::<AppState>().db.lock().unwrap().unused_sources()?;
+        // Only tidying from before: a library that can't be read for it
+        // isn't a reason not to start.
+        let unfinished = unfinished_erasures(&app).unwrap_or_else(|e| {
+            eprintln!("erasures left unfinished: {e:#}");
+            Vec::new()
+        });
         let news = app.clone();
         self.jobs.watch(move || crate::job_list::changed(&news));
         self.jobs.run("sweep", move |job, stop| {
@@ -610,20 +653,29 @@ impl Sweeper {
             }
         })?;
         for vod in left {
-            self.jobs.push_new(Sweep { vod, kept: false }, |j| j.vod == vod);
+            self.jobs.push_new(Sweep { vod, kept: false, anyway: false }, |j| j.vod == vod);
+        }
+        for vod in unfinished {
+            self.jobs.push_new(Sweep { vod, kept: true, anyway: true }, |j| j.vod == vod);
         }
         Ok(())
     }
 
     /// VOD `id` was removed and nothing uses it: it's erased.
     pub(crate) fn removed(&self, id: i64) {
-        self.jobs.push_new(Sweep { vod: id, kept: true }, |j| j.vod == id);
+        self.jobs.push_new(Sweep { vod: id, kept: true, anyway: false }, |j| j.vod == id);
+    }
+
+    /// VOD `id` was removed with its video, its work still stopping
+    /// (`delete_vod`): it's erased once that's stopped, whatever uses it.
+    pub(crate) fn removed_anyway(&self, id: i64) {
+        self.jobs.push_new(Sweep { vod: id, kept: true, anyway: true }, |j| j.vod == id);
     }
 
     /// VOD `id` was set aside by its add, its work still stopping
     /// (`add_to_library`): it's erased, row and all, once that's stopped.
     pub(crate) fn left(&self, id: i64) {
-        self.jobs.push_new(Sweep { vod: id, kept: false }, |j| j.vod == id);
+        self.jobs.push_new(Sweep { vod: id, kept: false, anyway: false }, |j| j.vod == id);
     }
 
     /// Stops erasing VOD `id`, or takes it out of the queue: what's left of
@@ -647,15 +699,38 @@ impl Sweeper {
     }
 }
 
-/// Erases the VOD `job` names, unless something uses it (again): gone
-/// first (so adding it back adds it anew: `Db::add_vod`), then its chat and
+/// The VODs removed with their videos while clips used them (out of the
+/// list, gone: `delete_vod`) whose erasure didn't finish, the app quitting
+/// first or their work not stopping in time: some of their rows or files
+/// are left. Among those clips still use (`Db::gone_sources_used`); the
+/// rest are `unused_sources`.
+fn unfinished_erasures(app: &AppHandle) -> anyhow::Result<Vec<i64>> {
+    let state = app.state::<AppState>();
+    let owners: HashSet<i64> =
+        [state.paths.work(), state.paths.media()].iter().flat_map(|dir| pipeline::file_owners(dir)).collect();
+    let db = state.db.lock().unwrap();
+    let mut unfinished = Vec::new();
+    for id in db.gone_sources_used()? {
+        if owners.contains(&id) || db.erase_left(id)? > 0 || !db.stretches(id)?.is_empty() {
+            unfinished.push(id);
+        }
+    }
+    Ok(unfinished)
+}
+
+/// Erases the VOD `job` names, while it's out of the list, unless something
+/// uses it (again) and it's not to go `anyway`: gone first (so adding it
+/// back adds it anew: `Db::add_vod`), then its chat and
 /// transcript a part at a time, the library free in between, then its
 /// files once its work has stopped. Stopped (`stop`), it's left as it is,
 /// for the next start.
 fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Result<()> {
     let state = app.state::<AppState>();
     let id = job.vod;
-    let unused = |db: &Db| -> anyhow::Result<bool> { Ok(db.vod(id)?.is_some() && db.uses(id)? <= 0) };
+    // Added back meanwhile, it's left as it is (`Db::add_vod`).
+    let unused = |db: &Db| -> anyhow::Result<bool> {
+        Ok(db.vod(id)?.is_some_and(|v| !v.listed) && (job.anyway || db.uses(id)? <= 0))
+    };
     crate::job_list::begun(app, crate::job_list::Queue::Erase, id);
     let total = {
         let db = state.db.lock().unwrap();
@@ -698,6 +773,10 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
     let began = Instant::now();
     loop {
         let db = state.db.lock().unwrap();
+        // Added back meanwhile, work begun on it since isn't paused.
+        if !unused(&db)? {
+            return Ok(());
+        }
         let mut erased = false;
         state.worker.control_vod(id, Stop::Pause, |running| {
             // Used again meanwhile (an undo): kept.
@@ -712,7 +791,10 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
             return Ok(());
         }
         if stop.load(std::sync::atomic::Ordering::Relaxed) || began.elapsed() > WORK_STOPPING {
-            // Its work still stopping: the next start erases it.
+            // Its work still stopping: the next start erases it
+            // (`unused_sources`, or `unfinished_erasures` for one that goes
+            // `anyway`; what its work writes as it ends goes meanwhile:
+            // `worker::forget_if_erased`).
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));

@@ -145,6 +145,24 @@ impl Db {
         Ok(())
     }
 
+    /// VOD `vod_id`, gone, is added back while clips still use it: a VOD
+    /// like any other again, its pieces no longer holes (its footage is
+    /// downloaded again as needed), with nothing left of what it had, as one
+    /// nothing used is added anew. Its erasure may not have finished: what
+    /// it left of the transcript, chat and stretches goes now (its files are
+    /// the app's to delete: vods.rs `add_to_library`).
+    pub fn clear_gone(&self, vod_id: i64) -> Result<()> {
+        self.atomically(|db| {
+            db.clear_chat(vod_id)?;
+            db.clear_segments(vod_id)?;
+            db.clear_stretches(vod_id)?;
+            // Its audio, a work file, is deleted with the rest of its files.
+            db.set_audio_path(vod_id, None)?;
+            db.conn.execute("UPDATE vods SET gone = 0 WHERE id = ?1", [vod_id])?;
+            Ok(())
+        })
+    }
+
     /// Moves VOD `vod_id`, gone but not yet erased (its work still
     /// stopping), out of the way of the same VOD added again: under an id
     /// of its own, `add_vod` doesn't find it and adds the VOD anew, and its

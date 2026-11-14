@@ -24,6 +24,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".
   - A linked folder's files stay put. VODscribe no longer takes or deletes your files at start when a folder in its library is a link to one of yours.
   - Remove says its clips are deleted. It said their files stayed in your Videos folder.
+  - Removing during transcription deletes the video. A VOD an edit used, removed with its video while being transcribed, kept its video and files.
+  - Added back VODs play in edits again. A VOD removed with its video while an edit used it stayed a gap there after it was added back.
   - Stopping a transcription no longer freezes VODscribe. It could freeze while another VOD was being removed.
 
 ## 0.7.3 — 2026-11-08

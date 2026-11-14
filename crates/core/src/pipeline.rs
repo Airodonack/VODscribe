@@ -494,6 +494,13 @@ pub fn remove_work_files(work_dir: &Path, vod_id: i64) {
     }
 }
 
+/// The VODs that files in `dir` (the work or media folder) belong to, as
+/// `remove_work_files` finds them.
+pub fn file_owners(dir: &Path) -> std::collections::HashSet<i64> {
+    let Ok(entries) = fs::read_dir(dir) else { return Default::default() };
+    entries.flatten().filter_map(|e| owner(&e.file_name().to_string_lossy())).collect()
+}
+
 /// Deletes the files in `work_dir` named `prefix` and then a dot or a dash
 /// (a download's pieces: `clip-12.info.json`, `clip-12-1000-2000.mp4.part`),
 /// not another's whose name only starts the same (`clip-123.info.json`).

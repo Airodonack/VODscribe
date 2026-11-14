@@ -1485,7 +1485,7 @@ fn struck_to_flicks(conn: &Connection) -> Result<()> {
 /// its struck moment moves there (`struck_chapters`), so it shows where it
 /// did. A clip of a clip bar that would be left with no piece (struck all the
 /// way through) is left whole instead, its struck stretches emptied: it stays
-/// on its bar and plays its stretch again (owner, 2026-11-13). No revision
+/// on its bar and plays its stretch again (decided for 0.7.4). No revision
 /// moves: what's made of a clip is still of what it plays (`Db::made_of`),
 /// and a clip bar's clip left one piece (`made_straight`) is recorded as made so.
 fn struck_to_splits(conn: &Connection) -> Result<()> {
@@ -1885,8 +1885,14 @@ impl Db {
             if self.is_gone(existing.id)? && self.uses(existing.id)? <= 0 {
                 self.delete_vod(existing.id)?;
             } else {
-                // Taken out of the list but kept for other clips: listed again.
-                self.atomically(|db| db.add_vod_clip(existing.id, &existing.info.title))?;
+                // Taken out of the list but kept for other clips: listed
+                // again, anew if it was removed with its video (`clear_gone`).
+                self.atomically(|db| {
+                    if db.is_gone(existing.id)? {
+                        db.clear_gone(existing.id)?;
+                    }
+                    db.add_vod_clip(existing.id, &existing.info.title)
+                })?;
                 return Ok((self.vod(existing.id)?.expect("just found"), false));
             }
         }

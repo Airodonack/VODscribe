@@ -7,9 +7,8 @@
 //! Stated elsewhere, cited here and not repeated: removing a VOD while its
 //! clips wait to be made makes none of them (CHANGELOG.md, 0.4.1 Fixes:
 //! "Removing a VOD while its clips waited to be made could still download
-//! them, leaving their files behind."), the clips pilot's
-//! `removing_a_vod_stops_its_clip_being_made_and_makes_none_of_its_others`
-//! in clips/tests/queue.rs.
+//! them, leaving their files behind."), clips/tests/queue.rs
+//! `removing_a_vod_stops_its_clip_being_made_and_makes_none_of_its_others`.
 
 use super::*;
 
@@ -98,8 +97,8 @@ fn keep_video(app: &TestApp, id: i64) {
 }
 
 /// A removed VOD leaves the library's list, and the page hears it went
-/// (vods.rs:380, `delete_vod`: "Takes VOD `id` out of the library's list";
-/// vods.rs:447, the `vod-removed` the page is sent).
+/// (vods.rs `delete_vod`: "Takes VOD `id` out of the library's list";
+/// vods.rs the `vod-removed` the page is sent).
 #[test]
 fn a_removed_vod_leaves_the_list_and_the_page_hears_it() {
     let app = TestApp::new();
@@ -111,10 +110,10 @@ fn a_removed_vod_leaves_the_list_and_the_page_hears_it() {
 }
 
 /// A removed VOD's clips go with their files, except a file another app
-/// took (vods.rs:380, `delete_vod`: "its own clip goes, with its marks and
+/// took (vods.rs `delete_vod`: "its own clip goes, with its marks and
 /// its clip bar (the clips' files too, unless dragged out of the app)").
-/// The clips pilot's E30 states the same from the clip's side, on a disk
-/// without hard links (`a_vod_removed_keeps_the_clip_file_another_app_was_given`).
+/// clips/tests/handed_out.rs states the same from the clip's side, on a
+/// disk without hard links (`a_vod_removed_keeps_the_clip_file_another_app_was_given`).
 #[test]
 fn a_removed_vods_clips_go_with_their_files_unless_another_app_took_them() {
     let app = TestApp::new();
@@ -129,7 +128,7 @@ fn a_removed_vods_clips_go_with_their_files_unless_another_app_took_them() {
 }
 
 /// A removed VOD's download stops where it is: its erasure, which waits for
-/// that, finishes with the download never let go on (vods.rs:382,
+/// that, finishes with the download never let go on (vods.rs
 /// `delete_vod`: "its download stops where it is. Its transcription,
 /// started from it, ends";
 /// CHANGELOG.md, 0.4.0 Fixes: "Removing a VOD, or deleting its downloaded
@@ -172,9 +171,9 @@ fn a_removed_vods_partial_download_leaves_no_files() {
 }
 
 /// A removed VOD nothing uses is erased at once, each as it's removed,
-/// while a clip of another is still being made (vods.rs:385, `delete_vod`:
+/// while a clip of another is still being made (vods.rs `delete_vod`:
 /// "if nothing does now, it's erased at once, a job beside the encodes";
-/// vods.rs:574, `Sweeper`: "Each is queued as it's removed"; CHANGELOG.md,
+/// vods.rs `Sweeper`: "Each is queued as it's removed"; CHANGELOG.md,
 /// 0.7.1: "Removed VODs are erased at once." "It's erased beside whatever is
 /// being made rather than as VODscribe quits").
 #[test]
@@ -203,7 +202,7 @@ fn a_removed_vod_nothing_uses_is_erased_at_once_beside_whats_being_made() {
 }
 
 /// An erasure erases the VOD's files, footage and pictures, by their names,
-/// and no other VOD's (vods.rs:469, `erase_source`: "Erases VOD `id`'s files,
+/// and no other VOD's (vods.rs `erase_source`: "Erases VOD `id`'s files,
 /// footage and pictures"; tests/e2e/scenarios/readd-erasing.mjs: "its work
 /// files, kept video, thumbnail, peaks, storyboard and footage", "what's
 /// deleted is decided by name, not by what's in them").
@@ -238,7 +237,7 @@ fn an_erasure_erases_the_vods_files_footage_and_pictures() {
 }
 
 /// A removed VOD an edit uses is kept as a source, its transcript and all,
-/// till nothing uses it; then it goes, at the next start (vods.rs:384,
+/// till nothing uses it; then it goes, at the next start (vods.rs
 /// `delete_vod`: "What other clips use of it stays, a source only, until
 /// nothing does"; CHANGELOG.md, 0.5.0: "Removing a VOD that an edit uses
 /// leaves the edit's pieces of it where they are").
@@ -261,7 +260,7 @@ fn a_vod_used_by_an_edit_is_kept_as_a_source_until_nothing_uses_it() {
 }
 
 /// A VOD just removed keeps its row as a gone source, so an undo in an edit
-/// that puts back a piece of it finds a hole (vods.rs:558, `Sweep`: "one
+/// that puts back a piece of it finds a hole (vods.rs `Sweep`: "one
 /// just removed keeps its row as a gone source till the next start
 /// (`kept`), so an undo in an edit that puts back a piece of it finds it, a
 /// hole").
@@ -284,7 +283,7 @@ fn a_vod_just_removed_keeps_its_row_as_a_gone_source_so_undo_in_an_edit_finds_a_
 
 /// Removed with its video, a VOD keeps only the stretch an edit uses, as a
 /// video of its own holding exactly that stretch, and the edit's piece plays
-/// it; the rest is erased at once (vods.rs:388, `delete_vod`: "With
+/// it; the rest is erased at once (vods.rs `delete_vod`: "With
 /// `delete_video`, it's erased now: first each stretch other clips use is
 /// realized"; CHANGELOG.md, 0.5.0: "Removed with its video, only the
 /// stretches the edits use are kept, as videos of their own, and the rest is
@@ -310,7 +309,7 @@ fn removing_with_its_video_keeps_only_the_stretches_edits_use_as_videos_of_their
 /// A stretch kept from a VOD removed with its video is made in the format
 /// chosen in Settings › Encoding when ffmpeg can't make H.264 (CHANGELOG.md,
 /// 0.7.3 Fixes: "Removing a VOD works without H.264. The stretch an edit
-/// uses is now kept in your chosen format."; clips.rs:597,
+/// uses is now kept in your chosen format."; clips.rs
 /// `encoding_to_keep`: "only an ffmpeg without that makes it in the codec
 /// Settings › Encoding names").
 #[test]
@@ -328,7 +327,7 @@ fn a_stretch_kept_from_a_removed_vod_is_made_in_the_chosen_format() {
 }
 
 /// A stretch that can't be kept (the site refuses it) removes nothing, and
-/// the answer says why (vods.rs:389, `delete_vod`: "if one can't be
+/// the answer says why (vods.rs `delete_vod`: "if one can't be
 /// (offline, a full disk), nothing is removed and the answer is why";
 /// CHANGELOG.md, 0.5.0: "if those stretches can't be kept (offline, say), it
 /// asks whether to try again").
@@ -349,7 +348,7 @@ fn a_stretch_that_cannot_be_kept_removes_nothing_and_says_why() {
 }
 
 /// Removed with its video anyway, without keeping what an edit uses, a VOD
-/// leaves holes where the edit's pieces of it were (vods.rs:391,
+/// leaves holes where the edit's pieces of it were (vods.rs
 /// `delete_vod`: "With `anyway` too, it's erased without that: the pieces
 /// other clips have of it are holes"; CHANGELOG.md, 0.5.0: "or delete it
 /// anyway, leaving gaps in the edits").
@@ -365,7 +364,7 @@ fn removed_anyway_the_pieces_other_clips_have_of_it_are_holes() {
 }
 
 /// A stretch being kept from a VOD removed with its video, whose piece is
-/// changed meanwhile, is made again as it is now (vods.rs:512, `realize`:
+/// changed meanwhile, is made again as it is now (vods.rs `realize`:
 /// "Made from the clip at one revision and moved against it: if the clip
 /// changed meanwhile, made again").
 #[test]
@@ -388,7 +387,7 @@ fn a_stretch_kept_from_a_clip_changed_meanwhile_is_made_again() {
 }
 
 /// Deleting a VOD's kept video deletes its file and keeps its transcript
-/// (vods.rs:712, `delete_video`: "Deletes the video kept for VOD `id`,
+/// (vods.rs `delete_video`: "Deletes the video kept for VOD `id`,
 /// keeping its transcript"; CHANGELOG.md, 0.3.0: "the crossed-out camera
 /// in its row deletes the video and keeps the transcript").
 #[test]
@@ -406,9 +405,9 @@ fn deleting_a_vods_video_keeps_its_transcript() {
 
 /// Deleting a VOD's video while its transcription waits in the queue takes
 /// the transcription out, keeping the lines it wrote as Stop does, and
-/// deletes the video (sections-074.md, decided 2026-11-11 (owner): "deleting
-/// a transcribing vod is supposed to also cancel the transcription";
-/// vods.rs:879, `cancel_vod`: "Ends a VOD's requests, keeping the lines they
+/// deletes the video (decided for 0.7.4: deleting a VOD's video while it's
+/// transcribed cancels the transcription;
+/// vods.rs `cancel_vod`: "Ends a VOD's requests, keeping the lines they
 /// wrote").
 #[test]
 fn deleting_a_vods_video_while_its_transcription_waits_cancels_it_keeping_its_lines() {
@@ -435,8 +434,8 @@ fn deleting_a_vods_video_while_its_transcription_waits_cancels_it_keeping_its_li
 
 /// Deleting a VOD's video while it's being transcribed stops the
 /// transcription where it is and deletes the video, with nothing of it left
-/// running (sections-074.md, decided 2026-11-11 (owner): "deleting a
-/// transcribing vod is supposed to also cancel the transcription";
+/// running (decided for 0.7.4: deleting a VOD's video while it's
+/// transcribed cancels the transcription;
 /// CHANGELOG.md, 0.4.0 Fixes: "Removing a VOD, or deleting its downloaded
 /// video, didn't stop what was still using it."). The transcription is held
 /// downloading its audio, begun before the video was kept; the kit fakes no
@@ -494,7 +493,7 @@ fn a_removed_vods_chat_fetch_stops() {
 
 /// A VOD from a site without a player of its own, whose video was deleted,
 /// downloads it again when it's played: the play asks for it to be kept
-/// (Player.svelte `startDownload`), and it is (vods.rs:712, `delete_video`:
+/// (Player.svelte `startDownload`), and it is (vods.rs `delete_video`:
 /// "elsewhere is downloaded again when played (`pipeline::keeps_video`)").
 #[test]
 fn a_vod_whose_video_was_deleted_downloads_it_again_when_played_where_its_site_has_no_player() {
@@ -508,10 +507,10 @@ fn a_vod_whose_video_was_deleted_downloads_it_again_when_played_where_its_site_h
 }
 
 /// A removed VOD's history goes with it: undo in its view finds nothing to
-/// put back (vods.rs:410, `delete_vod`'s `history.forget`; history.rs:216,
-/// `forget`: "Forgets `doc`'s history (it's deleted)"; history.rs:7:
-/// "deleting a VOD or an edit aren't undone"). The plan's 2A3 23 (back and
-/// forward) is the page's; this is what the line it cites does.
+/// put back (vods.rs `delete_vod`'s `history.forget`; history.rs
+/// `forget`: "Forgets `doc`'s history (it's deleted)"; history.rs, its module doc:
+/// "deleting a VOD or an edit aren't undone"). Going back and forward is
+/// the page's; this is what the app does for it.
 #[test]
 fn a_removed_vods_undo_history_goes_with_it() {
     let app = TestApp::new();
@@ -523,9 +522,8 @@ fn a_removed_vods_undo_history_goes_with_it() {
 }
 
 /// A removed VOD nothing uses has its transcription canceled, the request
-/// running and the one waiting, and is erased (sections-074.md, decided
-/// 2026-11-11 (owner): "a VOD nothing uses has all cancelled, then is
-/// erased").
+/// running and the one waiting, and is erased (decided for 0.7.4: a VOD
+/// nothing uses has all its transcription canceled, then is erased).
 #[test]
 fn a_removed_vod_nothing_uses_has_its_transcription_canceled_then_is_erased() {
     let app = transcribing();
@@ -545,9 +543,9 @@ fn a_removed_vod_nothing_uses_has_its_transcription_canceled_then_is_erased() {
 
 /// Settings › Delete all videos deletes the video of a VOD whose
 /// transcription waits too, canceling it first and keeping the lines it
-/// wrote, as the row's Delete video does (sections-074.md, decided
-/// 2026-11-11 (owner): "Settings > Delete all videos cancels transcriptions
-/// too, as the row's Delete video does").
+/// wrote, as the row's Delete video does (decided for 0.7.4: Settings ›
+/// Delete all videos cancels transcriptions too, as the row's Delete video
+/// does).
 #[test]
 fn delete_all_videos_cancels_the_transcriptions_reading_them_keeping_their_lines() {
     let app = TestApp::new();
@@ -572,8 +570,8 @@ fn delete_all_videos_cancels_the_transcriptions_reading_them_keeping_their_lines
 /// Removed when its requests can't be ended (the library refuses the
 /// change), a VOD is still out of the list, the page hears it went, and
 /// it's erased: its requests are left for the next start
-/// (`end_unlisted_requests`) (vods.rs:447, the `vod-removed` the page is
-/// sent; vods.rs:385, `delete_vod`: "if nothing does now, it's erased at
+/// (`end_unlisted_requests`) (vods.rs the `vod-removed` the page is
+/// sent; vods.rs `delete_vod`: "if nothing does now, it's erased at
 /// once").
 #[test]
 fn a_vod_whose_requests_cant_be_ended_is_still_removed_and_erased() {
@@ -600,8 +598,8 @@ fn a_vod_whose_requests_cant_be_ended_is_still_removed_and_erased() {
 
 /// Remove takes the library before the queue as it ends a VOD's requests,
 /// as an erasure does, so removing one VOD while another's erasure ends
-/// can't wait for it for good (review-delete-vod-uses.md, F2: "delete_vod(A)
-/// didn't return in 15 s: deadlocked with B's erasure"; worker.rs:222,
+/// can't wait for it for good: taking them the other way round, removing
+/// one VOD deadlocked with another's erasure (worker.rs
 /// `control`: "the library's lock before the queue's, everywhere").
 #[test]
 fn remove_takes_the_library_before_the_queue() {
@@ -617,7 +615,7 @@ fn remove_takes_the_library_before_the_queue() {
 }
 
 /// Delete video takes the library before the queue as it cancels the
-/// transcription, as an erasure does (worker.rs:222, `control`: "the
+/// transcription, as an erasure does (worker.rs `control`: "the
 /// library's lock before the queue's, everywhere").
 #[test]
 fn delete_video_takes_the_library_before_the_queue() {
@@ -632,7 +630,7 @@ fn delete_video_takes_the_library_before_the_queue() {
 }
 
 /// Settings › Delete all videos takes the library before the queue as it
-/// cancels a transcription reading a video, as an erasure does (worker.rs:222,
+/// cancels a transcription reading a video, as an erasure does (worker.rs
 /// `control`: "the library's lock before the queue's, everywhere").
 #[test]
 fn delete_all_videos_takes_the_library_before_the_queue() {
@@ -650,14 +648,14 @@ fn delete_all_videos_takes_the_library_before_the_queue() {
     assert!(first, "the queue taken before the library");
 }
 
-/// The owner's rule for a removed VOD's transcription (plans/0.7.4.md,
-/// "Remove ends a VOD's transcriptions", decided 2026-11-13).
+/// The rule for a removed VOD's transcription (decided for 0.7.4: Remove
+/// ends a VOD's transcriptions).
 const ENDS: &str = "a deleted source VOD should end a transcription that was started from that VOD";
 
 /// Removing a VOD an edit uses ends its transcription, the request running
 /// and the one waiting, though the edit plays what one asks for: each
-/// keeps its lines so far, as Stop does (plans/0.7.4.md, decided 2026-11-13
-/// (owner): `ENDS`; vods.rs:382, `delete_vod`: "Its transcription, started
+/// keeps its lines so far, as Stop does (decided for 0.7.4: `ENDS`;
+/// vods.rs `delete_vod`: "Its transcription, started
 /// from it, ends, whatever uses it").
 #[test]
 fn removing_a_vod_an_edit_uses_ends_its_transcription_keeping_its_lines() {
@@ -681,8 +679,7 @@ fn removing_a_vod_an_edit_uses_ends_its_transcription_keeping_its_lines() {
 
 /// A VOD added back after it was removed while an edit used it shows what
 /// its transcription had written, done, with nothing paused or waiting
-/// (plans/0.7.4.md, decided 2026-11-13 (owner): `ENDS`; core db.rs:1618,
-/// `add_vod`: "Taken out of the list but kept for other clips: listed
+/// (decided for 0.7.4: `ENDS`; core db.rs `add_vod`: "Taken out of the list but kept for other clips: listed
 /// again").
 #[test]
 fn a_vod_added_back_shows_what_its_transcription_had_written_and_nothing_asked() {
@@ -710,9 +707,8 @@ fn a_vod_added_back_shows_what_its_transcription_had_written_and_nothing_asked()
 
 /// The requests an older build left on a VOD it took out of the list, one
 /// paused part way and one waiting, are ended at the next start, the lines
-/// so far kept (plans/0.7.4.md, decided 2026-11-13 (owner): "at start,
-/// requests an older build left on removed VODs are ended"; vods.rs:451,
-/// `end_unlisted_requests`).
+/// so far kept (decided for 0.7.4: at start, the requests an older build
+/// left on removed VODs are ended; vods.rs `end_unlisted_requests`).
 #[test]
 fn requests_an_older_build_left_on_a_removed_vod_are_ended_at_the_next_start() {
     let app = TestApp::new();
@@ -734,4 +730,270 @@ fn requests_an_older_build_left_on_a_removed_vod_are_ended_at_the_next_start() {
     assert_eq!(app.requests(vod), [], "left asked for");
     assert_eq!(app.stretches(vod), [(0.0, Some(30.0), Status::Done)]);
     assert_eq!(transcript(&app, vod), ["The Eagle has landed"]);
+}
+
+/// What the Remove dialog says of Remove and delete the video, when an edit
+/// uses the VOD (decided for 0.7.4, with Remove ending all of a VOD's
+/// transcriptions).
+const KEEPS_ONLY: &str = "Remove and delete the video keeps only what the edit uses.";
+
+/// Removed with its video anyway while it's being transcribed, a VOD an
+/// edit uses is erased all the same: its transcription ends, and it's a
+/// gone source, no lines or stretch done left of it, now and after a
+/// restart (`KEEPS_ONLY`; vods.rs `delete_vod`: "With `anyway` too, it's
+/// erased without that: the pieces other clips have of it are holes"). A
+/// file on this computer is the user's and stays, so the edit's piece
+/// plays from it (edits.rs `pieces`).
+#[test]
+fn removed_with_its_video_anyway_while_transcribed_a_vod_an_edit_uses_is_erased() {
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed.")]);
+    let vod = app.file("Ten minutes.mp4", 10.0);
+    an_edit(&app, vod, 300.0, 360.0);
+    let gate = Gate::new();
+    app.worker().holds(&gate);
+    app.asked(vod, 0.0, Some(180.0));
+    app.held(vod, &gate);
+    let answer = app.invoke("delete_vod", json!({ "id": vod, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    gate.open();
+    app.erasures_done();
+    let erased = |app: &TestApp, when: &str| {
+        assert!(app.db().is_gone(vod).unwrap(), "{when}: kept as a source, its video with it ({KEEPS_ONLY})");
+        assert_eq!(app.stretches(vod), [], "{when}: a stretch done with no lines");
+        assert_eq!(app.lines(vod), [], "{when}");
+    };
+    erased(&app, "removed");
+    let app = TestApp::on(app.quit());
+    app.erasures_done();
+    erased(&app, "after a restart");
+}
+
+/// Removed with its video anyway while its work is slow to stop (longer
+/// than Remove waits for it, `WORK_STOPPING`), a site's VOD an edit uses is
+/// erased once that work has stopped, the edit's piece of it a hole, the
+/// erasure beside the encodes
+/// (`KEEPS_ONLY`; vods.rs `Sweeper`: "Each is queued as it's removed").
+#[test]
+fn removed_with_its_video_anyway_a_vod_whose_work_is_slow_to_stop_is_erased_once_it_has() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app).id;
+    let (edit, _) = an_edit(&app, vod, 10.0, 20.0);
+    app.state().worker.e2e_busy(vod, WORK_STOPPING + Duration::from_secs(1));
+    let answer = app.invoke("delete_vod", json!({ "id": vod, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    assert_eq!(listed(&app), Vec::<i64>::new());
+    app.erasures_done();
+    assert!(app.db().is_gone(vod).unwrap(), "kept as a source, its video with it ({KEEPS_ONLY})");
+    assert_eq!(pieces(&app, edit)[0]["hole"], json!(true), "the edit's piece still plays");
+}
+
+/// Removed with its video anyway, its work slow to stop, then added back by
+/// its link before its erasure has begun (another erasure ahead of it), a
+/// VOD is left as it is now: not gone, and what it's transcribed since is
+/// kept (vods.rs `erase_unused`: "Added back meanwhile, it's left as it is").
+#[test]
+fn removed_with_its_video_anyway_and_added_back_before_its_erasure_a_vod_is_left_as_it_is() {
+    let app = TestApp::new();
+    let ahead = app.add_site_vod("twitch", "2901646294", "Another talk", 60.0);
+    app.says(ahead.id, 12.0, "First");
+    let gate = Gate::new();
+    app.holds_erasures(&gate);
+    remove(&app, ahead.id);
+    gate.reached();
+    let vod = a_site_vod(&app);
+    app.says(vod.id, 12.0, "The Eagle has landed");
+    an_edit(&app, vod.id, 10.0, 20.0);
+    app.state().worker.e2e_busy(vod.id, WORK_STOPPING + Duration::from_secs(1));
+    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+    assert_eq!(listed(&app), [vod.id]);
+    app.says(vod.id, 30.0, "Said since");
+    gate.open();
+    app.erasures_done();
+    assert_eq!(listed(&app), [vod.id]);
+    assert!(!app.db().is_gone(vod.id).unwrap(), "added back, then erased by the Remove before it");
+    assert_eq!(transcript(&app, vod.id), ["Said since"]);
+}
+
+/// Removed with its video anyway, its work slower to stop than Remove and
+/// then its erasure wait for it (`WORK_STOPPING` each), a VOD an edit uses
+/// is erased at the next start, its files too (`KEEPS_ONLY`; vods.rs
+/// `Sweeper::run`: "those removed with their videos whose erasure didn't
+/// finish").
+#[test]
+fn removed_with_its_video_anyway_a_vod_whose_work_outlasts_both_waits_is_erased_at_the_next_start() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    an_edit(&app, vod.id, 10.0, 20.0);
+    let paths = app.paths();
+    let files = [paths.source_audio(vod.id, "m4a"), paths.source_video(vod.id, "mp4"), paths.source_info(vod.id)];
+    for file in &files {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"made").unwrap();
+    }
+    app.state().worker.e2e_busy(vod.id, 2 * WORK_STOPPING + Duration::from_secs(5));
+    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    // The job waits up to WORK_STOPPING for the work: longer than `eventually`.
+    let began = std::time::Instant::now();
+    while app.state().sweeper.listed() != (None, vec![]) {
+        assert!(began.elapsed() < Duration::from_secs(30), "the erasure never ended");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let left = || files.iter().filter(|f| f.exists()).cloned().collect::<Vec<PathBuf>>();
+    let app = TestApp::on(app.quit());
+    app.erasures_done();
+    assert!(app.db().is_gone(vod.id).unwrap());
+    assert_eq!(left(), Vec::<PathBuf>::new(), "the video it was removed with stays");
+}
+
+/// Removed with its video anyway, its work slow to stop, and VODscribe quit
+/// before its erasure has begun (another ahead of it), a VOD an edit uses
+/// is erased at the next start (`KEEPS_ONLY`; vods.rs `delete_vod`: "it's
+/// still erased if the app quits first").
+#[test]
+fn removed_with_its_video_anyway_then_quit_before_its_erasure_a_vod_is_erased_at_the_next_start() {
+    let app = TestApp::new();
+    let ahead = app.add_site_vod("twitch", "2901646294", "Another talk", 60.0);
+    app.says(ahead.id, 12.0, "First");
+    let gate = Gate::new();
+    app.holds_erasures(&gate);
+    remove(&app, ahead.id);
+    gate.reached();
+    let vod = a_site_vod(&app);
+    app.says(vod.id, 12.0, "The Eagle has landed");
+    an_edit(&app, vod.id, 10.0, 20.0);
+    app.state().worker.e2e_busy(vod.id, WORK_STOPPING + Duration::from_secs(1));
+    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    let app = TestApp::on(app.quit());
+    app.erasures_done();
+    assert!(app.db().is_gone(vod.id).unwrap(), "removed with its video, kept whole");
+    assert_eq!(transcript(&app, vod.id), Vec::<String>::new());
+}
+
+/// A VOD removed with its video anyway while an edit used it, added back,
+/// transcribed anew and then removed again keeping its video, while
+/// transcribed, keeps its new transcript for the edit, as Remove does
+/// (`a_vod_used_by_an_edit_is_kept_as_a_source_until_nothing_uses_it`;
+/// worker.rs `forget_if_erased`: "the VOD not gone as it began").
+#[test]
+fn a_vod_added_back_after_its_video_was_deleted_keeps_its_new_transcript_when_removed_again() {
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed."), (200.0, "Later on.")]);
+    let vod = app.file("Ten minutes.mp4", 10.0);
+    an_edit(&app, vod, 300.0, 360.0);
+    let answer = app.invoke("delete_vod", json!({ "id": vod, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    app.erasures_done();
+    assert!(app.db().is_gone(vod).unwrap());
+    let info = app.db().vod(vod).unwrap().unwrap().info;
+    app.db().add_vod(&info).unwrap();
+    assert_eq!(listed(&app), [vod]);
+    app.asked(vod, 0.0, Some(60.0));
+    app.settled(vod);
+    let before = app.lines(vod);
+    assert!(!before.is_empty(), "transcribed anew");
+    let gate = Gate::new();
+    app.worker().holds(&gate);
+    app.asked(vod, 180.0, Some(240.0));
+    gate.reached();
+    remove(&app, vod);
+    gate.open();
+    app.settled(vod);
+    app.erasures_done();
+    let after = app.lines(vod);
+    assert!(after.starts_with(&before), "a plain Remove keeps the transcript of a VOD an edit uses");
+}
+
+/// Removed with its video anyway while an edit uses it, then added back by
+/// its link, a VOD is one like any other again: not gone, so the edit's
+/// piece of it plays again (its footage downloaded again as needed) and its
+/// video can be kept, with nothing left of the transcript it was removed
+/// with (as one nothing used is added anew: vods.rs `add_to_library`).
+#[test]
+fn a_vod_removed_with_its_video_and_added_back_is_a_vod_like_any_other_again() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    app.says(vod.id, 12.0, "The Eagle has landed");
+    let (edit, _) = an_edit(&app, vod.id, 10.0, 20.0);
+    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    app.erasures_done();
+    app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+    assert_eq!(listed(&app), [vod.id]);
+    assert_eq!(pieces(&app, edit)[0]["hole"], json!(false), "added back, the edit's piece of it a hole still");
+    assert!(!app.db().is_gone(vod.id).unwrap(), "added back, still gone");
+    assert_eq!(transcript(&app, vod.id), Vec::<String>::new());
+    keep_video(&app, vod.id);
+}
+
+/// Removed with its video anyway, its work slow to stop, then added back
+/// while its erasure waits for that work, a VOD's new transcription isn't
+/// paused by the erasure: it's left as it is (vods.rs `erase_unused`:
+/// "Added back meanwhile, work begun on it since isn't paused").
+#[test]
+fn a_vod_added_back_while_its_erasure_waits_is_transcribed_unpaused() {
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed.")]);
+    let vod = app.file("Ten minutes.mp4", 10.0);
+    an_edit(&app, vod, 300.0, 360.0);
+    let file = app.db().vod(vod).unwrap().unwrap().source_path.unwrap();
+    app.state().worker.e2e_busy(vod, WORK_STOPPING + Duration::from_secs(3));
+    let answer = app.invoke("delete_vod", json!({ "id": vod, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    // Its chat and transcript erased: the erasure waits for the work.
+    eventually("its erasure waiting", || {
+        app.state().sweeper.listed().0 == Some(vod) && app.db().erase_left(vod).unwrap() == 0
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    app.invoke("add_files", json!({ "paths": [file] })).unwrap();
+    assert_eq!(listed(&app), [vod]);
+    let gate = Gate::new();
+    app.worker().holds(&gate);
+    app.asked(vod, 0.0, Some(180.0));
+    eventually("it's transcribed, or stopped", || {
+        app.requests(vod).iter().any(|s| matches!(s.status, Status::Transcribing | Status::Paused))
+    });
+    std::thread::sleep(Duration::from_millis(600));
+    let statuses: Vec<Status> = app.requests(vod).iter().map(|s| s.status).collect();
+    assert_eq!(statuses, [Status::Transcribing], "paused by the erasure of the VOD before it was added back");
+    gate.open();
+    app.settled(vod);
+    app.erasures_done();
+    assert!(!app.db().is_gone(vod).unwrap());
+    assert_eq!(app.lines(vod), lines(&[(10.0, "The Eagle has landed.")]));
+}
+
+/// A site VOD whose video is kept, removed with its video anyway (its work
+/// slow to stop) and added back before its erasure has begun, leaves no
+/// video behind that it doesn't know of, now or after a restart: what its
+/// erasure would have deleted goes as it's added back (vods.rs
+/// `add_to_library`).
+#[test]
+fn a_vod_added_back_before_its_erasure_keeps_no_video_it_does_not_know_of() {
+    let app = TestApp::new();
+    let ahead = app.add_site_vod("twitch", "2901646294", "Another talk", 60.0);
+    app.says(ahead.id, 12.0, "First");
+    let vod = a_site_vod(&app);
+    an_edit(&app, vod.id, 10.0, 20.0);
+    keep_video(&app, vod.id);
+    let video = PathBuf::from(app.db().playable_path(vod.id).unwrap().unwrap());
+    let gate = Gate::new();
+    app.holds_erasures(&gate);
+    remove(&app, ahead.id);
+    gate.reached();
+    app.state().worker.e2e_busy(vod.id, WORK_STOPPING + Duration::from_secs(1));
+    let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+    gate.open();
+    app.erasures_done();
+    let app = TestApp::on(app.quit());
+    app.erasures_done();
+    let row = app.db().vod(vod.id).unwrap().unwrap();
+    assert!(row.listed && !app.db().is_gone(vod.id).unwrap());
+    assert!(row.media || !video.exists(), "its video file stays, the VOD not knowing it");
 }

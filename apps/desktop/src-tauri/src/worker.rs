@@ -249,10 +249,11 @@ impl Worker {
         Ok(!running.is_empty())
     }
 
-    /// For the tests (readd-stuck.mjs): VOD `vod_id` has work running that
-    /// doesn't stop when told, for `busy`, as a download stuck on the
-    /// network would. A job of no request, which no stage runs.
-    #[cfg(feature = "e2e")]
+    /// For the tests (readd-stuck.mjs, vods/tests/removing.rs): VOD
+    /// `vod_id` has work running that doesn't stop when told, for `busy`, as
+    /// a download stuck on the network would. A job of no request, which no
+    /// stage runs.
+    #[cfg(any(test, feature = "e2e"))]
     pub fn e2e_busy(&self, vod_id: i64, busy: Duration) {
         let flag = Arc::new(AtomicBool::new(false));
         let job = Job { stretch_id: -1, vod_id, flag: flag.clone(), reason: Arc::default() };
@@ -322,6 +323,9 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
             continue;
         };
 
+        // Gone already (a VOD removed with its video and added back is
+        // listed again, not gone: `Db::add_vod`), it isn't erased under it.
+        let was_gone = ctx.db.is_gone(vod.id).unwrap_or(true);
         let mut progress = 0.0;
         let result = match stage {
             Stage::Download => download(&mut ctx, &vod, &stretch, &flag, &mut progress),
@@ -332,7 +336,8 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
         let finished = {
             let mut queue = ctx.queue.lock().unwrap();
             let stop = *reason.lock().unwrap();
-            let finished = finish(stage, &ctx.db, &ctx.paths, stretch.id, result, stop, progress);
+            let finished = finish(stage, &ctx.db, &ctx.paths, stretch.id, result, stop, progress)
+                .and_then(|()| if was_gone { Ok(()) } else { forget_if_erased(&ctx.db, vod.id) });
             queue.jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
             finished
         };
@@ -393,6 +398,23 @@ fn finish(
         }
     }
     Ok(())
+}
+
+/// After a job of VOD `vod_id` ended (`finish`), the VOD not gone as it
+/// began: if it was erased meanwhile (out of the list and gone, its work
+/// slow to stop as it was removed with its video: `vods::delete_vod`), what
+/// the job wrote as it stopped goes too, its last lines and its stretch done
+/// over lines erased, as the erasure clears them (`vods::erase_source`). In
+/// one transaction, so an add back can't come between the look and the
+/// clearing.
+fn forget_if_erased(db: &Db, vod_id: i64) -> Result<()> {
+    db.atomically(|db| {
+        if db.vod(vod_id)?.is_some_and(|v| !v.listed) && db.is_gone(vod_id)? {
+            db.clear_segments(vod_id)?;
+            db.clear_stretches(vod_id)?;
+        }
+        Ok(())
+    })
 }
 
 pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read and cut audio and video.";
@@ -796,6 +818,31 @@ mod tests {
         for stop in [Stop::Pause, Stop::Cancel] {
             finish(Stage::Transcribe, &db, &work.paths, id, Ok(()), Some(stop), 1.0).unwrap();
             assert_eq!(status(&db, id), (Status::Done, None));
+        }
+    }
+
+    /// A stage that ends on a VOD erased meanwhile (removed with its video,
+    /// its work slow to stop: vods.rs `delete_vod`) leaves nothing of it:
+    /// neither the lines it wrote as it stopped nor a stretch done over
+    /// lines erased, whether it was canceled, paused or had just finished.
+    #[test]
+    fn a_stage_ending_on_a_vod_erased_meanwhile_leaves_nothing_of_it() {
+        for stop in [Some(Stop::Cancel), Some(Stop::Pause), None] {
+            let (mut db, work, id) = setup(Status::Transcribing);
+            let vod = vod_of(&db, id);
+            db.remove_entry(vod).unwrap();
+            db.set_gone(vod).unwrap();
+            // Its last words, written as it stopped, after the erasure.
+            write_a_line(&mut db, id);
+            // Or it finished just then, done.
+            let result = if stop.is_some() { Err(vodscribe_core::Canceled.into()) } else { Ok(()) };
+            if stop.is_none() {
+                db.finish_stretch(id).unwrap();
+            }
+            finish(Stage::Transcribe, &db, &work.paths, id, result, stop, 0.4).unwrap();
+            forget_if_erased(&db, vod).unwrap();
+            assert_eq!(db.stretches(vod).unwrap(), [], "{stop:?}");
+            assert_eq!(lines(&db, vod), [], "{stop:?}");
         }
     }
 

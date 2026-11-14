@@ -698,6 +698,17 @@ impl Db {
         Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The sources removed with their videos that clips still use: out of
+    /// the list and gone (`set_gone`), their pieces holes. Their erasure may
+    /// not have finished, the app quitting first.
+    pub fn gone_sources_used(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM vods WHERE gone = 1 AND pieces > 0
+             AND NOT EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) ORDER BY id",
+        )?;
+        Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Takes VOD `vod_id` out of the library's list: its own clip goes, with
     /// its marks and the snippets on its bar. The VOD stays a source while
     /// other clips use it; true if nothing does now.
@@ -2017,7 +2028,7 @@ pub(crate) mod tests {
     /// The clip of a VOD's stretch is the one its clip bar lists there (its
     /// first piece's stretch), whatever the editor changed in it: a piece
     /// added. The page finds it so (clips.svelte.ts `find`), and the app
-    /// gives it (plans/clips-pilot.md, Decided 1; the clips-fixes review, M1).
+    /// gives it (decided with the clips: a stretch's clip is the one its clip bar lists).
     #[test]
     fn a_vod_s_clip_of_a_stretch_is_the_one_listed_there_added_to_or_not() {
         let db = Db::open(Path::new(":memory:")).unwrap();
@@ -2173,14 +2184,15 @@ pub(crate) mod tests {
         assert!(new && again.id != vod && again.listed);
         assert!(!db.is_gone(again.id).unwrap());
         assert!(db.vod(vod).unwrap().is_none());
-        // One still used stays a gone source when added back (as before):
-        // listed again, its pieces holes.
+        // One still used is listed again when added back, not gone: its
+        // pieces play again (`clear_gone`).
         let used = db.add_vod(&info("y")).unwrap().0.id;
         db.add_piece(edit, used, (1.0, 2.0), "b", None).unwrap();
         assert!(!db.remove_entry(used).unwrap());
         db.set_gone(used).unwrap();
         let (back, new) = db.add_vod(&info("y")).unwrap();
         assert_eq!((back.id, new, back.listed), (used, false, true));
+        assert!(!db.is_gone(used).unwrap());
     }
 
     #[test]
