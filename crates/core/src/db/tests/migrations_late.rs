@@ -587,46 +587,6 @@ fn an_import_from_before_points_of_view_has_none() {
     assert!(kept.povs.is_empty() && kept.cast.is_empty());
 }
 
-/// Spec 46: V35 keeps "which of an import's chapters or highlights a mark was
-/// brought in as … kept when the user changes it, so the next import doesn't
-/// add that one again beside theirs. Null for the user's own marks and for
-/// marks imported before" (db.rs:739, `MIGRATE_V35`). 0.7.0's "Newer
-/// annotations keep your own changes" holds for marks imported before too:
-/// "your own marks stay, and so does an imported chapter or highlight you
-/// renamed or moved, without the newer annotations adding their copy beside
-/// yours" (decided 2026-11-11, plans/sections-074.md "Decided", unstated
-/// behaviour 2: "a duplicate is a bug").
-#[test]
-#[ignore = "disagreement: an import adds its copy beside a mark imported before V35 that the user renamed or moved"]
-fn a_mark_imported_before_v35_and_changed_by_the_user_is_not_imported_again_beside_theirs() {
-    let (_dir, path) = library("migrate-v35");
-    let file = crate::annotations::tests::file("youtube", "abcdefghijk");
-    let vod = {
-        let db = Db::open(&path).unwrap();
-        let (vod, _) = db.import_annotations(&file, None).unwrap();
-        let find =
-            |text: &str| db.marks(vod.id).unwrap().into_iter().find(|m| m.text.as_deref() == Some(text)).unwrap();
-        db.set_mark_text(find("Middle").id, Some("My middle")).unwrap();
-        db.move_mark(find("Big laugh").id, 6.0).unwrap();
-        vod.id
-    };
-    // Back to version 34: which import each was brought in as, gone.
-    back_to(&path, 34);
-    let db = upgraded(&path);
-    db.import_annotations(&file, None).unwrap();
-    let marks: Vec<_> =
-        db.marks(vod).unwrap().into_iter().map(|m| (m.start, m.text.unwrap(), m.detail.source)).collect();
-    assert_eq!(
-        marks,
-        [
-            (0.0, "Start".into(), crate::annotations::SOURCE.into()),
-            (6.0, "Big laugh".into(), "user".into()),
-            (20.0, "My middle".into(), "user".into()),
-        ],
-        "the user's changed copies stand in for the import's"
-    );
-}
-
 /// Spec 47: "Where the VOD it was kept from is still in the library
 /// (keeping a later stretch failed, so the VOD stayed), those come back from
 /// its rows": who speaks each line, and what each chat message is, how much

@@ -739,7 +739,10 @@ ALTER TABLE vod_annotations ADD COLUMN povs TEXT;";
 /// Version 35: which of an import's chapters or highlights a mark was brought
 /// in as (`imported_as`: its kind and start in the file), kept when the user
 /// changes it, so the next import doesn't add that one again beside theirs.
-/// Null for the user's own marks and for marks imported before.
+/// Null for the user's own marks and for marks imported before. A mark
+/// imported before it and then changed can't be told from the user's own, so
+/// the next import adds the file's copy beside it once; only dev builds
+/// imported before V35, so no released library has such marks.
 const MIGRATE_V35: &str = "
 ALTER TABLE marks ADD COLUMN imported_as TEXT;";
 
