@@ -357,6 +357,9 @@ fn a_vod_playing_as_it_downloads_plays_the_kept_video_from_where_it_is() {
     assert!(now["time"].as_f64().unwrap() >= 30.0, "from where it was, not {}", now["time"]);
     eventually("played on past 0:30", || app.screen().showing().is_some_and(|f| frame_number(&f) > 900));
     // The kept video, not the section it came as (deleted once it's kept).
+    // Paused first: a seek keeps playing (player.rs `player_seek`), and a
+    // frame playing past is on the screen for a thirtieth of a second.
+    app.invoke("player_pause", json!({})).unwrap();
     seek(&app, 45.0, false);
     shows(&app, 1350, 1920);
 }
@@ -429,7 +432,9 @@ fn a_new_plan_plays_on_without_a_break_where_the_playheads_stretch_is_unchanged(
     let now = playing_status(&app);
     assert_eq!(now["running"], true, "no break: the time runs on");
     assert!(now["time"].as_f64().unwrap() >= 5.0);
-    // The piece added plays: 0:31 of the edit is 0:51 of the VOD.
+    // The piece added plays: 0:31 of the edit is 0:51 of the VOD. Paused
+    // first, so the frame there stays on the screen to be seen.
+    app.invoke("player_pause", json!({})).unwrap();
     seek(&app, 31.0, false);
     shows(&app, 1530, 64);
 }
