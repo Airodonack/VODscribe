@@ -106,8 +106,13 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
     if added.created {
         state.chat.push(added.vod.id);
         crate::annotations::look_up_added(&app, &added.vod);
-        let (app, id) = (app.clone(), added.vod.id);
-        std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
+        let (handle, id) = (app.clone(), added.vod.id);
+        let thread = std::thread::spawn(move || thumbnails::cache_thumbnail(&handle, id));
+        // A test's app waits for it before it ends.
+        #[cfg(test)]
+        crate::testkit::started(&app, thread);
+        #[cfg(not(test))]
+        drop(thread);
     }
     Ok(added)
 }

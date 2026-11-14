@@ -598,15 +598,15 @@ pub fn can_be_published(platform: &str) -> bool {
 pub(crate) fn agent() -> &'static ureq::Agent {
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::Agent::config_builder()
+        let config = ureq::Agent::config_builder()
             .timeout_connect(Some(std::time::Duration::from_secs(10)))
             .timeout_recv_response(Some(std::time::Duration::from_secs(20)))
             .timeout_recv_body(Some(std::time::Duration::from_secs(120)))
             .https_only(std::env::var_os(BASE_ENV).is_none() && !cfg!(test))
             // The file host answers directly; a redirect could lead anywhere, the local network included.
             .max_redirects(0)
-            .build()
-            .into()
+            .build();
+        crate::net::client(config)
     })
 }
 

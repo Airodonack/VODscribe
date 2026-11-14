@@ -1,9 +1,13 @@
-//! Reading a VOD's transcript, and the files it is on this computer.
+//! Reading a VOD's transcript, and the files it is on this computer; and
+//! what plays a site's video where the site has no player of its own: a
+//! Twitch clip's video, a Kick VOD's quality levels, asked of the sites'
+//! APIs on the kit's network (`TestApp::net`).
 
 use crate::testkit::TestApp;
 use serde_json::{Value, json};
 use vodscribe_core::chat::{ChatMessage, ChatPart, Kind};
 use vodscribe_core::fetch::VodInfo;
+use vodscribe_core::testkit::Reply;
 
 impl TestApp {
     /// VOD `vod`'s lines as `transcript` answers, as (start, text), for the
@@ -172,4 +176,67 @@ fn a_file_the_player_cannot_play_opens_in_the_systems_player() {
     let site = app.add_site_vod("twitch", "2901646294", "A stream", 60.0);
     assert!(app.invoke("open_file", json!({ "id": site.id })).is_err());
     assert_eq!(app.desktop().opened().len(), 1);
+}
+
+/// A Twitch clip plays from its video as Twitch serves it: a quality of
+/// 720p at most, signed for the viewing (CHANGELOG.md, 0.3.0: "Twitch clips
+/// play"; `vods.rs` `twitch_clip_video`: "A URL that plays Twitch clip
+/// `slug`'s video"; `twitch.rs` `clip_video`: "(720p at most when
+/// offered, plenty for a preview pane), signed by Twitch for a while"),
+/// from Twitch's API. A slug that isn't a clip's is refused.
+#[test]
+fn a_twitch_clip_plays_from_its_video() {
+    let app = TestApp::new();
+    let slug = "CoweringRudeDiamondMikeHogu-somPr5Um-WHGc4ga";
+    let video = |quality: &str| format!("https://clips-media.example/{slug}/{quality}.mp4");
+    let clip = json!({ "data": { "clip": {
+        "playbackAccessToken": { "signature": "5ig", "value": "{\"clip_uri\":\"x\"}" },
+        "videoQualities": [
+            { "quality": "1080", "sourceURL": video("1080") },
+            { "quality": "720", "sourceURL": video("720") },
+            { "quality": "360", "sourceURL": video("360") },
+        ],
+    } } });
+    app.net.replies("https://gql.twitch.tv/gql", move |asked| {
+        let ours = asked.json()?.pointer("/variables/slug").and_then(Value::as_str) == Some(slug);
+        ours.then(|| Reply::json(&clip))
+    });
+    let plays = app.invoke("twitch_clip_video", json!({ "slug": slug })).unwrap();
+    assert_eq!(plays, json!(format!("{}?sig=5ig&token=%7B%22clip_uri%22%3A%22x%22%7D", video("720"))));
+    assert_eq!(app.invoke("twitch_clip_video", json!({ "slug": "2901646294" })), Err(json!("not a Twitch clip")));
+}
+
+/// A Kick VOD has its quality levels, to play them, from Kick's API and its
+/// stream's list (`vods.rs` `kick_stream`: "Playable quality levels for
+/// a Kick VOD; Kick has no embeddable VOD player"; `kick.rs` `variants`:
+/// "Lists a VOD's quality levels, for playback").
+#[test]
+fn a_kick_vod_has_its_quality_levels() {
+    let app = TestApp::new();
+    let id = "01a0b0d6-75c0-75a7-8050-a72ab4dc9e0f";
+    let stream = "https://stream.kick.com/ivs/v1/1/abc/2026/11/13/1/xyz/media/hls";
+    let master = format!("{stream}/master.m3u8");
+    let playback = json!({
+        "playback_url": { "vod": master },
+        "video_session": { "video_title": "A stream", "video_duration": 600.0, "creator_id": "42" },
+    });
+    app.net.replies(&format!("https://web.kick.com/api/v1/stream/{id}/playback"), move |asked| {
+        (asked.method == "POST").then(|| Reply::json(&playback))
+    });
+    app.net.serves(
+        &master,
+        format!(
+            "#EXTM3U\n\
+             #EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,VIDEO=\"1080p60\"\n{stream}/1080p60/playlist.m3u8\n\
+             #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,VIDEO=\"720p30\"\n{stream}/720p30/playlist.m3u8\n"
+        ),
+    );
+    let levels = app.invoke("kick_stream", json!({ "url": format!("https://kick.com/barky/videos/{id}") })).unwrap();
+    assert_eq!(
+        levels,
+        json!([
+            { "name": "1080p60", "height": 1080, "url": format!("{stream}/1080p60/playlist.m3u8") },
+            { "name": "720p30", "height": 720, "url": format!("{stream}/720p30/playlist.m3u8") },
+        ])
+    );
 }

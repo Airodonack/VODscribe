@@ -701,3 +701,33 @@ fn an_app_ends_itself_as_its_event_loop_would() {
     let app = TestApp::on(folder);
     assert!(app.clip(clip.id).is_none(), "quit's work wasn't done: the cut clip is still there");
 }
+
+/// The app's network is the fake's: every site's and service's host is
+/// (`Net::sites`), so a request nothing answers gets 404 and none reaches a
+/// real site; a name a test gives is checked as it says.
+#[test]
+fn the_apps_network_reaches_no_real_site() {
+    let app = TestApp::new();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    for url in ["https://www.twitch.tv/videos/1", "https://dl.vodscribe.com/streamers.json", "https://7tv.io/v3/x"] {
+        let err = vodscribe_core::net::get_bytes(url, 100, &never).unwrap_err();
+        assert!(vodscribe_core::net::is_client_error(&err), "{url}: {err:#}");
+    }
+    app.net.local("kit-nas.example");
+    assert!(app.invoke("add_vod", json!({ "url": "https://kit-nas.example/v/1" })).is_err());
+}
+
+/// The chat queue runs once a test asks (`fetches_chats`), as the app's
+/// start runs it, and ends with its test, a fetch held at a gate the test
+/// never opened included.
+#[test]
+fn the_chat_queue_runs_once_asked_and_ends_with_its_test() {
+    let app = TestApp::new();
+    let vod = app.add_site_vod("youtube", "noa29qsTc4g", "A talk", 60.0);
+    app.yt_dlp.serves_chat(&vod.info.url, vec![yt_dlp::chat_line(10.0, "@ada", "hi")]);
+    let gate = Gate::new();
+    app.yt_dlp.holds_chat(&gate);
+    app.fetches_chats();
+    gate.reached();
+    drop(app);
+}

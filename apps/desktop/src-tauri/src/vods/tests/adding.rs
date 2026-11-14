@@ -3,21 +3,22 @@
 //! (the file picker's), and `refresh_details` (a site VOD's menu), through the
 //! commands as the page calls them, and what they leave in the library.
 //!
-//! A link's host is resolved before anything else (`net::public_url`), so a
-//! link with a site's name would be looked up for real: those specs wait for
-//! a faked resolver. The links here need no lookup: an address, or a name
-//! that is this computer's or the local network's by its form alone.
+//! A link's host is resolved before anything else (`net::public_url`): on
+//! the kit's network (`TestApp::net`), where every site's host is public
+//! and one a test names is public or local, as it says.
 //!
-//! The site in the refresh specs is a fake one (`peertube.example`): its
-//! channel comes from yt-dlp's details, as for any site without an API of
-//! its own the app asks, and no VODscription is published for it, so no
-//! file host is asked.
+//! The site most specs add from is a fake one (`peertube.example`): its
+//! details and channel come from yt-dlp's, as for any site without an API
+//! of its own the app asks, and it has no chat and no VODscription, so
+//! neither is fetched nor the file host asked. The specs of those add or
+//! refresh a YouTube or Twitch VOD, answered by the kit's network.
 
 use std::path::{Path, PathBuf};
 use std::thread;
 
 use serde_json::{Value, json};
-use vodscribe_core::testkit::{Gate, Media, TempDir, eventually, yt_dlp};
+use vodscribe_core::db::ChatStatus;
+use vodscribe_core::testkit::{Gate, Media, Reply, TempDir, eventually, yt_dlp};
 
 use super::*;
 use crate::testkit::TestApp;
@@ -71,10 +72,12 @@ fn a_link_of_nothing_says_paste_a_vod_link_first() {
 /// added (CHANGELOG.md, 0.3.0: "VODscribe won't follow links to this
 /// computer or your local network."). Its host is checked as the name it
 /// resolves as (vods.rs:68, `add_vod`: "Checked, and passed on as the name
-/// it resolves as"), so one written in look-alike characters is refused too.
+/// it resolves as"), so one written in look-alike characters is refused
+/// too, and so is a name that resolves there.
 #[test]
 fn a_link_to_this_computer_or_the_local_network_is_refused() {
     let app = TestApp::new();
+    app.net.local("router.example");
     let refused = Err(json!("VODscribe doesn't follow links to this computer or the local network."));
     for url in [
         "http://127.0.0.1:1420/media/1",
@@ -84,6 +87,8 @@ fn a_link_to_this_computer_or_the_local_network_is_refused() {
         "https://nas.local/videos/1",
         "https://ⓛocalhost/videos/1",
         "https://127。0。0。1/videos/1",
+        // A name like any site's, that resolves to the local network.
+        "https://router.example/videos/1",
     ] {
         assert_eq!(add_link(&app, url), refused, "{url}");
     }
@@ -102,6 +107,158 @@ fn a_cancel_that_comes_before_its_add_is_found_by_the_add() {
     let added = app.invoke("add_vod", json!({ "url": "https://8.8.8.8/videos/1", "ticket": 7 }));
     assert_eq!(added, Err(json!("canceled")));
     assert!(vods(&app).is_empty());
+}
+
+/// A link to a talk on the fake site (`peertube.example`, public), which
+/// serves its details: `title`, ten minutes long.
+fn a_talk(app: &TestApp, id: &str, title: &str) -> String {
+    app.net.public("peertube.example");
+    let link = format!("https://peertube.example/w/{id}");
+    app.yt_dlp.serves(yt_dlp::details("PeerTube", id, &link, title, 600.0));
+    link
+}
+
+/// A VOD added from a site is in the library, and isn't transcribed till
+/// asked (CHANGELOG.md, 0.6.0: "Adding a VOD doesn't transcribe it.";
+/// `vods.rs` `add_vod`: "Not transcribed: that's asked for").
+#[test]
+fn a_site_vod_added_is_in_the_library_not_transcribed() {
+    let app = TestApp::new();
+    let link = a_talk(&app, "talk-1", "The talk");
+    let added = add_link(&app, &link).unwrap();
+    assert_eq!(added["created"], true);
+    let library = vods(&app);
+    assert_eq!(
+        library.iter().map(|v| (v.info.url.as_str(), v.info.title.as_str())).collect::<Vec<_>>(),
+        [(link.as_str(), "The talk")]
+    );
+    assert_eq!(added["vod"]["id"], library[0].id);
+    assert!(app.db().requests(library[0].id).unwrap().is_empty(), "nothing asked of the transcriber");
+    assert!(app.db().lines(library[0].id).unwrap().is_empty());
+}
+
+/// A VOD added goes to the top of the library (`db.rs` `add_vod`: "New VODs
+/// go to the top of the library: their own clip does"), above what was
+/// there, as the page lists it.
+#[test]
+fn a_vod_added_goes_to_the_top_of_the_library() {
+    let app = TestApp::new();
+    let before = app.add_video_file("Day 3.mp4", 60.0);
+    let link = a_talk(&app, "talk-1", "The talk");
+    let added = add_link(&app, &link).unwrap()["vod"]["id"].as_i64().unwrap();
+    let listed = app.run(crate::vods::list_vods(app.handle().clone())).unwrap();
+    assert_eq!(listed.iter().map(|v| v.id).collect::<Vec<_>>(), [added, before.id]);
+}
+
+/// A VOD added again is the one already there, left as it is
+/// (`vods.rs` `add_to_library`: "one already there is left as it is").
+#[test]
+fn a_vod_added_twice_is_the_one_already_there() {
+    let app = TestApp::new();
+    let link = a_talk(&app, "talk-1", "The talk");
+    let first = add_link(&app, &link).unwrap();
+    app.says(first["vod"]["id"].as_i64().unwrap(), 12.0, "The Eagle has landed");
+    let again = add_link(&app, &link).unwrap();
+    assert_eq!((&again["created"], &again["vod"]["id"]), (&json!(false), &first["vod"]["id"]));
+    let library = vods(&app);
+    assert_eq!(library.len(), 1);
+    assert_eq!(app.db().lines(library[0].id).unwrap().len(), 1, "its transcript as it was");
+}
+
+/// A link no site the video downloader knows serves is answered with why,
+/// and nothing is added (e2e add-link-error.mjs: "A link VODscribe can't
+/// use: an error under the box, and nothing added"), on the scenario's own
+/// link.
+#[test]
+fn a_link_the_site_refuses_adds_nothing_and_says_why() {
+    let app = TestApp::new();
+    app.net.public("example.invalid");
+    let said = add_link(&app, "https://example.invalid/not-a-vod");
+    assert_eq!(
+        said,
+        Err(json!(
+            "VODscribe can't use that link: it isn't a site the video downloader knows. Paste a link to a video page."
+        ))
+    );
+    assert!(vods(&app).is_empty());
+}
+
+/// An add canceled while its link is looked up fails as canceled and adds
+/// nothing (`vods.rs` `cancel_add`: "Stops looking up the link being
+/// added under `ticket` (add_vod), which then fails as canceled";
+/// CHANGELOG.md, 0.3.0: "Links and files being added show in the library
+/// right away, with a spinner, and ✕ cancels one."). The site is held while
+/// it looks the link up.
+#[test]
+fn an_add_canceled_while_it_is_looked_up_is_not_added() {
+    let app = TestApp::new();
+    let link = a_talk(&app, "talk-1", "The talk");
+    let looking = Gate::new();
+    app.yt_dlp.holds_details(&looking);
+    // As the page awaits it, on a thread of its own.
+    let handle = app.handle().clone();
+    let adding = thread::spawn(move || tauri::async_runtime::block_on(crate::vods::add_vod(handle, link, Some(3))));
+    looking.reached();
+    app.invoke("cancel_add", json!({ "ticket": 3 })).unwrap();
+    looking.open();
+    assert_eq!(adding.join().unwrap().err().as_deref(), Some("canceled"));
+    assert!(vods(&app).is_empty());
+}
+
+/// The file host is asked about one VOD at a time in the whole process
+/// (annotations.rs `ASKING`, by the VOD's id), and tests run at once, each
+/// library's first VOD numbered 1. A test that waits on its answer adds its
+/// site VOD after `before` files, so it's numbered apart from the others'.
+fn numbered_apart(app: &TestApp, before: usize) {
+    for i in 0..before {
+        app.add_video_file(&format!("Before {i}.mp4"), 60.0);
+    }
+}
+
+/// The file host publishes a VODscription of YouTube video `id`, in version `etag`.
+fn publishes(app: &TestApp, id: &str, etag: &'static str) {
+    app.net.replies(&format!("https://dl.vodscribe.com/annotations/youtube/{id}.json"), move |asked| {
+        (asked.method == "HEAD").then(|| Reply::status(200).with_header("ETag", etag))
+    });
+}
+
+/// A VOD added from a site is offered its VODscription once the file host
+/// is found to have one (`vods.rs` `add_vod`, `look_up_added`; CHANGELOG.md, 0.7.0:
+/// "Adding a VOD offers its annotations."): the page hears it's found.
+#[test]
+fn a_vod_added_from_a_site_is_offered_its_vodscription_once_found() {
+    let app = TestApp::new();
+    numbered_apart(&app, 1);
+    let link = "https://www.youtube.com/watch?v=added000001";
+    app.yt_dlp.serves(yt_dlp::details("youtube", "added000001", link, "A stream", 600.0));
+    publishes(&app, "added000001", "\"v1\"");
+    let id = add_link(&app, link).unwrap()["vod"]["id"].as_i64().unwrap();
+    // The look-up runs beside the add, which didn't wait for it.
+    app.threads_done();
+    assert_eq!(app.heard("annotations-found"), [json!(id)]);
+}
+
+/// A VOD added from a site has its chat fetched in the background (`vods.rs`
+/// `add_vod`; CHANGELOG.md, 0.2.0: "Chat: for Kick, Twitch and YouTube
+/// livestreams, the chat replay sits beside the transcript … It's fetched
+/// in the background"), here a Twitch VOD's, from Twitch's API.
+#[test]
+fn a_vod_added_from_a_site_has_its_chat_fetched() {
+    let app = TestApp::new();
+    app.fetches_chats();
+    let link = "https://www.twitch.tv/videos/2901646294";
+    app.yt_dlp.serves(yt_dlp::details("twitch", "v2901646294", link, "A stream", 300.0));
+    app.net.twitch_chat("2901646294", &[(10.0, "ada", "hello"), (20.0, "bo", "o7")]);
+    let id = add_link(&app, link).unwrap()["vod"]["id"].as_i64().unwrap();
+    eventually("the chat is fetched", || app.db().vod(id).unwrap().unwrap().chat == ChatStatus::Done);
+    let shown = app.invoke("chat_windows", json!({ "vodId": id, "ranges": [[0.0, 300.0]], "cap": 10 })).unwrap();
+    let said: Vec<(f64, &str)> = shown[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["time"].as_f64().unwrap(), m["author"].as_str().unwrap()))
+        .collect();
+    assert_eq!(said, [(10.0, "ada"), (20.0, "bo")]);
 }
 
 /// Files dropped on the window or picked are added as VODs that play from
@@ -283,10 +440,11 @@ fn as_read(app: &TestApp, id: i64) -> Value {
 }
 
 /// Refresh details gets the channel's link the site names now, keeps it
-/// on the VOD and tells the page (CHANGELOG.md, 0.7.2: "Refresh a VOD's
-/// details." ("gets its channel's link"); vods.rs:133, `refresh_details`).
-/// The file host's half (asked again about its VODscription) isn't here:
-/// that host is reached outside the faked network.
+/// on the VOD and tells the page; and it asks the file host again, which
+/// offers a VODscription published since (CHANGELOG.md, 0.7.2: "Refresh a
+/// VOD's details." ("gets its channel's link and any VODscription or
+/// streamer card published since"); `vods.rs` `refresh_details`). The
+/// streamer card is the page's to ask for (streamers.ts).
 #[test]
 fn refresh_details_gets_the_channels_link_and_asks_the_file_host_again() {
     let app = TestApp::new();
@@ -299,6 +457,15 @@ fn refresh_details_gets_the_channels_link_and_asks_the_file_host_again() {
     assert_eq!((kept.info.channel_login, kept.info.channel_url), (Some("quill".into()), refreshed.info.channel_url));
     let told = app.heard("vod");
     assert_eq!(told.last().map(|v| (&v["id"], &v["channel_login"])), Some((&json!(vod.id), &json!("quill"))));
+
+    // A YouTube VOD added before its VODscription was published.
+    numbered_apart(&app, 1);
+    let video = app.add_site_vod("youtube", "refresh0001", "A stream", 600.0);
+    publishes(&app, "refresh0001", "\"v1\"");
+    refresh(&app, video.id).unwrap().expect("refreshed");
+    // The file host's answer comes after the refresh's, which didn't wait for it.
+    app.threads_done();
+    assert_eq!(app.heard("annotations-found"), [json!(video.id)]);
 }
 
 /// A refresh loses nothing the VOD has: a site that names no channel now

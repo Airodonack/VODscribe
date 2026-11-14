@@ -1,7 +1,8 @@
-//! Removing VODs (`delete_vod`), which ends their transcription, erasing
-//! those nothing uses (`Sweeper`), and deleting a VOD's kept video
-//! (`delete_video`, Settings' `delete_all_videos`). Transcriptions run on
-//! the kit's faked worker (`TestApp::worker`).
+//! Removing VODs (`delete_vod`), which ends their transcription and their
+//! chat's download, erasing those nothing uses (`Sweeper`), and deleting a
+//! VOD's kept video (`delete_video`, Settings' `delete_all_videos`).
+//! Transcriptions run on the kit's faked worker (`TestApp::worker`), chats
+//! on its chat queue (`TestApp::fetches_chats`).
 //!
 //! Stated elsewhere, cited here and not repeated: removing a VOD while its
 //! clips wait to be made makes none of them (CHANGELOG.md, 0.4.1 Fixes:
@@ -15,9 +16,10 @@ use super::*;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
+use vodscribe_core::db::ChatStatus;
 use vodscribe_core::db::ClipStatus;
 use vodscribe_core::settings::ClipCodec;
-use vodscribe_core::testkit::{Gate, Media, eventually};
+use vodscribe_core::testkit::{Gate, Media, eventually, yt_dlp};
 use vodscribe_core::transcript::Segment;
 
 use crate::testkit::TestApp;
@@ -443,6 +445,33 @@ fn deleting_a_vods_video_while_it_is_transcribed_stops_the_transcription() {
     assert!(!app.paths().source_audio(vod.id, "m4a").exists(), "its download went on");
     let status = app.invoke("list_vods", json!({})).unwrap()[0]["status"].clone();
     assert!(!["queued", "downloading", "ready", "transcribing"].contains(&status.as_str().unwrap()), "{status}");
+}
+
+/// A removed VOD's chat download stops where it is (CHANGELOG.md, 0.3.0:
+/// "YouTube chat shows how far it has got and appears as it downloads, and
+/// removing the VOD stops it."; `vods.rs` `delete_vod`'s `chat.stop`).
+/// The site is held once the chat's first line is in: the download, stopped,
+/// leaves nothing while it's still held, and the chat queue goes on to the
+/// next VOD's chat.
+#[test]
+fn a_removed_vods_chat_fetch_stops() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    let lines = [10.0, 20.0, 30.0].iter().map(|&at| yt_dlp::chat_line(at, "@ada", "hi")).collect();
+    app.yt_dlp.serves_chat(&vod.info.url, lines);
+    let downloading = Gate::new();
+    app.yt_dlp.holds_chat(&downloading);
+    app.fetches_chats();
+    downloading.reached();
+    eventually("how far it has got shows", || !app.heard("chat-progress").is_empty());
+    let part = PathBuf::from(format!("{}.live_chat.json.part", app.paths().temp_chat(vod.id).display()));
+    assert!(part.exists(), "it's downloading");
+    remove(&app, vod.id);
+    eventually("its download stops, leaving nothing", || !part.exists());
+    let next = app.add_site_vod("twitch", "1000000002", "A stream", 60.0);
+    app.net.twitch_chat("1000000002", &[(5.0, "bo", "o7")]);
+    app.invoke("retry_chat", json!({ "id": next.id })).unwrap();
+    eventually("the next VOD's chat is fetched", || app.db().vod(next.id).unwrap().unwrap().chat == ChatStatus::Done);
 }
 
 /// A VOD from a site without a player of its own, whose video was deleted,

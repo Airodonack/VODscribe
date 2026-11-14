@@ -30,15 +30,29 @@ fn redact(url: &str) -> &str {
 pub fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::Agent::config_builder()
+        let config = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_recv_response(Some(Duration::from_secs(60)))
             .timeout_recv_body(Some(Duration::from_secs(6 * 60 * 60)))
             // Tests serve plain HTTP from localhost.
             .https_only(!cfg!(test))
-            .build()
-            .into()
+            .build();
+        client(config)
     })
+}
+
+/// An HTTP client with `config`.
+#[cfg(not(any(test, feature = "testkit")))]
+pub(crate) fn client(config: ureq::config::Config) -> ureq::Agent {
+    config.into()
+}
+
+/// An HTTP client with `config`; in a test build, a request that's the
+/// test's is answered by the fake network (`testkit::net`), and any other
+/// goes to the network.
+#[cfg(any(test, feature = "testkit"))]
+pub(crate) fn client(config: ureq::config::Config) -> ureq::Agent {
+    ureq::Agent::with_parts(config, crate::testkit::net::Connector::default(), crate::testkit::net::Resolver::default())
 }
 
 /// The error a canceled read returns. Not `ErrorKind::Interrupted`, which
@@ -143,8 +157,8 @@ pub fn public_url(url: &str) -> Result<String> {
         Ok(ip) => vec![ip],
         // A name: where it resolves now. (It could resolve elsewhere by the
         // time it's fetched; this keeps out the plain cases.)
-        Err(_) => match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)) {
-            Ok(found) => found.map(|a| a.ip()).collect(),
+        Err(_) => match lookup(&host) {
+            Ok(found) => found,
             // A one-word name (a computer or router on the local network) isn't followed.
             Err(_) if !host.contains('.') => return Err(local()),
             // Otherwise it may resolve elsewhere: behind a proxy that resolves
@@ -158,6 +172,16 @@ pub fn public_url(url: &str) -> Result<String> {
     }
     let host = if ipv6 { format!("[{host}]") } else { host };
     Ok(format!("{scheme}://{userinfo}{host}{port}{path}"))
+}
+
+/// The addresses `host` resolves to now. In a test build, those the test
+/// says, if it says (`testkit::net`).
+fn lookup(host: &str) -> io::Result<Vec<std::net::IpAddr>> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(found) = crate::testkit::net::resolve(host) {
+        return found;
+    }
+    std::net::ToSocketAddrs::to_socket_addrs(&(host, 443)).map(|found| found.map(|a| a.ip()).collect())
 }
 
 /// A link `public_url` won't follow, whatever happens later (not a web link,

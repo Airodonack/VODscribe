@@ -7,7 +7,8 @@ Fakes for what's outside the app, and helpers to set up a library, so a unit or 
 - `yt_dlp.rs`: a fake yt-dlp: a VOD's details and its downloads, as the site serves them.
 - `worker.rs`: a fake transcription worker: the words it's told are said.
 - `media.rs`: the fake media files the fakes write and read, and the frames they decode.
-- `net.rs`: recorded answers for links.
+- `net.rs`: the network: where a name resolves, and each request's answer.
+- `sites.rs`: the sites' own APIs, answered as each site answers.
 - `library.rs`: a library in a folder of its own, VODs and words put in it, and a connection of its own beside the app's; older libraries: one at any format, one taken back to a format, and those releases left; and one a newer version changed.
 - `tests.rs`: the kit's own tests, each fake beside the real program where it's installed.
 
@@ -35,7 +36,7 @@ and the tests are in `clips/tests.rs`, starting with `use super::*;`. A new fold
 
 ## The app in a test
 
-`TestApp::new()` starts the app as it starts for real, on Tauri's mock runtime, with a library of its own and ffmpeg and yt-dlp faked:
+`TestApp::new()` starts the app as it starts for real, on Tauri's mock runtime, with a library of its own, and ffmpeg, yt-dlp and the network faked:
 
 ```rust
 let app = TestApp::new();
@@ -70,7 +71,9 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `worker()` is the transcription worker the app runs, faked, with its model installed: `app.worker().hears(said(10.0, "The Eagle has landed"))`, and the queue transcribes what's asked. The words are at the VOD's seconds, a section downloaded for a stretch included. A start on its library again has the worker from the start, hearing nothing till told.
 - `says_as(vod.id, 12.0, "Hello", "Ada")` is a line someone says, as a VODscription names them; `add_site_vod_of(…, "Ada Plays")` a VOD on that channel.
 - `dragged_out(&clip)` drags a clip out and lets it go on an editor that takes the file, and gives the file it got. `erasures_done()` waits till no VOD is being erased.
-- `threads_done()` waits for the threads the app's commands start and don't wait for (an added file's picture asked for). The app's end waits for them too, before its state goes; a new such thread is passed to `testkit::started`.
+- `threads_done()` waits for the threads the app's commands start and don't wait for (an added VOD's picture asked for, the file host asked about its VODscription). The app's end waits for them too, before its state goes; a new such thread is passed to `testkit::started`.
+- `net` is the network the app reaches. Every site's and service's host is the fake's (`Net::sites`), so nothing reaches a real site, and a request nothing answers gets 404. Tell it what a site answers, as below.
+- `fetches_chats()` runs the chat queue, as the app's start does: the chats not fetched yet first, then each one asked for. Its fetches reach `net` and the fake yt-dlp.
 - `clock()` is the app's clock. It stands still till the test moves it with `clock().advance(Duration::from_millis(250))`, so a cut's progress, sent at most every quarter second, is sent when the test says.
 - `with_screen()` gives the window a screen for the player to draw on, which the mock runtime's lacks, and `screen()` is it: `showing()` is the frame on it (None while it's black), `frame_shown()` waits for one and gives its number, `closed()` says whether it was taken away for good.
 - `started_with("VODSCRIBE_DRAG_WAITS", "1")` has the app see that variable, as if it had been started with it. Each test's variables are its own, and the process's aren't seen.
@@ -91,6 +94,7 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
 - `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is. A download is a part file beside its file till it's whole, as yt-dlp's is: one stopped or held partway leaves it.
 - `app.yt_dlp.holds_details(&gate)`: each look-up of a link's details (an add, a refresh) waits at the gate before it answers.
+- `app.yt_dlp.serves_chat(url, lines)`: a YouTube video's chat replay, each line a moment's messages (`yt_dlp::chat_line(12.0, "@ada", "hi")`), written a line at a time as yt-dlp writes it. A video it serves none of has none. `holds_chat(&gate)` holds each once its first line is written.
 - `app.worker().holds(&gate)` waits after the first minute it transcribes, and `fails_at(200.0, "message")` fails there.
 - `works()` puts ffmpeg back as it was, and the worker too, keeping what it hears.
 - `app.ffmpeg.runs()` gives the arguments of each run so far, in order.
@@ -155,7 +159,23 @@ Decoded, a fake video's sound is silence, at the rate asked. Its storyboard has 
 
 Fake media files hold what a file would (length, picture, sound) and what they were cut from, as JSON. Make a source with `Media::video(60.0)` or `Media::sound(60.0)` and `write`, and read a result with `Media::read`.
 
-`Net::new()` answers links for as long as it's kept: `serves(prefix, body)`, or `answers(prefix, 404)`. Give a test's links a host of its own, since tests run at once.
+`Net::new()` is the network for as long as it's kept, and `app.net` is the app's:
+
+- `public("peertube.example")`: the name resolves to a public address, so a link to it is followed, and `local("router.example")` to the local network, so it's refused. Either host is the fake's: a request nothing answers gets 404. `sites()` makes every site's host public.
+- `serves(prefix, body)` and `answers(prefix, 404)` answer the links starting with `prefix`, whatever is asked.
+- `replies(prefix, |request| …)` reads each request as the site does (`method`, `url`, `header(…)`, `json()`) and answers with a `Reply` (`Reply::json(&value)`, `Reply::status(429)`, `.with_header("ETag", …)`), or None for a request that isn't the test's, which the next answer is asked.
+- `holds(prefix, &gate)` holds each request to those links at the gate before it's answered.
+- `twitch_chat("2901646294", &[(10.0, "ada", "hello")])` is Twitch's API with that VOD's chat (sites.rs).
+
+A request goes to the fake whether it's made through `net::get` or the HTTP clients (Kick's API, Twitch's GQL, the emote services, the file host), and the client does with the answer what it does with a site's: its status, headers, redirects and limits. Tests run at once and see each other's answers, so give a test's links a host of its own, or on a site's own host answer only the test's own ids:
+
+```rust
+let app = TestApp::new();
+app.net.replies("https://gql.twitch.tv/gql", |asked| {
+    let ours = asked.json()?["variables"]["slug"] == "MyClipSlug";
+    ours.then(|| Reply::json(&json!({ "data": { "clip": null } })))
+});
+```
 
 Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, and `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file.
 
@@ -180,7 +200,9 @@ let db = Db::open(&path).unwrap(); // upgraded from 29
 
 ## What's real and what isn't
 
-The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, requests made outside `net::get` (Kick's API, chat replays, the emote services, the VODscription host), and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: YouTube chat through yt-dlp (`chat.rs`), the yt-dlp update's version check (`tools::update_yt_dlp`), and the GPU check (`gpu.rs`).
+The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: the yt-dlp update's version check (`tools::update_yt_dlp`) and the GPU check (`gpu.rs`). The chat queue runs only once a test asks (`fetches_chats`), and the start's other jobs that reach the network (the missing thumbnails, the streamer cards) don't run.
+
+A core test's own network: a link a test answers or a host it names is the fake's; any other goes to the network as before, for the tests that ask a site for real (`--ignored`, named `…_live`). Those are run alone: a test beside them that names a site's host takes it from them.
 
 Where the restart and the fake drag differ from the real ones:
 

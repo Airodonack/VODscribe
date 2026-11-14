@@ -6,7 +6,10 @@
 //! yt-dlp writes, and renamed into place once whole, so a download stopped
 //! or held partway leaves its part file. It fails as yt-dlp does for a link
 //! the site doesn't serve, and on request for one it refuses, partway or
-//! not; or holds partway at a `Gate`.
+//! not; or holds partway at a `Gate`. A YouTube video's chat replay
+//! (`--write-subs --sub-langs live_chat`, `chat::fetch`) is written a line at
+//! a time to its part file, as yt-dlp writes it, then renamed into place;
+//! a video the site serves no chat of has none, and nothing is written.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,6 +37,10 @@ struct Site {
     hold: Option<Gate>,
     /// Each look-up of a link's details (`-J`) waits here before it answers.
     details_hold: Option<Gate>,
+    /// Each link's chat replay, as the lines of yt-dlp's `live_chat.json`.
+    chats: HashMap<String, Vec<String>>,
+    /// Each chat replay's download waits here once its first line is written.
+    chat_hold: Option<Gate>,
 }
 
 impl YtDlp {
@@ -86,6 +93,62 @@ impl YtDlp {
     pub fn holds_details(&self, gate: &Gate) {
         self.site.lock().unwrap().details_hold = Some(gate.clone());
     }
+
+    /// The site has a chat replay for video `url`: `lines`, each a moment's
+    /// messages as yt-dlp's `live_chat.json` has them (`chat_line`).
+    pub fn serves_chat(&self, url: &str, lines: Vec<String>) {
+        self.site.lock().unwrap().chats.insert(url.into(), lines);
+    }
+
+    /// Each chat replay's download from now waits at `gate` once its first
+    /// line is written, as a long chat takes its time.
+    pub fn holds_chat(&self, gate: &Gate) {
+        self.site.lock().unwrap().chat_hold = Some(gate.clone());
+    }
+}
+
+/// A line of a YouTube chat replay (`YtDlp::serves_chat`): `author` says
+/// `text` `at` seconds into the video.
+pub fn chat_line(at: f64, author: &str, text: &str) -> String {
+    json!({ "replayChatItemAction": {
+        "videoOffsetTimeMsec": format!("{}", (at * 1000.0).round() as i64),
+        "actions": [{ "addChatItemAction": { "item": { "liveChatTextMessageRenderer": {
+            "authorName": { "simpleText": author },
+            "message": { "runs": [{ "text": text }] },
+        } } } }],
+    } })
+    .to_string()
+}
+
+/// A chat replay's download: its lines to `<-o>.live_chat.json.part` as
+/// they come, renamed once whole. None at all for a video without one.
+fn write_chat(run: &mut Run, site: &Site) -> i32 {
+    let url = run.args().last().cloned().unwrap_or_default();
+    let Some(lines) = site.chats.get(&url) else {
+        run.err("WARNING: There are no subtitles for the requested languages\n");
+        return 0;
+    };
+    let file = PathBuf::from(format!("{}.live_chat.json", run.after("-o").unwrap_or_default()));
+    let part = PathBuf::from(format!("{}.part", file.display()));
+    let mut out = std::fs::File::create(&part).unwrap();
+    for (i, line) in lines.iter().enumerate() {
+        std::io::Write::write_all(&mut out, format!("{line}\n").as_bytes()).unwrap();
+        if i == 0
+            && let Some(gate) = &site.chat_hold
+            && !run.hold(gate)
+        {
+            return 255;
+        }
+        if run.stopped() {
+            return 255;
+        }
+    }
+    drop(out);
+    if let Err(e) = std::fs::rename(&part, &file) {
+        run.err(&format!("ERROR: Unable to rename file: {e}\n"));
+        return 1;
+    }
+    0
 }
 
 /// yt-dlp's details of a VOD of `platform` (youtube, twitch, kick) with
@@ -112,6 +175,9 @@ const BEING_WRITTEN: &[u8] = b"FAKE MEDIA (being downloaded)\n";
 
 fn answer(run: &mut Run, site: &Site) -> i32 {
     let args = run.args();
+    if run.has("--write-subs") && run.after("--sub-langs").as_deref() == Some("live_chat") {
+        return write_chat(run, site);
+    }
     if run.has("-J") {
         if let Some(gate) = &site.details_hold
             && !run.hold(gate)

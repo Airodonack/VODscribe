@@ -137,16 +137,16 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
         return;
     }
     let Some(asking) = Asking::claim(vod.id) else { return };
-    let (app, id) = (app.clone(), vod.id);
+    let (handle, id) = (app.clone(), vod.id);
     let (platform, platform_id) = (vod.info.platform.clone(), vod.info.platform_id.clone());
-    std::thread::spawn(move || {
+    let thread = std::thread::spawn(move || {
         let _asking = asking;
-        if !may_ask(&app) {
+        if !may_ask(&handle) {
             return;
         }
-        match look_up(&app, id, &platform, &platform_id) {
+        match look_up(&handle, id, &platform, &platform_id) {
             Ok(Found::Available { .. }) => {
-                crate::page::emit(&app, "annotations-found", id);
+                crate::page::emit(&handle, "annotations-found", id);
             }
             Ok(Found::None) => {}
             Err(e) => {
@@ -156,6 +156,11 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
             }
         }
     });
+    // A test's app waits for it before it ends.
+    #[cfg(test)]
+    crate::testkit::started(app, thread);
+    #[cfg(not(test))]
+    drop(thread);
 }
 
 /// For a VOD whose details were refreshed (`vods::refresh_details`): asks
@@ -170,18 +175,18 @@ pub(crate) fn look_up_refreshed(app: &AppHandle, vod: &Vod) {
         return;
     }
     let Some(asking) = Asking::claim(vod.id) else { return };
-    let (app, id) = (app.clone(), vod.id);
+    let (handle, id) = (app.clone(), vod.id);
     let (platform, platform_id) = (vod.info.platform.clone(), vod.info.platform_id.clone());
-    std::thread::spawn(move || {
+    let thread = std::thread::spawn(move || {
         let _asking = asking;
-        if !may_ask(&app) {
+        if !may_ask(&handle) {
             return;
         }
-        match look_up(&app, id, &platform, &platform_id) {
+        match look_up(&handle, id, &platform, &platform_id) {
             Ok(Found::Available { .. }) => {
-                let offer = app.state::<AppState>().db.lock().unwrap().annotations_offer(id);
+                let offer = handle.state::<AppState>().db.lock().unwrap().annotations_offer(id);
                 if offer.is_ok_and(|offer| !offer.up_to_date) {
-                    crate::page::emit(&app, "annotations-found", id);
+                    crate::page::emit(&handle, "annotations-found", id);
                 }
             }
             Ok(Found::None) => {}
@@ -192,6 +197,11 @@ pub(crate) fn look_up_refreshed(app: &AppHandle, vod: &Vod) {
             }
         }
     });
+    // A test's app waits for it before it ends.
+    #[cfg(test)]
+    crate::testkit::started(app, thread);
+    #[cfg(not(test))]
+    drop(thread);
 }
 
 #[derive(Serialize)]

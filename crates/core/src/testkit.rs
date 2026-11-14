@@ -10,7 +10,9 @@
 //! - programs (`tools`): ffmpeg (`Ffmpeg`), yt-dlp (`YtDlp`) and the
 //!   transcription worker (`Worker`), run in this process by
 //!   `vodscribe_core::tools::spawn`, `output` and `status`;
-//! - the network (`net`): recorded answers, given by `net::get`;
+//! - the network (`net`): where a name resolves (`net::public_url`), and
+//!   the answer to each request, by `net::get` and by the HTTP clients
+//!   (`net::agent`); the sites' own APIs answered as they answer (`sites`);
 //! - media files (`Media`): what the fake programs write and read, in place
 //!   of video.
 //!
@@ -20,6 +22,7 @@ pub mod ffmpeg;
 pub mod library;
 pub mod media;
 pub mod net;
+pub mod sites;
 pub mod tools;
 pub mod worker;
 pub mod yt_dlp;
@@ -30,7 +33,7 @@ mod tests;
 pub use ffmpeg::Ffmpeg;
 pub use library::{Library, Released, at_version, back_to, newer, said};
 pub use media::Media;
-pub use net::Net;
+pub use net::{Net, Reply, Request};
 pub use tools::Gate;
 pub use worker::Worker;
 pub use yt_dlp::YtDlp;

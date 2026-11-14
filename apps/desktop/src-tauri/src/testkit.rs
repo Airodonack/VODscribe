@@ -1,6 +1,7 @@
 //! The app in a test (`TestApp`): its real state and queues, as it starts
 //! them, on Tauri's mock runtime, over a library in a folder of its own,
-//! with ffmpeg and yt-dlp faked (`vodscribe_core::testkit`). The commands
+//! with ffmpeg, yt-dlp and the network faked (`vodscribe_core::testkit`):
+//! every site's host is the fake network's (`TestApp::net`). The commands
 //! are called as the page calls them, by name and with its arguments
 //! (`TestApp::invoke`), or as Rust functions; what the page would hear is
 //! kept (`TestApp::heard`), and what the system's desktop would be asked to
@@ -34,7 +35,7 @@ use serde_json::Value;
 use tauri::{Listener, Manager};
 use vodscribe_core::db::{Clip, ClipStatus, Db, Vod};
 use vodscribe_core::testkit::tools::{self as fakes, At, Fake, Run};
-use vodscribe_core::testkit::{Ffmpeg, Gate, Media, TempDir, Worker, YtDlp, eventually, library, yt_dlp};
+use vodscribe_core::testkit::{Ffmpeg, Gate, Media, Net, TempDir, Worker, YtDlp, eventually, library, yt_dlp};
 
 use crate::{AppHandle, AppState, CmdResult, Rt, WebviewWindow};
 
@@ -78,6 +79,9 @@ pub(crate) struct TestApp {
     /// The yt-dlp the app finds, faked: it serves each site's VOD added with
     /// `add_site_vod`.
     pub(crate) yt_dlp: YtDlp,
+    /// The network the app reaches, faked: every site's and service's host
+    /// is the fake's (`Net::sites`), answered as the test says.
+    pub(crate) net: Net,
     /// The transcription worker the app runs, faked once asked for (`worker`).
     worker: OnceLock<Worker>,
     heard: Arc<Mutex<HashMap<String, Vec<Value>>>>,
@@ -90,9 +94,12 @@ pub(crate) struct TestApp {
     drags_ended: AtomicUsize,
     /// Where its library keeps the files it couldn't delete (`files`).
     leftovers: PathBuf,
-    // Kept for the chat queue, which the tests don't run: what's asked of it
-    // waits. None on the recovery screen.
-    _chats: Option<std::sync::mpsc::Receiver<i64>>,
+    // What's asked of the chat queue, which waits till the test runs it
+    // (`fetches_chats`). None on the recovery screen, or once it runs.
+    chats: Mutex<Option<std::sync::mpsc::Receiver<i64>>>,
+    /// The chat queue's threads once it runs (`fetches_chats`), and what
+    /// ends them with the test.
+    chat_queue: Mutex<Option<ChatQueue>>,
     // The app's while it runs: removed once `drop` has closed what the app
     // has open in it, unless `quit` or `kill` gave it to the test.
     folder: Option<Folder>,
@@ -152,6 +159,7 @@ impl Drop for TestApp {
         }
         self.ffmpeg.end();
         self.yt_dlp.end();
+        self.net.let_go();
         if let Some(worker) = self.worker.get() {
             worker.end();
             let model = self.paths().model_dir();
@@ -171,8 +179,14 @@ impl Drop for TestApp {
             }
             !ours
         });
-        // The threads its commands started end before the state they read goes.
+        // The threads its commands started end before the state they read
+        // goes, the chat queue's too.
         self.threads_done();
+        if let Some(queue) = self.chat_queue.lock().unwrap().take() {
+            // The fetch under way stops, as a removed VOD's does.
+            let vods = self.db().vods().unwrap_or_default();
+            queue.end(|| vods.iter().for_each(|vod| self.state().chat.stop(vod.id)));
+        }
         if !started {
             return;
         }
@@ -204,7 +218,8 @@ impl TestApp {
     /// The app started on `folder`'s library, as `lib.rs`'s `run` starts it
     /// (`open_at_start`, `open_library`; but with no page in its window, nor
     /// the background jobs that reach the network: thumbnails, streamer
-    /// cards, chat): the library opened and its files settled, what's left
+    /// cards, and chat till the test asks, `fetches_chats`): the library
+    /// opened and its files settled, what's left
     /// from before tidied, then its queues running, beginning with what was
     /// left unfinished. A library that won't open starts it on the recovery
     /// screen (recovery.rs), with none of the rest. A folder an app quit or
@@ -225,6 +240,8 @@ impl TestApp {
         std::fs::create_dir_all(&files).unwrap();
         let ffmpeg = Ffmpeg::in_bin(&paths.bin());
         let yt_dlp = YtDlp::in_bin(&paths.bin());
+        let net = Net::new();
+        net.sites();
         let app = tauri::test::mock_builder()
             .invoke_handler(crate::commands())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -274,13 +291,15 @@ impl TestApp {
             paths,
             ffmpeg,
             yt_dlp,
+            net,
             worker,
             heard,
             files,
             dragged: AtomicU64::new(0),
             drags_ended: AtomicUsize::new(0),
             leftovers: store,
-            _chats: chats,
+            chats: Mutex::new(chats),
+            chat_queue: Mutex::default(),
             folder: Some(folder),
         }
     }
@@ -408,6 +427,37 @@ impl TestApp {
     /// still running.
     pub(crate) fn threads_running(&self) -> usize {
         self.app.state::<Started>().lock().iter().filter(|t| !t.is_finished()).count()
+    }
+
+    /// The chat queue runs from now, as the app's start runs it
+    /// (`chats::run`): the chats of the VODs that don't have theirs yet
+    /// first, then each VOD's asked for, one at a time. Its fetches reach
+    /// the fake network (`net`) and the fake yt-dlp. It ends with the test.
+    pub(crate) fn fetches_chats(&self) {
+        let Some(asked) = self.chats.lock().unwrap().take() else { return };
+        let (relayed, queued) = mpsc::channel();
+        let ending = Arc::new(AtomicBool::new(false));
+        // The app's own channel stays open while its state does: the queue
+        // reads a relay of it, which closes when the test ends.
+        let relay = {
+            let ending = ending.clone();
+            std::thread::spawn(move || {
+                while !ending.load(Ordering::SeqCst) {
+                    match asked.recv_timeout(Duration::from_millis(10)) {
+                        Ok(id) => {
+                            if relayed.send(id).is_err() {
+                                return;
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            })
+        };
+        let handle = self.handle().clone();
+        let queue = std::thread::spawn(move || crate::chats::run(handle, queued));
+        *self.chat_queue.lock().unwrap() = Some(ChatQueue { ending, relay, queue });
     }
 
     /// The transcription worker the app runs, faked (`Worker`), and its
@@ -709,6 +759,26 @@ impl Started {
     /// The threads, though a test failed holding them.
     fn lock(&self) -> MutexGuard<'_, Vec<std::thread::JoinHandle<()>>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The chat queue as the app's start runs it (`chats::run`), for a test
+/// (`TestApp::fetches_chats`): what's asked of it is relayed till the test
+/// ends, then the queue ends once its fetch under way has.
+struct ChatQueue {
+    ending: Arc<AtomicBool>,
+    relay: std::thread::JoinHandle<()>,
+    queue: std::thread::JoinHandle<()>,
+}
+
+impl ChatQueue {
+    /// Ends it: nothing more is relayed, `stop` stops the fetch under way,
+    /// and the queue ends once it has.
+    fn end(self, stop: impl FnOnce()) {
+        self.ending.store(true, Ordering::SeqCst);
+        let _ = self.relay.join();
+        stop();
+        let _ = self.queue.join();
     }
 }
 

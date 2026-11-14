@@ -904,3 +904,116 @@ fn a_tests_quit_stops_only_the_runs_it_tracks() {
     assert!(!stopped(&mut other.0), "another folder's run went on");
     assert!(!stopped(&mut next.0), "once the folder was let go of, a run tracked there ran");
 }
+
+/// A host a test names resolves where it says, so a link to it is checked
+/// without a real lookup (`net::public_url`): one said to be public is
+/// followed, as the name it resolves as; one said to be local is refused,
+/// as a router's name is.
+#[test]
+fn a_host_a_test_names_resolves_where_it_says() {
+    let net = Net::new();
+    net.public("kit-public.example").local("kit-router.example");
+    assert_eq!(net::public_url("https://KIT-Public.example./w/1").unwrap(), "https://kit-public.example/w/1");
+    let refused = net::public_url("https://kit-router.example/admin").unwrap_err();
+    assert!(net::is_not_public(&refused), "{refused:#}");
+    assert_eq!(super::net::resolve("kit-router.example").unwrap().unwrap(), [super::net::LOCAL]);
+    drop(net);
+    assert!(super::net::resolve("kit-router.example").is_none(), "gone with its test");
+}
+
+/// A request made with the HTTP client (`net::agent`), as Kick's API and
+/// Twitch's GQL are asked, reaches the fake as the site gets it (its method,
+/// headers and body) and comes back as the site answers, the client doing
+/// with it what it does with a site's: a status that isn't success is an
+/// error unless the request takes it as an answer. A request to a host the
+/// test names that nothing answers gets 404.
+#[test]
+fn a_request_through_the_http_client_is_answered_by_the_fake_as_a_site_answers() {
+    let net = Net::new();
+    net.public("kit-api.example").replies("https://kit-api.example/v1/", |asked| {
+        let named = asked.json()?["name"].as_str()?.to_string();
+        let said = format!("{} {} {named} by {}", asked.method, asked.url, asked.header("client-id")?);
+        Some(Reply::json(&serde_json::json!({ "said": said })).with_header("ETag", "\"7\""))
+    });
+    let mut answer = net::agent()
+        .post("https://kit-api.example/v1/hello?x=1")
+        .header("Client-ID", "kit")
+        .send(r#"{"name":"ada"}"#)
+        .unwrap();
+    assert_eq!(answer.headers().get("etag").unwrap(), "\"7\"");
+    let said: serde_json::Value = serde_json::from_str(&answer.body_mut().read_to_string().unwrap()).unwrap();
+    assert_eq!(said["said"], "POST https://kit-api.example/v1/hello?x=1 ada by kit");
+    let missing = net::agent().get("https://kit-api.example/v2/nothing").call();
+    assert!(matches!(missing, Err(ureq::Error::StatusCode(404))), "{missing:?}");
+    let taken = net::agent().get("https://kit-api.example/v2/nothing").config().http_status_as_error(false).build();
+    assert_eq!(taken.call().unwrap().status(), 404);
+    let head = net::agent().head("https://kit-api.example/v2/nothing").call();
+    assert!(matches!(head, Err(ureq::Error::StatusCode(404))), "{head:?}");
+}
+
+/// A request held at the fake's gate is answered once let go, as a slow
+/// site answers.
+#[test]
+fn a_request_held_at_the_fakes_gate_is_answered_once_let_go() {
+    let net = Net::new();
+    let gate = Gate::new();
+    net.serves("https://kit-slow.example/", "late").holds("https://kit-slow.example/", &gate);
+    let asking = std::thread::spawn(|| net::get_bytes("https://kit-slow.example/x", 100, &never()).unwrap());
+    gate.reached();
+    assert!(!asking.is_finished(), "answered while held");
+    gate.open();
+    assert_eq!(asking.join().unwrap(), b"late");
+}
+
+fn a_video(platform: &str, id: &str, url: &str, duration: f64) -> fetch::VodInfo {
+    fetch::VodInfo {
+        platform: platform.into(),
+        platform_id: id.into(),
+        url: url.into(),
+        title: "t".into(),
+        channel: None,
+        channel_login: None,
+        channel_url: None,
+        duration: Some(duration),
+        thumbnail: None,
+        published: None,
+        started_at: None,
+    }
+}
+
+/// The fake yt-dlp downloads a YouTube video's chat replay as yt-dlp does,
+/// a line at a time, read by the chat's fetch as it comes; a video it
+/// serves none of has none (`chat::fetch` answers false).
+#[test]
+fn a_fake_yt_dlp_downloads_a_chat_replay_as_yt_dlp_does() {
+    let dir = TempDir::new("kit-yt-dlp-chat");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    let lines = vec![yt_dlp::chat_line(10.0, "@ada", "hello"), yt_dlp::chat_line(20.5, "@bo", "o7")];
+    fake.serves_chat(url, lines);
+    let yt_dlp = tools::YtDlp { path: fake.path().into(), js_runtime: None };
+    let mut store = crate::chat::MemoryChat::default();
+    let video = a_video("youtube", "noa29qsTc4g", url, 60.0);
+    assert!(crate::chat::fetch(&video, Some(&yt_dlp), &dir.join("chat-1"), &mut store, &never(), |_| {}).unwrap());
+    let said: Vec<(f64, String)> = store.messages.iter().map(|m| (m.time, m.text())).collect();
+    assert_eq!(said, [(10.0, "hello".to_string()), (20.5, "o7".to_string())]);
+    let other = a_video("youtube", "aaaaaaaaaaa", "https://www.youtube.com/watch?v=aaaaaaaaaaa", 60.0);
+    let mut none = crate::chat::MemoryChat::default();
+    assert!(!crate::chat::fetch(&other, Some(&yt_dlp), &dir.join("chat-2"), &mut none, &never(), |_| {}).unwrap());
+    assert_eq!(std::fs::read_dir(&*dir).unwrap().count(), 1, "nothing left but the fake's folder");
+}
+
+/// Twitch's API as the fake answers it has a VOD's chat (`Net::twitch_chat`),
+/// as the chat's fetch reads it, each test's VOD its own.
+#[test]
+fn the_fake_twitch_api_has_a_vods_chat() {
+    let net = Net::new();
+    net.twitch_chat("1000000101", &[(10.0, "ada", "hello"), (30.0, "bo", "o7")]);
+    net.twitch_chat("1000000102", &[(5.0, "cy", "someone else's")]);
+    let mut store = crate::chat::MemoryChat::default();
+    let video = a_video("twitch", "v1000000101", "https://www.twitch.tv/videos/1000000101", 60.0);
+    let dir = TempDir::new("kit-twitch-chat");
+    assert!(crate::chat::fetch(&video, None, &dir.join("chat-1"), &mut store, &never(), |_| {}).unwrap());
+    let said: Vec<(f64, &str, String)> = store.messages.iter().map(|m| (m.time, m.author.as_str(), m.text())).collect();
+    assert_eq!(said, [(10.0, "ada", "hello".to_string()), (30.0, "bo", "o7".to_string())]);
+}

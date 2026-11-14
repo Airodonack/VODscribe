@@ -1061,18 +1061,16 @@ fn fetch_youtube(
         let _ = fs::remove_file(&part);
     };
     remove();
-    let mut child = yt_dlp
-        .command()
-        .args(["--skip-download", "--write-subs", "--sub-langs", "live_chat", "--no-playlist", "--no-warnings", "-o"])
+    let mut cmd = yt_dlp.command();
+    cmd.args(["--skip-download", "--write-subs", "--sub-langs", "live_chat", "--no-playlist", "--no-warnings", "-o"])
         .arg(stem)
         .arg("--")
         .arg(&info.url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start yt-dlp")?;
-    let _tracked = crate::tools::track(&child);
+        .stderr(Stdio::piped());
+    let mut child = crate::tools::spawn(&mut cmd).context("start yt-dlp")?;
+    let _tracked = child.track();
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let stderr = crate::tools::send_lines(child.stderr.take().unwrap(), tx);
     let mut log = Vec::new();
@@ -1103,7 +1101,7 @@ fn fetch_youtube(
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
             if cancel.load(Ordering::Relaxed) {
-                crate::tools::kill_tree(&mut child);
+                child.kill_tree();
                 return Err(crate::Canceled.into());
             }
             read(&mut tail, false)?;
