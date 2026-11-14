@@ -51,6 +51,8 @@ struct Plan {
     still_hold: Option<Gate>,
     /// A file's details wait at this gate, the file read.
     details_hold: Option<Gate>,
+    /// A decode for the player waits at this gate before its first frame.
+    decode_hold: Option<Gate>,
 }
 
 impl Ffmpeg {
@@ -120,6 +122,14 @@ impl Ffmpeg {
     /// until `gate` opens, or the app stops it: a probe of a slow disk.
     pub fn holds_details(&self, gate: &Gate) {
         self.plan.lock().unwrap().details_hold = Some(gate.clone());
+    }
+
+    /// Each decode for the player it's asked for from now (its playing, a
+    /// preview's) waits, the file open, before its first frame, until
+    /// `gate` opens, or the player stops it: a long run of frames to
+    /// decode before the one asked for.
+    pub fn holds_decodes(&self, gate: &Gate) {
+        self.plan.lock().unwrap().decode_hold = Some(gate.clone());
     }
 
     /// From now it works as it should: no failure, hold or missing encoder.
@@ -237,6 +247,13 @@ fn answer(run: &mut Run, plan: &Plan) -> i32 {
 
     // Decoded, for the player (decode.rs) and the storyboards.
     let to_pipe = last == "pipe:1";
+    if let Some(gate) = &plan.decode_hold
+        && to_pipe
+        && matches!(run.after("-f").as_deref(), Some("rawvideo" | "s16le"))
+        && !run.hold(gate)
+    {
+        return 255;
+    }
     match run.after("-f").as_deref() {
         Some("rawvideo") if to_pipe && picture => return decode_video(run, first, inputs[0].seek),
         Some("s16le") if to_pipe && sound => return decode_sound(run, first, inputs[0].seek),

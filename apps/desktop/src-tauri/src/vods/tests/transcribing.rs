@@ -13,131 +13,11 @@ use vodscribe_core::testkit::{Gate, eventually, said};
 use super::*;
 use crate::testkit::TestApp;
 
-/// The app with the transcription worker it runs faked and its model
-/// installed (`TestApp::worker`), so its queue transcribes what's asked:
-/// each file says what `hears` says.
-struct Transcribing {
-    app: TestApp,
-}
-
-impl std::ops::Deref for Transcribing {
-    type Target = TestApp;
-    fn deref(&self) -> &TestApp {
-        &self.app
-    }
-}
-
-fn transcribing() -> Transcribing {
-    let app = TestApp::new();
-    app.worker();
-    Transcribing { app }
-}
-
-/// What's said, as (second, text): `(10.0, "The Eagle has landed.")`.
-type Said<'a> = &'a [(f64, &'a str)];
-
-impl Transcribing {
-    /// From now every file the worker is given says `words`, at the VOD's
-    /// own seconds.
-    fn hears(&self, words: Said) {
-        self.worker().hears(words.iter().flat_map(|(at, text)| said(*at, text)).collect());
-    }
-
-    /// A file on this computer, `minutes` long, added; it says what the
-    /// worker hears.
-    fn file(&self, name: &str, minutes: f64) -> i64 {
-        self.add_video_file(name, minutes * 60.0).id
-    }
-
-    /// Transcribe pressed for `start`..`end` of VOD `vod` (`end` None: to
-    /// its end), as the page asks (api.ts `transcribeStretch`): the request
-    /// the command answers.
-    fn ask(&self, vod: i64, start: f64, end: Option<f64>) -> Result<Value, Value> {
-        self.invoke("transcribe_stretch", json!({ "vodId": vod, "start": start, "end": end }))
-    }
-
-    /// Command `cmd` (pause_vod, cancel_vod, cancel_stretch, …) on `id`, as
-    /// the page calls it.
-    fn on(&self, cmd: &str, id: i64) {
-        self.invoke(cmd, json!({ "id": id })).unwrap();
-    }
-
-    /// VOD `id` as the library has it.
-    fn vod(&self, id: i64) -> Vod {
-        self.db().vod(id).unwrap().unwrap()
-    }
-
-    /// VOD `id` once nothing of it waits or runs: transcribed, paused,
-    /// stopped or failed.
-    fn settled(&self, id: i64) -> Vod {
-        eventually(&format!("VOD {id} settled"), || !busy(self.vod(id).status));
-        self.vod(id)
-    }
-
-    /// VOD `id`'s lines, as (start, text).
-    fn lines(&self, id: i64) -> Vec<(f64, String)> {
-        self.db().lines(id).unwrap().into_iter().map(|l| (l.start, l.text)).collect()
-    }
-
-    /// VOD `id`'s stretches as the transcript gets them (`transcript_stretches`):
-    /// (start, end, status).
-    fn stretches(&self, id: i64) -> Vec<(f64, Option<f64>, Status)> {
-        let listed = self.invoke("transcript_stretches", json!({ "vodId": id })).unwrap();
-        listed
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|s| (s["start"].as_f64().unwrap(), s["end"].as_f64(), status(&s["status"])))
-            .collect()
-    }
-
-    /// VOD `id`'s requests, in the order asked.
-    fn requests(&self, id: i64) -> Vec<Stretch> {
-        self.db().requests(id).unwrap()
-    }
-
-    /// Waits till the worker transcribing VOD `id` is held at `gate`, its
-    /// first minute's lines written.
-    fn held(&self, id: i64, gate: &Gate) {
-        gate.reached();
-        eventually("its first minute written", || self.requests(id).iter().any(|s| s.reached.is_some()));
-    }
-
-    /// `start`..`end` of VOD `vod` asked for while another of its requests
-    /// is held, and, once it has its audio, waiting for the transcriber: no
-    /// stage is working on it.
-    fn waiting(&self, vod: i64, start: f64, end: f64) {
-        let id = self.ask(vod, start, Some(end)).unwrap()["id"].as_i64().unwrap();
-        eventually("it waits to be transcribed", || {
-            // The download stage marks it ready a moment before it lets go.
-            let state = self.state();
-            let (_held, running) = state.worker.hold_starts();
-            !running.contains(&id) && self.db().stretch(id).unwrap().unwrap().status == Status::Ready
-        });
-    }
-
-    /// The request of VOD `id` being transcribed, if one is.
-    fn transcribing(&self, id: i64) -> bool {
-        self.requests(id).iter().any(|s| s.status == Status::Transcribing)
-    }
-}
-
-/// A stretch's status as the page has it ("done").
-fn status(shown: &Value) -> Status {
-    use Status::*;
-    let all = [Queued, Downloading, Ready, Transcribing, Paused, Done, Error];
-    all.into_iter().find(|s| json!(s) == *shown).unwrap_or_else(|| panic!("no status {shown}"))
-}
-
 /// A fresh gate, open: for the worker to hold at from now, so it holds no more.
 fn open_gate() -> Gate {
     let gate = Gate::new();
     gate.open();
     gate
-}
-
-fn lines(said: Said) -> Vec<(f64, String)> {
-    said.iter().map(|(at, text)| (*at, text.to_string())).collect()
 }
 
 /// 0.6.0: "Adding a VOD doesn't transcribe it."; e2e vod-actions.mjs's
@@ -278,7 +158,7 @@ fn to_the_end_is_asked_for_with_no_end() {
 /// VOD `vod`, ten minutes, all of it asked for, saying a line in its first
 /// minute and one at 5:00; the worker held at `gate` once it has written
 /// the first minute.
-fn held_from_start(app: &Transcribing, vod: i64, gate: &Gate) -> i64 {
+fn held_from_start(app: &TestApp, vod: i64, gate: &Gate) -> i64 {
     app.hears(&[(10.0, "The Eagle has landed."), (300.0, "Said later on.")]);
     app.worker().holds(gate);
     app.ask(vod, 0.0, None).unwrap();
@@ -287,7 +167,7 @@ fn held_from_start(app: &Transcribing, vod: i64, gate: &Gate) -> i64 {
 }
 
 /// `held_from_start`, of a site's VOD, its whole audio downloaded for it.
-fn held_site_vod(app: &Transcribing, gate: &Gate) -> i64 {
+fn held_site_vod(app: &TestApp, gate: &Gate) -> i64 {
     held_from_start(app, app.add_site_vod("youtube", "noa29qsTc4g", "Day 3", 600.0).id, gate)
 }
 
@@ -473,8 +353,9 @@ fn a_pause_leaves_failed_requests_alone_their_errors_kept() {
     assert_eq!(requests[0].error, failed.error, "its error went");
 }
 
-/// A VOD and a request of it, asked for with nothing started: for the
-/// commands that take the queue (`took_the_library_first`).
+/// A VOD and a request of it, asked for and waiting for the transcriber,
+/// which isn't installed: for the commands that take the queue
+/// (`took_the_library_first`).
 fn one_asked() -> (TestApp, i64, i64) {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 600.0).id;
@@ -484,6 +365,7 @@ fn one_asked() -> (TestApp, i64, i64) {
         let asked = app.invoke("transcribe_stretch", json!({ "vodId": vod, "start": 0.0, "end": null }));
         asked.unwrap()["id"].as_i64().unwrap()
     };
+    app.ready(request);
     (app, vod, request)
 }
 

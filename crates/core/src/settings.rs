@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -433,18 +433,8 @@ fn set_aside(path: &Path, read: Option<&[u8]>) -> Result<Option<PathBuf>> {
     if read.is_some_and(|read| fs::read(path).ok().as_deref() != Some(read)) || !path.exists() {
         return Ok(None);
     }
-    let date = &crate::db::utc_time(crate::db::now() as f64)[..10];
-    let aside = (1..)
-        .map(|n| {
-            let name = if n == 1 {
-                format!("settings-broken-{date}.json")
-            } else {
-                format!("settings-broken-{date}-{n}.json")
-            };
-            path.with_file_name(name)
-        })
-        .find(|aside| !aside.exists())
-        .context("no free name")?;
+    let aside =
+        path.with_file_name(crate::db::broken_name("settings", ".json", |name| !path.with_file_name(name).exists())?);
     fs::rename(path, &aside)?;
     lock(&ASIDE).insert(path.to_path_buf(), aside.clone());
     Ok(Some(aside))

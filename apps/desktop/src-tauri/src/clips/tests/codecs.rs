@@ -201,15 +201,6 @@ fn an_edit_whose_only_video_is_a_hole_is_made_as_sound_without_the_picture_s_enc
     assert!(after.file_path.is_some_and(|f| f.ends_with(".m4a")), "sound alone");
 }
 
-/// An edit of VOD `vod_id`'s 0:05–0:15: Delete video keeps that stretch as
-/// a video of its own first (`realize`).
-fn in_an_edit(app: &TestApp, vod_id: i64) -> i64 {
-    let db = app.db();
-    let edit = db.add_edit("e").unwrap().id;
-    db.add_piece(edit, vod_id, (5.0, 15.0), "a", None).unwrap();
-    edit
-}
-
 /// The value after `flag` in the ffmpeg run that encoded with `encoder`.
 fn after(app: &TestApp, encoder: &str, flag: &str) -> Option<String> {
     let runs = app.ffmpeg.runs();
@@ -220,7 +211,7 @@ fn after(app: &TestApp, encoder: &str, flag: &str) -> Option<String> {
 /// Remove and delete the video on a VOD an edit uses, then the file the
 /// edit's stretch was kept in (`realize`).
 fn delete_kept(app: &TestApp, vod_id: i64) -> String {
-    let edit = in_an_edit(app, vod_id);
+    let edit = app.edit_of(&[(vod_id, 5.0, 15.0)]);
     let answer = app.invoke("delete_vod", json!({ "id": vod_id, "deleteVideo": true })).unwrap();
     assert_eq!(answer, Value::Null, "the delete refused");
     let kept = app.db().piece_rows(edit).unwrap()[0].vod_id;
@@ -276,7 +267,7 @@ fn without_h264_or_the_chosen_codec_delete_video_refuses_saying_which() {
     app.ffmpeg.lacks("libx265");
     clips_are(&app, ClipCodec::H265);
     let vod = app.add_video_file("Day 3.mp4", 60.0);
-    in_an_edit(&app, vod.id);
+    app.edit_of(&[(vod.id, 5.0, 15.0)]);
     let answer = app.invoke("delete_vod", json!({ "id": vod.id, "deleteVideo": true })).unwrap();
     assert_eq!(answer, json!(NO_H265));
     assert!(app.db().vod(vod.id).unwrap().is_some(), "the VOD kept");

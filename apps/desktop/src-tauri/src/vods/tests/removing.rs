@@ -56,13 +56,11 @@ fn listed(app: &TestApp) -> Vec<i64> {
     vods.as_array().unwrap().iter().map(|v| v["id"].as_i64().unwrap()).collect()
 }
 
-/// An edit holding `start`..`end` seconds of VOD `vod_id`, made as the page
-/// makes one: the edit's id and its piece's.
+/// An edit holding `start`..`end` seconds of VOD `vod_id`
+/// (`TestApp::edit_of`): the edit's id and its piece's.
 fn an_edit(app: &TestApp, vod_id: i64, start: f64, end: f64) -> (i64, i64) {
-    let edit = app.invoke("create_edit", json!({})).unwrap()["id"].as_i64().unwrap();
-    let piece = json!({ "editId": edit, "vodId": vod_id, "start": start, "end": end });
-    let view = app.invoke("add_range_to_edit", piece).unwrap();
-    (edit, view["pieces"][0]["id"].as_i64().unwrap())
+    let edit = app.edit_of(&[(vod_id, start, end)]);
+    (edit, pieces(app, edit)[0]["id"].as_i64().unwrap())
 }
 
 /// Edit `edit`'s pieces as its view shows them.
@@ -418,8 +416,7 @@ fn deleting_a_vods_video_while_its_transcription_waits_cancels_it_keeping_its_li
     let vod = a_site_vod(&app);
     keep_video(&app, vod.id);
     let file = app.db().playable_path(vod.id).unwrap().unwrap();
-    let asked = app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
-    let request = asked["id"].as_i64().unwrap();
+    let request = app.asked(vod.id, 0.0, None);
     // Its audio is the kept video: it's ready at once, and waits for the
     // transcriber, which no test installs.
     eventually("the request ready", || app.db().stretch(request).unwrap().unwrap().status == Status::Ready);
@@ -525,93 +522,25 @@ fn a_removed_vods_undo_history_goes_with_it() {
     assert_eq!(undone, Ok(Value::Null));
 }
 
-/// The app with its transcription worker faked (`TestApp::worker`): each
-/// file says what `hears` says.
-fn on_the_worker() -> TestApp {
-    let app = TestApp::new();
-    app.worker();
-    app
-}
-
-/// From now every file the worker is given says `said`, as (second, text).
-fn hears(app: &TestApp, said: &[(f64, &str)]) {
-    app.worker().hears(said.iter().flat_map(|(at, text)| vodscribe_core::testkit::said(*at, text)).collect());
-}
-
-/// A file on this computer, `minutes` long, added: its VOD's id.
-fn a_file(app: &TestApp, name: &str, minutes: f64) -> i64 {
-    app.add_video_file(name, minutes * 60.0).id
-}
-
-/// Transcribe pressed for `start`..`end` of VOD `vod`: the request's id.
-fn ask(app: &TestApp, vod: i64, start: f64, end: Option<f64>) -> i64 {
-    let asked = app.invoke("transcribe_stretch", json!({ "vodId": vod, "start": start, "end": end })).unwrap();
-    asked["id"].as_i64().unwrap()
-}
-
-/// VOD `id` once nothing of it waits or runs.
-fn settled(app: &TestApp, id: i64) -> Vod {
-    let vod = || app.db().vod(id).unwrap().unwrap();
-    eventually(&format!("VOD {id} settled"), || !busy(vod().status));
-    vod()
-}
-
-/// VOD `id`'s lines, as (start, text).
-fn lines_of(app: &TestApp, id: i64) -> Vec<(f64, String)> {
-    app.db().lines(id).unwrap().into_iter().map(|l| (l.start, l.text)).collect()
-}
-
-fn said_lines(said: &[(f64, &str)]) -> Vec<(f64, String)> {
-    said.iter().map(|(at, text)| (*at, text.to_string())).collect()
-}
-
-/// VOD `id`'s stretches, done and asked for, in time order: (start, end, status).
-fn stretches_of(app: &TestApp, id: i64) -> Vec<(f64, Option<f64>, Status)> {
-    app.db().stretches(id).unwrap().into_iter().map(|s| (s.start, s.end, s.status)).collect()
-}
-
-/// VOD `id`'s requests, in the order asked.
-fn requests_of(app: &TestApp, id: i64) -> Vec<Stretch> {
-    app.db().requests(id).unwrap()
-}
-
-/// Waits till the worker transcribing VOD `id` is held at `gate`, its
-/// first minute's lines written.
-fn held(app: &TestApp, id: i64, gate: &Gate) {
-    gate.reached();
-    eventually("its first minute written", || requests_of(app, id).iter().any(|s| s.reached.is_some()));
-}
-
-/// `start`..`end` of VOD `vod` asked for while another of its requests is
-/// held, once it waits for the transcriber with no stage working on it.
-fn waiting(app: &TestApp, vod: i64, start: f64, end: f64) {
-    let id = ask(app, vod, start, Some(end));
-    eventually("it waits to be transcribed", || {
-        let state = app.state();
-        let (_held, running) = state.worker.hold_starts();
-        !running.contains(&id) && app.db().stretch(id).unwrap().unwrap().status == Status::Ready
-    });
-}
-
 /// A removed VOD nothing uses has its transcription canceled, the request
 /// running and the one waiting, and is erased (sections-074.md, decided
 /// 2026-11-11 (owner): "a VOD nothing uses has all cancelled, then is
 /// erased").
 #[test]
 fn a_removed_vod_nothing_uses_has_its_transcription_canceled_then_is_erased() {
-    let app = on_the_worker();
-    hears(&app, &[(10.0, "The Eagle has landed.")]);
-    let vod = a_file(&app, "Ten minutes.mp4", 10.0);
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed.")]);
+    let vod = app.file("Ten minutes.mp4", 10.0);
     let gate = Gate::new();
     app.worker().holds(&gate);
-    ask(&app, vod, 0.0, Some(180.0));
-    held(&app, vod, &gate);
-    waiting(&app, vod, 200.0, 260.0);
+    app.asked(vod, 0.0, Some(180.0));
+    app.held(vod, &gate);
+    app.waiting(vod, 200.0, 260.0);
     remove(&app, vod);
     app.erasures_done();
     assert!(app.db().is_gone(vod).unwrap(), "not erased");
     assert_eq!(app.db().stretches(vod).unwrap(), [], "its transcription is still there");
-    assert_eq!(lines_of(&app, vod), []);
+    assert_eq!(app.lines(vod), []);
 }
 
 /// Settings › Delete all videos deletes the video of a VOD whose
@@ -625,8 +554,7 @@ fn delete_all_videos_cancels_the_transcriptions_reading_them_keeping_their_lines
     let vod = a_site_vod(&app);
     keep_video(&app, vod.id);
     let file = app.db().playable_path(vod.id).unwrap().unwrap();
-    let asked = app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
-    let request = asked["id"].as_i64().unwrap();
+    let request = app.asked(vod.id, 0.0, None);
     // Its audio is the kept video: it's ready at once, and waits for the
     // transcriber, which no test installs.
     eventually("the request ready", || app.db().stretch(request).unwrap().unwrap().status == Status::Ready);
@@ -650,15 +578,11 @@ fn delete_all_videos_cancels_the_transcriptions_reading_them_keeping_their_lines
 #[test]
 fn a_vod_whose_requests_cant_be_ended_is_still_removed_and_erased() {
     let app = TestApp::new();
-    let vod = a_file(&app, "Ten minutes.mp4", 10.0);
-    let request = ask(&app, vod, 0.0, None);
+    let vod = app.file("Ten minutes.mp4", 10.0);
+    let request = app.asked(vod, 0.0, None);
     // Its audio is the file: it's ready at once, and waits for the
     // transcriber, which no test installs, with no stage holding it.
-    eventually("the request waiting", || {
-        let state = app.state();
-        let (_held, running) = state.worker.hold_starts();
-        !running.contains(&request) && app.db().stretch(request).unwrap().unwrap().status == Status::Ready
-    });
+    app.ready(request);
     let line = Segment { start: 12.0, end: 14.0, text: "The Eagle has landed".into(), words: Vec::new() };
     app.db().replace_segments(vod, request, (0.0, Some(30.0)), &[line], 30.0).unwrap();
     // Ending it keeps it done as far as it reached: a change the library
@@ -682,9 +606,9 @@ fn a_vod_whose_requests_cant_be_ended_is_still_removed_and_erased() {
 #[test]
 fn remove_takes_the_library_before_the_queue() {
     let app = TestApp::new();
-    let vod = a_file(&app, "Ten minutes.mp4", 10.0);
+    let vod = app.file("Ten minutes.mp4", 10.0);
     an_edit(&app, vod, 300.0, 360.0);
-    ask(&app, vod, 0.0, Some(100.0));
+    app.ready(app.asked(vod, 0.0, Some(100.0)));
     let remove =
         move |app: AppHandle| tauri::async_runtime::block_on(delete_vod(app.clone(), app.state(), vod, None, None));
     let (first, removed) = took_the_library_first(&app, remove);
@@ -715,7 +639,7 @@ fn delete_all_videos_takes_the_library_before_the_queue() {
     let app = TestApp::new();
     let vod = a_site_vod(&app);
     keep_video(&app, vod.id);
-    let request = ask(&app, vod.id, 0.0, None);
+    let request = app.asked(vod.id, 0.0, None);
     eventually("the request ready", || app.db().stretch(request).unwrap().unwrap().status == Status::Ready);
     let delete = |app: AppHandle| {
         let state = app.state::<AppState>();
@@ -737,20 +661,20 @@ const ENDS: &str = "a deleted source VOD should end a transcription that was sta
 /// from it, ends, whatever uses it").
 #[test]
 fn removing_a_vod_an_edit_uses_ends_its_transcription_keeping_its_lines() {
-    let app = on_the_worker();
-    hears(&app, &[(10.0, "The Eagle has landed."), (330.0, "Said in the edit."), (500.0, "Said after it.")]);
-    let vod = a_file(&app, "Ten minutes.mp4", 10.0);
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed."), (330.0, "Said in the edit."), (500.0, "Said after it.")]);
+    let vod = app.file("Ten minutes.mp4", 10.0);
     an_edit(&app, vod, 300.0, 360.0);
     let gate = Gate::new();
     app.worker().holds(&gate);
-    ask(&app, vod, 0.0, Some(180.0));
-    held(&app, vod, &gate);
-    waiting(&app, vod, 300.0, 360.0);
+    app.asked(vod, 0.0, Some(180.0));
+    app.held(vod, &gate);
+    app.waiting(vod, 300.0, 360.0);
     remove(&app, vod);
-    settled(&app, vod);
-    assert_eq!(requests_of(&app, vod), [], "{ENDS}");
-    assert_eq!(lines_of(&app, vod), said_lines(&[(10.0, "The Eagle has landed.")]));
-    let [(start, end, done)] = stretches_of(&app, vod).try_into().unwrap();
+    app.settled(vod);
+    assert_eq!(app.requests(vod), [], "{ENDS}");
+    assert_eq!(app.lines(vod), lines(&[(10.0, "The Eagle has landed.")]));
+    let [(start, end, done)] = app.stretches(vod).try_into().unwrap();
     assert_eq!((start, done), (0.0, Status::Done), "done as far as it reached");
     assert!(end.is_some_and(|end| end < 100.0), "done to {end:?}");
 }
@@ -762,26 +686,26 @@ fn removing_a_vod_an_edit_uses_ends_its_transcription_keeping_its_lines() {
 /// again").
 #[test]
 fn a_vod_added_back_shows_what_its_transcription_had_written_and_nothing_asked() {
-    let app = on_the_worker();
-    hears(&app, &[(10.0, "The Eagle has landed."), (330.0, "Said in the edit.")]);
-    let vod = a_file(&app, "Ten minutes.mp4", 10.0);
+    let app = transcribing();
+    app.hears(&[(10.0, "The Eagle has landed."), (330.0, "Said in the edit.")]);
+    let vod = app.file("Ten minutes.mp4", 10.0);
     an_edit(&app, vod, 300.0, 360.0);
     let gate = Gate::new();
     app.worker().holds(&gate);
-    ask(&app, vod, 0.0, None);
-    held(&app, vod, &gate);
+    app.asked(vod, 0.0, None);
+    app.held(vod, &gate);
     remove(&app, vod);
-    settled(&app, vod);
-    let kept = stretches_of(&app, vod);
+    app.settled(vod);
+    let kept = app.stretches(vod);
     let file = app.db().vod(vod).unwrap().unwrap().source_path.unwrap();
     let added = app.invoke("add_files", json!({ "paths": [file] })).unwrap();
     assert_eq!(added["vods"][0]["id"], json!(vod), "not the VOD removed: {added}");
     assert_eq!(listed(&app), [vod]);
     let shown = app.db().vod(vod).unwrap().unwrap();
     assert_eq!((shown.status, shown.transcribed), (Status::None, vodscribe_core::stretches::Transcribed::Some));
-    assert_eq!(stretches_of(&app, vod), kept);
+    assert_eq!(app.stretches(vod), kept);
     assert!(kept.iter().all(|s| s.2 == Status::Done), "{kept:?}");
-    assert_eq!(lines_of(&app, vod), said_lines(&[(10.0, "The Eagle has landed.")]));
+    assert_eq!(app.lines(vod), lines(&[(10.0, "The Eagle has landed.")]));
 }
 
 /// The requests an older build left on a VOD it took out of the list, one
@@ -792,22 +716,22 @@ fn a_vod_added_back_shows_what_its_transcription_had_written_and_nothing_asked()
 #[test]
 fn requests_an_older_build_left_on_a_removed_vod_are_ended_at_the_next_start() {
     let app = TestApp::new();
-    let vod = a_file(&app, "Ten minutes.mp4", 10.0);
+    let vod = app.file("Ten minutes.mp4", 10.0);
     an_edit(&app, vod, 300.0, 360.0);
     {
         // As an older build left it: out of the list, a request paused
         // after its first half minute and another waiting.
         let state = app.state();
         let (_held, _) = state.worker.hold_starts();
-        let paused = ask(&app, vod, 0.0, Some(120.0));
+        let paused = app.asked(vod, 0.0, Some(120.0));
         let line = Segment { start: 12.0, end: 14.0, text: "The Eagle has landed".into(), words: Vec::new() };
         app.db().replace_segments(vod, paused, (0.0, Some(30.0)), &[line], 30.0).unwrap();
         app.db().set_stretch_status(paused, Status::Paused, 0.25, None).unwrap();
-        ask(&app, vod, 300.0, Some(360.0));
+        app.asked(vod, 300.0, Some(360.0));
         app.db().remove_entry(vod).unwrap();
     }
     let app = TestApp::on(app.quit());
-    assert_eq!(requests_of(&app, vod), [], "left asked for");
-    assert_eq!(stretches_of(&app, vod), [(0.0, Some(30.0), Status::Done)]);
+    assert_eq!(app.requests(vod), [], "left asked for");
+    assert_eq!(app.stretches(vod), [(0.0, Some(30.0), Status::Done)]);
     assert_eq!(transcript(&app, vod), ["The Eagle has landed"]);
 }

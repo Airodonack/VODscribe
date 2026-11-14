@@ -2,6 +2,7 @@
 //! upgrade itself: the copy kept before it, a library from a newer version.
 
 use super::*;
+use crate::testkit::format_of;
 
 /// A library at `path` as the VODscribe whose newest migration was
 /// `version` left it (`testkit::at_version`), with `rows` put in as that
@@ -34,11 +35,6 @@ fn copies_beside(path: &Path) -> Vec<String> {
         .collect();
     copies.sort();
     copies
-}
-
-/// The format number of the library file at `path`.
-fn format_of(path: &Path) -> i32 {
-    Connection::open(path).unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
 }
 
 /// The copy at `copy` put in a library's place in a folder of its own, as
@@ -129,7 +125,7 @@ fn a_copy_reads_as_the_version_it_was() {
     older(&path, 1, TRANSCRIBED);
     drop(Db::open(&path).unwrap());
     let copy = dir.join("library-v1.sqlite");
-    assert_eq!(format_of(&copy), 1);
+    assert_eq!(format_of(&Connection::open(&copy).unwrap()), 1);
     let (_back, db) = put_back(&copy);
     let vod = db.vods().unwrap().remove(0);
     assert_eq!(vod.info.title, "Day 3");
@@ -149,7 +145,7 @@ fn no_copy_no_upgrade() {
     let copy = dir.join("library-v1.sqlite");
     std::fs::create_dir(&copy).unwrap();
     assert!(Db::open(&path).is_err());
-    assert_eq!(format_of(&path), 1, "not upgraded");
+    assert_eq!(format_of(&Connection::open(&path).unwrap()), 1, "not upgraded");
     // Its place free again, the library upgrades with what it had.
     std::fs::remove_dir(&copy).unwrap();
     let db = Db::open(&path).unwrap();
@@ -176,7 +172,7 @@ fn an_upgrade_is_all_or_nothing() {
              VALUES (1, 10.0, 20.0, 'Lunch', 0, 0), (2, 0.0, 5.0, 'Of a VOD gone', 1, 0);",
     );
     assert!(Db::open(&path).is_err(), "the upgrade refused the clip");
-    assert_eq!(format_of(&path), 17, "not upgraded");
+    assert_eq!(format_of(&Connection::open(&path).unwrap()), 17, "not upgraded");
     // That clip gone, the library upgrades as if the first try hadn't run.
     Connection::open(&path).unwrap().execute("DELETE FROM clips WHERE vod_id = 2", []).unwrap();
     let db = Db::open(&path).unwrap();

@@ -34,7 +34,7 @@ pub mod yt_dlp;
 mod tests;
 
 pub use ffmpeg::Ffmpeg;
-pub use library::{Library, Released, at_version, back_to, newer, said};
+pub use library::{Library, Released, at_version, back_to, format_of, newer, old_column, said};
 pub use media::Media;
 pub use net::{Net, Reply, Request};
 pub use nvidia_smi::NvidiaSmi;

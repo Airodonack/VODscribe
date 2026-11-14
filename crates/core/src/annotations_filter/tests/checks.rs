@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::annotations::tests::file;
+use crate::testkit::tools::{At, hold_at};
+use crate::testkit::{Gate, eventually};
 
 struct Library {
     db: Mutex<Db>,
@@ -280,13 +282,16 @@ fn a_check_waiting_for_another_asks_nothing_once_asking_is_turned_off() {
     }));
     let (first, second) = std::thread::scope(|s| {
         let first = s.spawn(|| lib.check(&base).0);
-        while !asked.lock().unwrap().iter().any(|l| l.starts_with("HEAD")) {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        // The second has found asking on, and waits for the first.
+        eventually("the first check asks about \"there\"", || {
+            asked.lock().unwrap().iter().any(|l| l.starts_with("HEAD"))
+        });
+        // The second has found asking on, and goes to wait for the first.
+        let turn = Gate::new();
+        hold_at(At::CheckTurn, &lib.settings(), &turn);
         let second = s.spawn(|| lib.check(&base).0);
-        std::thread::sleep(Duration::from_millis(300));
+        turn.reached();
         lib.ask(false);
+        turn.open();
         release.send(()).unwrap();
         (first.join().unwrap(), second.join().unwrap())
     });
@@ -358,8 +363,8 @@ fn a_set_that_says_yes_to_everything_is_refused() {
 }
 
 /// Asking turned off during the pause between two VODs' requests: the
-/// second isn't asked about. (The switch is turned off a while after the
-/// first request, well inside the pause, so the order is certain.)
+/// second isn't asked about. (The check is held at the pause's end, and
+/// the switch turned off then, so the order is certain.)
 #[test]
 fn asking_turned_off_during_the_pause_asks_nothing_more() {
     let lib = Library::new();
@@ -367,13 +372,14 @@ fn asking_turned_off_during_the_pause_asks_nothing_more() {
     lib.add("there", None);
     lib.add("newer", Some(&format!("\"{MD5_A}\"")));
     let (base, asked) = file_host();
-    let settings = lib.settings();
-    let checked = check_at(&base, &lib.db, &lib.settings(), &lib.cache(), Duration::from_millis(600), |_| {
-        let settings = settings.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(200));
-            Settings { ask_for_annotations: false, ..Settings::default() }.save(&settings).unwrap();
-        });
+    let pause = Gate::new();
+    hold_at(At::CheckPause, &lib.settings(), &pause);
+    let checked = std::thread::scope(|s| {
+        let checking = s.spawn(|| check_at(&base, &lib.db, &lib.settings(), &lib.cache(), Duration::ZERO, |_| {}));
+        pause.reached();
+        lib.ask(false);
+        pause.open();
+        checking.join().unwrap()
     });
     assert_eq!(checked.unwrap().confirmed, 1);
     assert_eq!(

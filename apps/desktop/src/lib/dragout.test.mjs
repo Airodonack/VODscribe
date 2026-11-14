@@ -1060,7 +1060,7 @@ test("a clip downloaded into the clip bar instead says so", () => {
 /**
  * A drag's own files coming back are not added to the library (0.4.1 Fixes:
  * "A clip dragged out of the window and back in couldn't be dropped on an
- * edit or the clip bar"; dragout.ts:77: the files, or the names they're
+ * edit or the clip bar"; dragout.ts `isOutgoing`: the files, or the names they're
  * handed out by in the folder beside each, `Paths::clip_names`).
  */
 test("a drag's own files coming back are not added to the library", async () => {

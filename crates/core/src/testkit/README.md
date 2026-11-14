@@ -67,13 +67,15 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `folder.holds_worker_start(&gate)`, before `TestApp::on(folder)`: that start's transcription waits at the gate while the other queues take up what was left, as on a busy start.
 - `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
 - `holds_erasures(&gate)` holds each erasure of a removed VOD between its parts, the library let go of; `holds_erasure_parts(&gate)` holds it in a part, the library still held.
-- `holds_sweeps(&gate)` holds the storyboards' sweep once it has read the library's VODs, before it goes through the storyboards, so a VOD can be added meanwhile.
+- `folder.holds_sweeps(&gate)`, before `TestApp::on(folder)`: that start's storyboards' sweep waits at the gate once it has read the library's VODs, before it goes through the storyboards, and `on` returns with it held, so a VOD can be added meanwhile.
+- `holds_gone_looks(&gate)` holds the forgetting of clips whose files went once it has looked at their files, before it takes the library.
 - `holds_plans(&gate)` holds each plan of an edit the page asks for once it's worked out, before it's played.
 - `holds_searches(&gate)` holds each search once it's asked, before it has its connection, so a search typed after it can go first.
 - `holds_settings_reads(&gate)` holds a read of an unreadable settings file before it sets the file aside, and `holds_settings_saves(&gate)` each save before its turn.
 - Each `holds_…` takes the place of the gate it held at before: `Gate::opened()` holds no more.
 - `worker()` is the transcription worker the app runs, faked, with its model installed: `app.worker().hears(said(10.0, "The Eagle has landed"))`, and the queue transcribes what's asked. The words are at the VOD's seconds, a section downloaded for a stretch included. A start on its library again has the worker from the start, hearing nothing till told.
 - `says_as(vod.id, 12.0, "Hello", "Ada")` is a line someone says, as a VODscription names them; `add_site_vod_of(…, "Ada Plays")` a VOD on that channel.
+- `edit_of(&[(vod.id, 10.0, 20.0)])` is an edit already in the library, its pieces end to end.
 - `dragged_out(&clip)` drags a clip out and lets it go on an editor that takes the file, and gives the file it got. `erasures_done()` waits till no VOD is being erased.
 - `threads_done()` waits for the threads the app's commands start and don't wait for (an added VOD's picture asked for, the file host asked about its VODscription). The app's end waits for them too, before its state goes; a new such thread is passed to `testkit::started`.
 - `net` is the network the app reaches. Every site's and service's host is the fake's (`Net::sites`), so nothing reaches a real site, and a request nothing answers gets 404. Tell it what a site answers, as below.
@@ -94,6 +96,7 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.ffmpeg.holds_list(&gate)`: its list of encoders waits at the gate, as a slow first run does.
 - `app.ffmpeg.holds_stills(&gate)`: each still it makes (a clip's picture) waits at the gate, its input read, as ffmpeg has the file open while it decodes.
 - `app.ffmpeg.holds_details(&gate)`: each time it's asked a file's details (a probe, the player's open among them), it waits at the gate.
+- `ffmpeg.holds_decodes(&gate)`: each decode for the player (its playing, a preview's) waits at the gate before its first frame, or till the player stops it.
 - `app.ffmpeg.updated()`: its file replaced, as an update does, so the app sees a new ffmpeg at the same path.
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
 - `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is; `holds_at(0.5, &gate)` once half of it is in. A download is written a quarter at a time to a part file beside its file till it's whole, as yt-dlp's is: one stopped or held partway leaves it, and the next carries on from it. A section's progress is gauged from its part file too, against its bitrate (`tbr` in the details).
@@ -182,7 +185,7 @@ app.net.replies("https://gql.twitch.tv/gql", |asked| {
 });
 ```
 
-Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file, and `tools::path_for(&bin, &[dir])` for the PATH the system's programs are found on (`NvidiaSmi::in_dir(&dir)` there).
+Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file (a settings file's read or save, or a check for VODscriptions waiting its turn, `CheckTurn`, or at the end of its pause, `CheckPause`), and `tools::path_for(&bin, &[dir])` for the PATH the system's programs are found on (`NvidiaSmi::in_dir(&dir)` there).
 
 ## Older libraries
 
@@ -197,6 +200,7 @@ let db = Db::open(&path).unwrap(); // upgraded from 29
 ```
 
 - `at_version(path, n)` makes a library at format `n`, for rows written as that version wrote them.
+- `format_of(&conn)` is the format a library is at, and `old_column(&paths, table, column, id)` a column read as an older version reads it.
 - `back_to(path, n)` takes a library this version made, with rows put in through `Db`, back to format `n`: each table's rows in the columns format `n` has, with its triggers and search index. Close the library first; its connection is at format `n`, for changing rows as that version would.
 - `newer(path, "ALTER TABLE renders DROP COLUMN encoding;")` takes a library this version made to the next format, as a newer version that changed it so would leave it: `Db::open` opens it as it is.
 - `Released::new("0.5.1")` copies the library and settings file that release left (tests/e2e/fixtures) into a folder of the test's own, as `library` and `settings`. `Released::versions()` lists the releases there. A file's path in the library keeps its placeholder, `{FIXTURES}`.

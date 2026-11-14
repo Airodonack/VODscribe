@@ -148,6 +148,14 @@ impl Folder {
     pub(crate) fn holds_worker_start(&self, gate: &Gate) {
         held().push((Held::WorkerStart, self.paths().clips(), gate.clone()));
     }
+
+    /// The next app started on it holds its storyboards' sweep
+    /// (`storyboards::sweep`) at `gate` once it has read the library's
+    /// VODs, before it goes through the storyboards: `TestApp::on` returns
+    /// with the sweep held, and a VOD can be added meanwhile.
+    pub(crate) fn holds_sweeps(&self, gate: &Gate) {
+        held().push((Held::Sweep, self.paths().clips(), gate.clone()));
+    }
 }
 
 impl Drop for TestApp {
@@ -294,8 +302,12 @@ impl TestApp {
             }
             setup(&Fakes { ffmpeg: &ffmpeg });
             chats = Some(crate::open_library(app.handle(), paths.clone(), db).unwrap());
-            // The storyboards' sweep, which runs beside the start, has asked for what's left.
-            app.state::<AppState>().storyboards.swept();
+            // The storyboards' sweep, which runs beside the start, has asked
+            // for what's left, unless the test holds it (`Folder::holds_sweeps`).
+            let sweep_held = held().iter().any(|(h, dir, _)| *h == Held::Sweep && *dir == paths.clips());
+            if !sweep_held {
+                app.state::<AppState>().storyboards.swept();
+            }
         }
         let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
         TestApp {
@@ -499,13 +511,6 @@ impl TestApp {
             fakes::path_for(&self.paths.bin(), &[driver]);
             smi
         })
-    }
-
-    /// Each storyboards' sweep from now (`storyboards::sweep`, the start's)
-    /// waits at `gate` once it has read the library's VODs, before it goes
-    /// through the storyboards: a VOD can be added meanwhile.
-    pub(crate) fn holds_sweeps(&self, gate: &Gate) {
-        self.holds(Held::Sweep, gate);
     }
 
     /// `forget_gone_clips`, once it has looked at the clips' files (without
@@ -737,6 +742,17 @@ impl TestApp {
     /// `says`, by `speaker`, as an imported VODscription names who says a line.
     pub(crate) fn says_as(&self, vod_id: i64, start: f64, text: &str, speaker: &str) {
         library::says_as(&mut self.db(), vod_id, library::said(start, text), speaker);
+    }
+
+    /// An edit, "Best of", already in the library: `pieces` end to end, each
+    /// a VOD's id and the seconds of it it plays, `(vod, start, end)`. Its id.
+    pub(crate) fn edit_of(&self, pieces: &[(i64, f64, f64)]) -> i64 {
+        let db = self.db();
+        let edit = db.add_edit("Best of").unwrap().id;
+        for &(vod, start, end) in pieces {
+            db.add_piece(edit, vod, (start, end), "piece", None).unwrap();
+        }
+        edit
     }
 
     /// Clip `clip` dragged out of the window and let go on an editor that
@@ -996,7 +1012,7 @@ enum Held {
     InAPart,
     /// An edit's plan worked out, not yet played (`TestApp::holds_plans`).
     Planned,
-    /// The storyboards' sweep, the library read (`TestApp::holds_sweeps`).
+    /// The storyboards' sweep, the library read (`Folder::holds_sweeps`).
     Sweep,
     /// The worker's start (`Folder::holds_worker_start`).
     WorkerStart,
@@ -1056,7 +1072,7 @@ pub(crate) fn planned(app: &AppHandle) {
 }
 
 /// The storyboards' sweep has read the library's VODs: it waits there if
-/// its test holds sweeps (`TestApp::holds_sweeps`).
+/// its test holds sweeps (`Folder::holds_sweeps`).
 pub(crate) fn sweep_read(app: &AppHandle) {
     hold(Held::Sweep, &app.state::<AppState>().paths.clips());
 }

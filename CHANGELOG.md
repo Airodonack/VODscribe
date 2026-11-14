@@ -4,10 +4,9 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.7.4 (unreleased)
 
-- Delete video works during a transcription. The transcription stops first, keeping what's transcribed so far.
-- Removing a VOD ends its transcription. What's transcribed so far is kept, even where an edit uses it.
-- Delete all videos stops their transcriptions. What's transcribed so far is kept, as with a row's Delete video.
-- Unfinished work carries on after a restart. Video and footage downloads, edits being rendered, files from other apps and the thumbnails shown when scrubbing pick up where a quit or a crash stopped them.
+- Delete video works during a transcription. The transcription stops first, in Delete all videos too.
+- Removing a VOD ends its transcription. As with Delete video, what's transcribed so far is kept, even where an edit uses it.
+- Unfinished work resumes after a restart. Video downloads carry on where a quit or a crash stopped them, edits being rendered and the footage they need start again, and files received whole from other apps are added.
 - Fixes:
   - Marks can't go past the end. A cut, chapter or highlight placed or moved past the end of a video is refused, as one before its start already was.
   - Closing the player no longer stalls. Closing a VOD or switching to another while a timeline thumbnail loaded froze the window briefly, about a quarter second on some videos.
@@ -24,7 +23,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Files missing a format say so. A VODscription file with no format or version is refused saying it has none, not "undefined" or "null".
   - A linked folder's files stay put. VODscribe no longer takes or deletes your files at start when a folder in its library is a link to one of yours.
   - Remove says its clips are deleted. It said their files stayed in your Videos folder.
-  - Stopping a transcription could freeze VODscribe. It could happen while another VOD was being removed.
+  - Stopping a transcription no longer freezes VODscribe. It could freeze while another VOD was being removed.
 
 ## 0.7.3 — 2026-11-08
 

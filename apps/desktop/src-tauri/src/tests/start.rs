@@ -259,17 +259,11 @@ fn a_video_download_a_quit_stopped_carries_on_at_the_next_start() {
     assert_eq!(app.db().wanted_videos().unwrap(), [], "kept, and still asked for");
 }
 
-/// Whether the video queue took VOD `id` within a second: waiting, under
-/// way, or over (the page heard it).
+/// Whether the start's video queue took VOD `id`: waiting, under way, or
+/// over (the page heard it). The queue takes up what was left as it starts
+/// (`Videos::run`), before `TestApp::on` returns, so asking once tells.
 fn video_queue_took(app: &TestApp, id: i64) -> bool {
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
-    while std::time::Instant::now() < until {
-        if app.state().videos.wanted(id) || app.heard("video-progress").iter().any(|e| e["id"] == id) {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    false
+    app.state().videos.wanted(id) || app.heard("video-progress").iter().any(|e| e["id"] == id)
 }
 
 /// A video download that failed isn't started again at the next start: it
@@ -408,6 +402,48 @@ fn a_removed_vods_video_download_is_not_carried_on_at_the_next_start() {
     let app = TestApp::on(folder);
     assert!(!video_queue_took(&app, vod.id), "the download of a removed VOD was carried on");
     eventually("the removed VOD erased", || app.db().vod(vod.id).unwrap().is_none());
+}
+
+/// A gone VOD's video isn't downloaded at the next start, though it was
+/// asked for: its files went, and its pieces are holes (core db.rs
+/// `wanted_videos`: "only those in its list, and not gone"). Remove and
+/// Delete video clear the ask; this is a library where it was left.
+#[test]
+fn a_gone_vods_video_is_not_downloaded_at_the_next_start() {
+    let app = TestApp::new();
+    let vod = app.add_site_vod("youtube", "noa29qsTc4g", "Day 3", 60.0);
+    app.edit_of(&[(vod.id, 10.0, 20.0)]);
+    let folder = app.quit();
+    {
+        let db = library_of(&folder);
+        db.set_video_wanted(vod.id, Some(720)).unwrap();
+        db.set_gone(vod.id).unwrap();
+    }
+    let app = TestApp::on(folder);
+    assert!(!video_queue_took(&app, vod.id), "the video of a gone VOD was downloaded");
+}
+
+/// A clip being made when the app ended is made once at the next start, as
+/// one of the clips left unmade (core db.rs `unfinished_clips`: "Clips
+/// whose file is still to be made (or was being made when the app
+/// stopped)"), not again as an edit left rendering (core edits.rs
+/// `unfinished_renders`: "Edits left rendering"). Held as it's made again,
+/// it's the only one asked for.
+#[test]
+fn a_clip_being_made_when_the_app_ended_is_made_once_at_the_next_start() {
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let clip = app.add_clip(vod.id, "0:10", "0:20").unwrap();
+    halfway.reached();
+    let again = Gate::new();
+    let app = TestApp::on_with(app.kill(), |fakes| fakes.ffmpeg.holds_at(0.5, &again));
+    again.reached();
+    let (running, waiting) = app.state().clips.listed();
+    assert_eq!((running, waiting), (Some(clip.id), Vec::new()), "asked for twice");
+    again.open();
+    assert_eq!(app.made(clip.id).status, ClipStatus::Ready);
 }
 
 /// An edit a quit stopped rendering is rendered at the next start (owner,

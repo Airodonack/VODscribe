@@ -135,8 +135,8 @@ pub(crate) fn hold(app: &AppHandle, ids: &[i64]) {
     }
 }
 
-/// Whether clip `id` is one the cut of what was copied last took.
-fn is_cut(app: &AppHandle, id: i64) -> bool {
+/// Whether clip `id` is one the cut (Ctrl+X) of what was copied last took.
+fn held_by_cut(app: &AppHandle, id: i64) -> bool {
     app.state::<AppState>().clipboard.lock().unwrap().as_ref().is_some_and(|c| c.cut.contains(&id))
 }
 
@@ -151,13 +151,15 @@ pub(crate) fn forget(app: &AppHandle, id: i64) {
 /// Puts clip `id` back on `doc`'s bar if the cut holds it and it's the clip
 /// an undo of the cut wants, on that bar and made of `made`: the clip
 /// itself, with its file. False otherwise, for the undo to make the clip
-/// anew. The check is only a guard, now that a deleted clip's id is never
-/// given to another (`MIGRATE_V42` in core db.rs).
+/// anew. The check is only a guard: a cut holds its clips off their bar,
+/// unchanged, and an id is one clip's for good (a deleted clip's id is
+/// never given to another, `MIGRATE_V42` in core db.rs; an undo that brings
+/// a deleted clip back brings back that clip, under its own id).
 pub(crate) fn unhold(app: &AppHandle, db: &Db, doc: Doc, id: i64, made: &EditState) -> Result<bool> {
     let Some(clip) = db.clip(id)?.filter(|c| !c.shown) else { return Ok(false) };
     let wanted = crate::clips::bar_doc(&clip) == doc
         && db.edit_state(id)?.is_some_and(|s| s.items == made.items && s.marks == made.marks);
-    if !is_cut(app, id) || !wanted {
+    if !held_by_cut(app, id) || !wanted {
         return Ok(false);
     }
     db.show_clip(id)?;

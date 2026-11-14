@@ -483,10 +483,6 @@ fn schema(path: &Path) -> Vec<(String, Option<String>)> {
     stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
 }
 
-fn format_of(conn: &rusqlite::Connection) -> usize {
-    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap() as usize
-}
-
 /// A library at each format is that format, and opened it upgrades to the
 /// library a new one is.
 #[test]

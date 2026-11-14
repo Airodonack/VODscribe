@@ -155,13 +155,24 @@ fn a_transaction_that_reads_then_writes_waits_for_other_writers() {
     let (adder, worker) = (Db::open(&path).unwrap(), Db::open(&path).unwrap());
     let (vod, _) = worker.add_vod(&info("a")).unwrap();
     let stretch = worker.request(vod.id, 0.0, None).unwrap();
+    // The worker's connection says when it finds the library taken, and
+    // tries again, as its busy timeout would.
+    static WAITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    fn waits(tries: i32) -> bool {
+        WAITED.store(true, std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        tries < 5000
+    }
+    worker.conn.busy_handler(Some(waits)).unwrap();
     let mut writing = None;
     adder
         .atomically(|db| {
             db.vod(vod.id)?;
             // The worker finishes a VOD between the read and the write.
-            writing = Some(std::thread::spawn(move || worker.finish_stretch(stretch.id)));
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            let finishing = writing.insert(std::thread::spawn(move || worker.finish_stretch(stretch.id)));
+            crate::testkit::eventually("the worker waits its turn, or has written", || {
+                WAITED.load(std::sync::atomic::Ordering::SeqCst) || finishing.is_finished()
+            });
             db.add_vod(&info("b"))
         })
         .unwrap();

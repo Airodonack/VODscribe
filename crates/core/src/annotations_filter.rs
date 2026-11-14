@@ -397,6 +397,8 @@ fn check_at(
     if !may_ask(settings) {
         return Ok(checked);
     }
+    #[cfg(any(test, feature = "testkit"))]
+    crate::testkit::tools::held_at(crate::testkit::tools::At::CheckTurn, settings);
     let _one = CHECKING.lock().unwrap_or_else(|e| e.into_inner());
     // Turned off while it waited for another check: nothing is asked, not even the set.
     if !may_ask(settings) {
@@ -437,6 +439,8 @@ fn check_at(
         }
         if checked.confirmed > 0 {
             std::thread::sleep(pause);
+            #[cfg(any(test, feature = "testkit"))]
+            crate::testkit::tools::held_at(crate::testkit::tools::At::CheckPause, settings);
         }
         // Turned off while the check went on (the pause included): nothing more is asked.
         if !may_ask(settings) {

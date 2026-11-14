@@ -3,7 +3,7 @@
 //! through the library's readers (plans/sections-074.md, 1A specs 29 to 56).
 
 use super::*;
-use crate::testkit::{Released, at_version, back_to};
+use crate::testkit::{Released, at_version, back_to, format_of};
 
 /// A folder of the test's own, `name`d, and where its library file goes.
 fn library(name: &str) -> (crate::TempDir, PathBuf) {
@@ -19,11 +19,6 @@ fn library_in(name: &str) -> (crate::TempDir, crate::Paths) {
     let paths = crate::Paths::new(dir.join("lib"));
     paths.ensure().unwrap();
     (dir, paths)
-}
-
-/// The format a library is at: how many migrations it has had.
-fn format_of(conn: &Connection) -> usize {
-    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap() as usize
 }
 
 /// The library at `path` opened as the app opens it, so upgraded to this
@@ -1009,12 +1004,11 @@ fn a_library_from_before_video_heights_has_no_video_download_to_carry_on() {
     assert_eq!(db.wanted_videos().unwrap(), [(vod, 480)]);
 }
 
-/// Struck stretches become stretches taken out (V46): "Struck lines are
-/// functionally like deleted video, so the migration should really have been
-/// turning struck lines into deleted stretches (and a split)" (owner,
-/// 2026-11-13, plans/0.7.4.md "Struck stretches become removed stretches").
-/// Each spec builds a library with this version, takes it back to 0.7.3's
-/// format (45), strikes stretches of its pieces as 0.4.x did, and opens it.
+/// Struck stretches become stretches taken out (V46). Decided for 0.7.4:
+/// struck lines are like deleted video, so the upgrade turns each into a
+/// stretch taken out, its piece split there. Each spec builds a library
+/// with this version, takes it back to 0.7.3's format (43), strikes
+/// stretches of its pieces as 0.4.x did, and opens it.
 mod struck_stretches_become_splits {
     use super::*;
     use crate::edits::EditPiece;
@@ -1044,7 +1038,7 @@ mod struck_stretches_become_splits {
     }
 
     /// A library made by `build` (given VOD `edits::tests::info("x")`, 600 s long), taken
-    /// back to format 45 with the `strikes` (pieces' struck stretches, in
+    /// back to format 43 (0.7.3's) with the `strikes` (pieces' struck stretches, in
     /// seconds, from what `build` gave), then opened by this version.
     fn struck<T>(
         name: &str,
@@ -1057,7 +1051,7 @@ mod struck_stretches_become_splits {
             let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
             (vod, build(&db, vod))
         };
-        let conn = back_to(&path, 45);
+        let conn = back_to(&path, 43);
         for (piece, stretches) in strikes(&built) {
             let flicked: Vec<(i64, i64)> = stretches.iter().map(|&(a, b)| (flicks(a), flicks(b))).collect();
             let json = serde_json::to_string(&flicked).unwrap();
@@ -1300,7 +1294,7 @@ mod struck_stretches_become_splits {
             };
             (vod, edit("Earlier", &[(50.0, 60.0), (10.0, 20.0)]), edit("Later", &[(10.0, 20.0), (12.5, 16.0)]))
         };
-        let conn = back_to(&path, 45);
+        let conn = back_to(&path, 43);
         let struck = serde_json::to_string(&[(flicks(12.0), flicks(14.0))]).unwrap();
         for (clip, start) in [(earlier, 10.0), (later, 10.0)] {
             conn.execute(
@@ -1401,7 +1395,7 @@ mod struck_stretches_become_splits {
             db.add_clip_mark(edit, vod, "chapter", 11.0, Some("Start")).unwrap();
             (vod, middle, edge, edit)
         };
-        let conn = back_to(&path, 45);
+        let conn = back_to(&path, 43);
         // As 0.7.3 left them: struck, each made of what it played then.
         let strike = |clip: i64, a: f64, b: f64| {
             let json = serde_json::to_string(&[(flicks(a), flicks(b))]).unwrap();

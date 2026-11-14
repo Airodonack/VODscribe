@@ -8,7 +8,6 @@ use super::*;
 
 use serde_json::{Value, json};
 use vodscribe_core::db::Vod;
-use vodscribe_core::fetch::VodInfo;
 use vodscribe_core::testkit::{Gate, Media, eventually, media};
 
 use crate::testkit::{TestApp, frame_number};
@@ -43,45 +42,37 @@ fn the_player_seen_says_whether_one_is_open_and_what_its_threads_are_at() {
 /// A VOD from a site without its own player, its video downloading
 /// (videos.rs `stream_then_keep`), opened while the download ends: the
 /// open reads the library before the video is recorded, and the
-/// recording's `refile` comes before the open is in place (player.rs:183:
+/// recording's `refile` comes before the open is in place (player.rs `catch_up`:
 /// "The player just opened for VOD `id`, if it plays the VOD as its video
 /// downloads (`streamed`), plays the video kept, if it was kept meanwhile";
-/// 0.7.0 Fixes: "Playback survives the download finishing."). Below the
-/// commands: the order needs a hold while the file is probed (K9).
+/// 0.7.0 Fixes: "Playback survives the download finishing."). The open
+/// is held while it probes what's in (`holds_details`), and the download
+/// ends meanwhile.
 #[test]
 fn a_vod_opened_as_its_video_is_kept_plays_the_video_kept() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-    let info = VodInfo {
-        platform: "vimeo".into(),
-        platform_id: "x".into(),
-        url: "https://vimeo.com/x".into(),
-        title: "t".into(),
-        channel: None,
-        channel_login: None,
-        channel_url: None,
-        duration: Some(60.0),
-        thumbnail: None,
-        published: None,
-        started_at: None,
-    };
-    let id = db.add_vod(&info).unwrap().0.id;
-    let db = Mutex::new(db);
-    let native = Native::default();
-    // player_open's `streamed`: what's in of the section (none, here), waiting for the rest.
-    assert!(!db.lock().unwrap().vod(id).unwrap().unwrap().media, "no video kept yet");
-    let player = Player::open(std::path::Path::new("ffmpeg"), Timeline::covering(60.0, Vec::new())).unwrap();
-    player.set_waits_for_footage(true);
-    // Meanwhile (the probe), the download ends: recorded, then refiled, with no player open yet.
-    let kept = db.lock().unwrap().files().source_video(id, "mp4");
-    db.lock().unwrap().set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
-    refile_open(&native, id, &kept, 60.0);
-    // The open is in place (open_with), and catches up.
-    *native.open.lock().unwrap() = Some(Open { player, doc: Doc::Vod(id), embed: None });
-    catch_up(&native, &db, id);
-    let open = native.open.lock().unwrap();
-    let player = &open.as_ref().unwrap().player;
-    assert_eq!(player.timeline(), Timeline::file(&kept, 60.0), "the video kept, not the section it replaced");
-    assert!(!player.waits_for_footage());
+    let app = TestApp::new();
+    app.with_screen();
+    let vod = site_vod_with(&app, (0.0, 30.0));
+    let probe = Gate::new();
+    app.ffmpeg.holds_details(&probe);
+    let handle = app.handle().clone();
+    std::thread::scope(|s| {
+        let opening = s.spawn(|| tauri::async_runtime::block_on(player_open(handle, vod.id, 10.0, false)));
+        probe.reached();
+        app.ffmpeg.holds_details(&Gate::opened());
+        // Meanwhile the download ends: recorded, then refiled, with no player open yet.
+        app.invoke("keep_video", json!({ "id": vod.id })).unwrap();
+        eventually("its video kept", || {
+            app.heard("video-progress").iter().any(|p| p["id"] == vod.id && p["progress"].is_null())
+        });
+        assert!(app.db().vod(vod.id).unwrap().unwrap().media, "kept: {:?}", app.heard("video-progress"));
+        probe.open();
+        opening.join().unwrap().unwrap();
+    });
+    // The video kept, not the section it replaced: 0:45 plays, waiting for nothing.
+    let sought = seek(&app, 45.0, false);
+    assert_eq!(sought["waiting"], false, "waits for footage, as the section did");
+    shows(&app, 1350, 1920);
 }
 
 /// Frames are scaled down for the page by mixing the pixels under each,
@@ -173,17 +164,6 @@ fn site_vod_with(app: &TestApp, (from, to): (f64, f64)) -> Vod {
     let name = vodscribe_core::footage::section_stem(vod.id, from, to);
     section.write(&app.paths().source_footage().join(format!("{name}.mkv")));
     vod
-}
-
-/// An edit titled "Best of" made of `pieces`, each a VOD's id and the
-/// stretch of it, in order.
-fn edit_of(app: &TestApp, pieces: &[(i64, (f64, f64))]) -> i64 {
-    let db = app.db();
-    let edit = db.add_edit("Best of").unwrap().id;
-    for &(vod, stretch) in pieces {
-        db.add_piece(edit, vod, stretch, "piece", None).unwrap();
-    }
-    edit
 }
 
 /// The page's open of VOD `id` at `at`, playing if `play`: its answer.
@@ -390,7 +370,7 @@ fn an_edit_opens_with_its_pieces_end_to_end() {
     app.with_screen();
     let first = video(&app, "Day 3.mp4", 60.0, (64, 36));
     let second = video(&app, "Day 4.mp4", 60.0, (32, 18));
-    let edit = edit_of(&app, &[(first.id, (10.0, 20.0)), (second.id, (40.0, 45.0))]);
+    let edit = app.edit_of(&[(first.id, 10.0, 20.0), (second.id, 40.0, 45.0)]);
     let opened = open_edit(&app, edit, 0.0, false);
     assert_eq!(opened["duration"], 15.0, "ten seconds, then five");
     assert_eq!(opened["status"]["playing"], false);
@@ -415,7 +395,7 @@ fn an_edits_footage_not_here_is_fetched_and_its_plan_asked_again_as_it_comes() {
     let app = TestApp::new();
     app.with_screen();
     let vod = app.add_site_vod("vimeo", "x", "Day 3", 60.0);
-    let edit = edit_of(&app, &[(vod.id, (10.0, 20.0))]);
+    let edit = app.edit_of(&[(vod.id, 10.0, 20.0)]);
     let begun = Gate::new();
     app.yt_dlp.holds(&begun);
     let opened = open_edit(&app, edit, 0.0, false);
@@ -440,7 +420,7 @@ fn a_new_plan_plays_on_without_a_break_where_the_playheads_stretch_is_unchanged(
     let app = TestApp::new();
     app.with_screen();
     let vod = small_video(&app, 60.0);
-    let edit = edit_of(&app, &[(vod.id, (0.0, 20.0)), (vod.id, (40.0, 50.0))]);
+    let edit = app.edit_of(&[(vod.id, 0.0, 20.0), (vod.id, 40.0, 50.0)]);
     open_edit(&app, edit, 5.0, true);
     eventually("the time running", || playing_status(&app)["running"] == true);
     app.db().add_piece(edit, vod.id, (50.0, 55.0), "piece", None).unwrap();
@@ -721,7 +701,7 @@ fn an_edit_playing_holds_back_only_other_vods_work() {
     let own = small_video(&app, 60.0);
     let other = video(&app, "Day 4.mp4", 60.0, (32, 18));
     let third = video(&app, "Day 5.mp4", 60.0, (32, 18));
-    let edit = edit_of(&app, &[(own.id, (10.0, 20.0))]);
+    let edit = app.edit_of(&[(own.id, 10.0, 20.0)]);
     open_edit(&app, edit, 0.0, true);
     assert!(!holds_back(&app, own.id), "the edit's own piece's VOD isn't held back");
     assert!(holds_back(&app, other.id), "another VOD's is");

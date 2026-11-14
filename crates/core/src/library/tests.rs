@@ -2,6 +2,7 @@ use super::*;
 use crate::Paths;
 use crate::db::ClipStatus;
 use crate::edits::tests::info;
+use crate::testkit::old_column;
 use std::fs;
 
 thread_local! {
@@ -75,12 +76,6 @@ fn as_071<T>(paths: &Paths, add: impl FnOnce(&Db) -> T) -> T {
 
 fn vod_in(db: &Db, name: &str) -> i64 {
     db.add_vod(&info(name)).unwrap().0.id
-}
-
-/// What 0.7.1 reads of a row: the column, through a connection of its own.
-fn old_column(paths: &Paths, sql: &str, id: i64) -> Option<String> {
-    let conn = rusqlite::Connection::open(paths.db()).unwrap();
-    conn.query_row(sql, [id], |r| r.get(0)).unwrap()
 }
 
 /// A kept video recorded where 0.7.1 put it, in the library's folder for
@@ -217,18 +212,9 @@ fn a_settled_rows_old_column_names_its_new_place_for_071() {
     drop(conn);
     drop(settled(Db::open_in(&paths).unwrap()));
     let shown = |p: PathBuf| Some(crate::db::shown(&p));
-    assert_eq!(
-        old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", vod),
-        shown(paths.source_video(vod, "mp4"))
-    );
-    assert_eq!(
-        old_column(&paths, "SELECT audio FROM stretches WHERE id = ?1", stretch),
-        shown(paths.source_section(vod, stretch, "mka"))
-    );
-    assert_eq!(
-        old_column(&paths, "SELECT file_path FROM renders WHERE clip_id = ?1", clip),
-        shown(paths.clip_file(clip, "mp4"))
-    );
+    assert_eq!(old_column(&paths, "vods", "media_path", vod), shown(paths.source_video(vod, "mp4")));
+    assert_eq!(old_column(&paths, "stretches", "audio", stretch), shown(paths.source_section(vod, stretch, "mka")));
+    assert_eq!(old_column(&paths, "renders", "file_path", clip), shown(paths.clip_file(clip, "mp4")));
 }
 
 /// What 0.7.1 records or forgets after it's gone back to is taken in at the
@@ -251,7 +237,7 @@ fn a_file_071_recorded_after_going_back_is_moved_again() {
         db.set_clip_file(clip, 1.0, 2.0, ClipStatus::Ready, Some(&crate::db::shown(&file)), None).unwrap();
         (a, b, clip)
     };
-    let media = |id| old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", id);
+    let media = |id| old_column(&paths, "vods", "media_path", id);
     let done = media(a);
     // 0.7.1 at work: a video kept for b under its own name, and the clip's file deleted.
     let kept = paths.media().join(format!("B [{b:06}].webm"));
@@ -503,7 +489,7 @@ fn a_file_found_nowhere_is_forgotten_and_a_clip_is_left_to_be_seen_gone() {
     drop(conn);
     let db = settled(Db::open_in(&paths).unwrap());
     assert_eq!(db.media_path(vod).unwrap(), None, "forgotten");
-    assert_eq!(old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", vod), None, "0.7.1's column too");
+    assert_eq!(old_column(&paths, "vods", "media_path", vod), None, "0.7.1's column too");
     let c = db.clip(clip).unwrap().unwrap();
     assert!(
         !(c.status == ClipStatus::Ready && c.file_path.is_none()),
@@ -531,7 +517,7 @@ fn a_file_found_nowhere_in_a_library_under_a_link_is_forgotten_in_both_columns()
     rusqlite::Connection::open(paths.db()).unwrap().execute(sql, params![vod, crate::db::shown(&missing)]).unwrap();
     let db = settled(Db::open_in(&paths).unwrap());
     assert_eq!(db.media_path(vod).unwrap(), None, "forgotten");
-    assert_eq!(old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", vod), None, "0.7.1's column too");
+    assert_eq!(old_column(&paths, "vods", "media_path", vod), None, "0.7.1's column too");
 }
 
 /// settle takes files only from the library's own folders and 0.7.1's
@@ -723,8 +709,8 @@ fn a_file_that_cannot_be_moved_is_left_to_the_next_start_and_said() {
     let said = settle(&db).unwrap_err().to_string();
     assert_eq!(said, "1 not moved, left for the next start");
     assert_eq!(text(&video), "video", "left where it was");
-    let recorded = |sql| old_column(&paths, sql, vod);
-    assert_eq!(recorded("SELECT media_path FROM vods WHERE id = ?1"), Some(video.to_string_lossy().into_owned()));
+    let recorded = old_column(&paths, "vods", "media_path", vod);
+    assert_eq!(recorded, Some(video.to_string_lossy().into_owned()));
     assert_eq!(text(paths.source_section(vod, stretch, "mka")), "section", "the other row was done");
     drop(refusing);
     settle(&db).unwrap();
@@ -804,8 +790,8 @@ fn a_row_already_done_is_left_as_it_is_when_its_file_has_gone() {
     fs::remove_file(paths.source_video(vod, "mp4")).unwrap();
     drop(settled(Db::open_in(&paths).unwrap()));
     let built = Some(crate::db::shown(&paths.source_video(vod, "mp4")));
-    assert_eq!(old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", vod), built);
-    assert_eq!(old_column(&paths, "SELECT video_ext FROM vods WHERE id = ?1", vod).as_deref(), Some("mp4"));
+    assert_eq!(old_column(&paths, "vods", "media_path", vod), built);
+    assert_eq!(old_column(&paths, "vods", "video_ext", vod).as_deref(), Some("mp4"));
 }
 
 /// A link in the library's folder to a file elsewhere is never taken into
@@ -828,7 +814,7 @@ fn a_link_in_the_library_to_the_users_file_is_not_taken_in() {
     assert_eq!(text(&private), "private", "the user's file stays where it is");
     assert!(!paths.source_video(vod, "mp4").exists(), "brought into the library");
     assert_eq!(
-        old_column(&paths, "SELECT media_path FROM vods WHERE id = ?1", vod),
+        old_column(&paths, "vods", "media_path", vod),
         Some(named.to_string_lossy().into_owned()),
         "its row as it was"
     );

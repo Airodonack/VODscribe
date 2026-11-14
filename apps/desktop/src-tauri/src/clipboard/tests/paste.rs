@@ -5,20 +5,7 @@ use super::*;
 
 fn library() -> (Db, i64) {
     let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-    let info = vodscribe_core::fetch::VodInfo {
-        platform: "youtube".into(),
-        platform_id: "x".into(),
-        url: "https://youtu.be/x".into(),
-        title: "t".into(),
-        channel: None,
-        channel_login: None,
-        channel_url: None,
-        duration: Some(60.0),
-        thumbnail: None,
-        published: None,
-        started_at: None,
-    };
-    let vod = db.add_vod(&info).unwrap().0.id;
+    let vod = vodscribe_core::testkit::library::add_site_vod(&db, "youtube", "x", "t", 60.0).id;
     (db, vod)
 }
 

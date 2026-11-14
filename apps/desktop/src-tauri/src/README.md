@@ -7,6 +7,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `tests.rs`, `tests/`: the specs of `lib.rs`.
 - `system.rs`: what the commands ask of the desktop: showing and opening files.
 - `vods.rs`: the library's commands: adding, ordering and controlling VODs, refreshing a site's VOD's details, and reading transcripts.
+- [`vods`](vods): their tests.
 - `setup.rs`: first-run setup, settings, the GPU add-on and storage.
 - `recovery.rs`: the recovery screen's commands, when the library won't open.
 - `worker.rs`: the transcription queue, downloading in one stage and transcribing in another.
@@ -19,11 +20,12 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `footage.rs`: where a stretch plays from, and the downloads of sections edits need.
 - `videos.rs`: downloading a VOD's whole video on request.
 - `storyboards.rs`: keyframe pictures of the footage on this computer.
+- [`storyboards`](storyboards): their tests.
 - `thumbnails.rs`: VOD thumbnails for the page.
 - `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - `history.rs`: undo and redo, per document.
 - `clipboard.rs`: Ctrl+C, Ctrl+X and Ctrl+V: what was copied, and the clips a cut holds.
-- `clipboard/`: its tests (`tests.rs`, `tests/`).
+- [`clipboard`](clipboard): its tests.
 - `choices.rs`: the page's small choices, read at start and written as they change.
 - `files.rs`: deleting made files, later where Windows still has them open, or at the next start.
 - `player.rs`: the app's own player, driven by the page.

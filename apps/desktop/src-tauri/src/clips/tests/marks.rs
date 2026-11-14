@@ -57,17 +57,6 @@ impl TestApp {
     fn steps(&self, doc: history::Doc) -> usize {
         self.state().history.steps(doc)
     }
-
-    /// An edit of the first `from` seconds of VOD `vod` and then `to`..`end`
-    /// of it, so its timeline holds a stretch of the VOD cut away.
-    fn edit_of(&self, vod: i64, pieces: &[(f64, f64)]) -> i64 {
-        let db = self.db();
-        let edit = db.add_edit("e").unwrap().id;
-        for &piece in pieces {
-            db.add_piece(edit, vod, piece, "p", None).unwrap();
-        }
-        edit
-    }
 }
 
 fn mark_id(mark: &Value) -> i64 {
@@ -99,7 +88,7 @@ fn a_mark_is_a_cut_unless_it_is_said_to_be_a_chapter_or_highlight() {
 fn a_mark_of_another_kind_is_refused() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
-    let edit = app.edit_of(vod, &[(0.0, 30.0)]);
+    let edit = app.edit_of(&[(vod, 0.0, 30.0)]);
     is(app.add_mark(vod, 5.0, Some("bookmark"), None), "That isn't a kind of mark.");
     is(
         app.invoke("add_edit_mark", json!({ "editId": edit, "time": 5.0, "kind": "bookmark" })),
@@ -279,7 +268,7 @@ fn a_mark_moved_in_an_edit_goes_to_the_moment_playing_there() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
     // Its timeline: 0:00-0:10 plays 0:00-0:10 of the VOD, 0:10-0:20 plays 0:30-0:40.
-    let edit = app.edit_of(vod, &[(0.0, 10.0), (30.0, 40.0)]);
+    let edit = app.edit_of(&[(vod, 0.0, 10.0), (vod, 30.0, 40.0)]);
     let mark = app.invoke("add_edit_mark", json!({ "editId": edit, "time": 2.0, "kind": "highlight" })).unwrap();
     app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": 15.0 })).unwrap();
     let moment = app.db().clip_marks(edit).unwrap()[0].1.at.seconds();
@@ -293,7 +282,7 @@ fn a_mark_moved_in_an_edit_goes_to_the_moment_playing_there() {
 fn a_mark_moved_outside_its_edit_is_refused() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
-    let edit = app.edit_of(vod, &[(0.0, 10.0), (30.0, 40.0)]);
+    let edit = app.edit_of(&[(vod, 0.0, 10.0), (vod, 30.0, 40.0)]);
     let mark = app.invoke("add_edit_mark", json!({ "editId": edit, "time": 2.0, "kind": "highlight" })).unwrap();
     for time in [25.0, 20.5, -3.0] {
         let moved = app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": time })).map(|_| Value::Null);
@@ -419,7 +408,7 @@ fn a_mark_canceled_after_other_changes_is_an_ordinary_removal() {
 fn an_edit_s_mark_goes_on_the_moment_of_the_vod_playing_there() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
-    let edit = app.edit_of(vod, &[(0.0, 10.0), (30.0, 40.0)]);
+    let edit = app.edit_of(&[(vod, 0.0, 10.0), (vod, 30.0, 40.0)]);
     let mark = app
         .invoke("add_edit_mark", json!({ "editId": edit, "time": 12.0, "kind": "chapter", "text": " Back " }))
         .unwrap();
@@ -440,7 +429,7 @@ fn an_edit_s_mark_goes_on_the_moment_of_the_vod_playing_there() {
 fn an_edit_s_mark_outside_it_is_refused() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
-    let edit = app.edit_of(vod, &[(0.0, 10.0), (30.0, 40.0)]);
+    let edit = app.edit_of(&[(vod, 0.0, 10.0), (vod, 30.0, 40.0)]);
     for time in [25.0, 20.5, -1.0] {
         is(
             app.invoke("add_edit_mark", json!({ "editId": edit, "time": time, "kind": "cut" })),
@@ -464,7 +453,7 @@ fn an_edit_s_marks_show_where_their_moments_play() {
     app.add_mark(vod, 25.0, Some("highlight"), Some("before")).unwrap();
     app.add_mark(vod, 35.0, Some("highlight"), Some("taken out")).unwrap();
     app.add_mark(vod, 45.0, Some("highlight"), Some("after")).unwrap();
-    let edit = app.edit_of(vod, &[(20.0, 50.0)]);
+    let edit = app.edit_of(&[(vod, 20.0, 50.0)]);
     // 0:10-0:20 of the edit, 0:30-0:40 of the VOD, is taken out: 0:20-0:30 of
     // the VOD plays at 0:00-0:10, and 0:40-0:50 at 0:10-0:20.
     app.invoke("remove_stretch", json!({ "id": edit, "from": 10.0, "to": 20.0 })).unwrap();
@@ -486,7 +475,7 @@ fn a_chapter_whose_start_is_cut_away_starts_where_its_piece_plays_again() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
     app.add_mark(vod, 36.0, Some("chapter"), Some("cut away")).unwrap();
-    let edit = app.edit_of(vod, &[(20.0, 50.0)]);
+    let edit = app.edit_of(&[(vod, 20.0, 50.0)]);
     app.invoke("remove_stretch", json!({ "id": edit, "from": 10.0, "to": 20.0 })).unwrap();
     assert_eq!(app.edit_marks(edit), [("chapter".to_string(), 10.0, Some("cut away".to_string()))]);
 }
@@ -499,7 +488,7 @@ fn a_chapter_cut_away_after_the_last_piece_shows_nowhere() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0).id;
     app.add_mark(vod, 45.0, Some("chapter"), Some("cut away")).unwrap();
-    let edit = app.edit_of(vod, &[(20.0, 50.0)]);
+    let edit = app.edit_of(&[(vod, 20.0, 50.0)]);
     app.invoke("remove_stretch", json!({ "id": edit, "from": 20.0, "to": 30.0 })).unwrap();
     assert_eq!(app.edit_marks(edit), []);
 }

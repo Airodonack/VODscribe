@@ -52,14 +52,6 @@ fn show(app: &TestApp, id: i64) -> PathBuf {
     app.desktop().shown().last().cloned().expect("nothing shown")
 }
 
-/// An edit, `e`, holding 0:00–0:30 of VOD `vod_id`.
-fn an_edit(app: &TestApp, vod_id: i64) -> i64 {
-    let db = app.db();
-    let edit = db.add_edit("e").unwrap().id;
-    db.add_piece(edit, vod_id, (0.0, 30.0), "a", None).unwrap();
-    edit
-}
-
 /// C on `from`..`to` (seconds) of edit `edit`'s timeline: the clip's id, its
 /// file not waited for.
 fn add_edit_clip(app: &TestApp, edit: i64, from: f64, to: f64) -> i64 {
@@ -770,7 +762,7 @@ fn a_clip_being_made_again_is_not_taken_for_gone() {
 fn an_edit_s_clip_bar_lets_go_of_clips_whose_files_went_too() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
-    let edit = an_edit(&app, vod.id);
+    let edit = app.edit_of(&[(vod.id, 0.0, 30.0)]);
     let clip = app.made(add_edit_clip(&app, edit, 5.0, 9.0));
     std::fs::remove_file(file_of(&clip)).unwrap();
     back_in_the_window(&app, json!({ "editId": edit }));
@@ -785,7 +777,7 @@ fn an_edit_s_clip_bar_lets_go_of_clips_whose_files_went_too() {
 fn asking_to_forget_gone_clips_of_neither_or_both_bars_is_refused() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
-    let edit = an_edit(&app, vod.id);
+    let edit = app.edit_of(&[(vod.id, 0.0, 30.0)]);
     let refused = Err(json!("Say whose clip bar: a VOD's or an edit's."));
     assert_eq!(app.invoke("forget_gone_clips", json!({})), refused);
     assert_eq!(app.invoke("forget_gone_clips", json!({ "vodId": vod.id, "editId": edit })), refused);
@@ -806,7 +798,7 @@ fn deleting_an_edit_lets_go_of_its_bar_clips_and_their_files() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
     let of_vod = app.make_clip(vod.id, "0:40", "0:50");
-    let edit = an_edit(&app, vod.id);
+    let edit = app.edit_of(&[(vod.id, 0.0, 30.0)]);
     let shown = app.made(add_edit_clip(&app, edit, 1.0, 2.0));
     let taken = show(&app, shown.id);
     let halfway = Gate::new();
@@ -983,7 +975,7 @@ fn a_piece_added_as_a_pasted_clip_s_file_is_copied_is_in_its_file() {
 fn a_cut_clip_pasted_on_an_edits_bar_comes_back_with_its_file() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
-    let edit = an_edit(&app, vod.id);
+    let edit = app.edit_of(&[(vod.id, 0.0, 30.0)]);
     let clip = app.make_clip(vod.id, "0:10", "0:20");
     let media = app.clip_media(&clip);
     ctrl_x(&app, &[clip.id]);
@@ -1073,7 +1065,7 @@ fn a_cut_redone_holds_the_clip_again() {
 fn a_clip_cut_from_an_edits_bar_is_held_too() {
     let app = TestApp::new();
     let vod = app.add_video_file("Day 3.mp4", 60.0);
-    let edit = an_edit(&app, vod.id);
+    let edit = app.edit_of(&[(vod.id, 0.0, 30.0)]);
     let clip = app.made(add_edit_clip(&app, edit, 5.0, 9.0));
     let media = app.clip_media(&clip);
     ctrl_c(&app, &[clip.id]);

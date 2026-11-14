@@ -5,7 +5,9 @@ One module per subject.
 - `lib.rs`: the crate's root, and `Paths`, where the data folder's parts live and every file of the library's is built.
 - `tests.rs`, `tests/`: the specs of `lib.rs`.
 - `library.rs`: moves files recorded by full path before 0.7.2 to where `Paths` builds them.
+- [`library`](library): its tests.
 - `db.rs`: the library, one SQLite file with full-text indexes over transcripts and chat.
+- [`db`](db): its tests, the migrations' among them.
 - `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
 - `transcript.rs`: words and lines as the model gives them.
 - [`transcript`](transcript): its tests.
@@ -51,11 +53,14 @@ One module per subject.
 - [`time`](time): time's tests.
 - `clipboard.rs`: what Ctrl+C copies and Ctrl+V puts back.
 - `annotations.rs`: importing a VOD's published annotations, and fetching streamer cards.
+- [`annotations`](annotations): its tests.
 - `annotations_filter.rs`: the Bloom filter of published VODs, so the host never learns the library.
+- [`annotations_filter`](annotations_filter): its tests.
 - `thumbs.rs`: local copies of VOD thumbnails.
 - `peaks.rs`: a VOD's waveform.
 - `playable.rs`: what this computer's web view can play.
 - `settings.rs`: the app's settings.
+- [`settings`](settings): its tests.
 - `choices.rs`: the small choices the page remembers.
 - `testkit.rs`: what tests stand in for programs, the network and media with; tests and the `testkit` feature only.
 - [`testkit`](testkit): the fakes, the library helper, and how to write a test with them.

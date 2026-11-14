@@ -57,9 +57,10 @@ import { DRAG_SLOP, holds } from "./pressToDrag";
 export const HOLD_MS = 250;
 const FLY_MS = 150;
 
-/** The files of the clips being dragged out, so the library doesn't add
- *  them if they're dropped back on the window (Library.svelte). */
-let outgoing: string[] = [];
+/** The files of the clips being dragged out, and the folder of the names
+ *  each is handed out by, so the library doesn't add them if they're
+ *  dropped back on the window (Library.svelte). */
+let outgoing: { file: string; names: string }[] = [];
 
 /** While a clip's file is being dragged out (until the system's drag is
  *  over): brought back over the window, it isn't something dropped in to add. */
@@ -75,15 +76,21 @@ const handing = new Map<number, number>();
 export const draggingOut = () => out;
 
 /** Whether `paths` are just the clips being dragged out: their files, or
- *  the names they're handed out by, in a folder beside each file named by
- *  its clip's id (`Paths::clip_names`): `clips/7/` for `clips/7.mp4` and for
- *  its later makes, `clips/7-1.mp4` (`Paths::clip_make`). */
+ *  the names they're handed out by. */
 export function isOutgoing(paths: string[]): boolean {
-  const named = (p: string, file: string) => {
-    const folder = file.replace(/([/\\]\d+)-\d+(\.[^./\\]*)$/, "$1$2").replace(/\.[^./\\]*$/, "");
-    return p.startsWith(folder + "/") || p.startsWith(folder + "\\");
-  };
-  return outgoing.length > 0 && paths.length > 0 && paths.every((p) => outgoing.some((f) => p === f || named(p, f)));
+  const named = (p: string, names: string) => p.startsWith(names + "/") || p.startsWith(names + "\\");
+  return (
+    outgoing.length > 0 &&
+    paths.length > 0 &&
+    paths.every((p) => outgoing.some((o) => p === o.file || named(p, o.names)))
+  );
+}
+
+/** The folder clip `id`'s file `file` is handed out by its names in: beside
+ *  the file, named by the clip's id (`Paths::clip_names`), whichever make
+ *  the file is. */
+function namesOf(file: string, id: number): string {
+  return file.slice(0, Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1) + id;
 }
 
 /** Whether the system's drag can begin before the files are made (the app
@@ -144,7 +151,9 @@ async function dragOut(
   vodId?: number,
 ): Promise<boolean> {
   if (!list.length || list.some((c) => c.status === "error")) return false;
-  outgoing = list.filter((c) => c.status === "ready" && c.file_path).map((c) => c.file_path!);
+  outgoing = list
+    .filter((c) => c.status === "ready" && c.file_path)
+    .map((c) => ({ file: c.file_path!, names: namesOf(c.file_path!, c.id) }));
   out = true;
   // Over a moment after the system says so (events about the drag can come
   // just after), unless another's begun. The system says so only once the

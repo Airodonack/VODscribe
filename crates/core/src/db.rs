@@ -104,7 +104,8 @@ pub struct Vod {
     /// was fetched before it stopped is kept.
     pub chat_error: Option<String>,
     /// In the library's list. One taken out stays a source, unlisted, while
-    /// other clips use it; its work waits until it's listed again.
+    /// other clips use it; its work ended when it was taken out (the app's
+    /// `delete_vod`, or at the next start for what an older build left).
     pub listed: bool,
     /// Whether the file host has annotations for it (`annotations::look_up`),
     /// as last asked: the library offers them when it has.
@@ -1320,14 +1321,10 @@ fn set_aside_with(
     rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
     in_use: &dyn Fn(&Path) -> Option<PathBuf>,
 ) -> Result<PathBuf> {
-    let date = date_of(now());
-    let name = (1..)
-        .map(|n| if n == 1 { format!("library-broken-{date}") } else { format!("library-broken-{date}-{n}") })
-        .find(|name| {
-            let aside = paths.aside(name);
-            !aside.root.exists() && !aside.local.exists()
-        })
-        .context("no free name")?;
+    let name = broken_name("library", "", |name| {
+        let aside = paths.aside(name);
+        !aside.root.exists() && !aside.local.exists()
+    })?;
     let aside = paths.aside(&name);
     // Built from the path as the system has it: a name made from a lossy
     // copy (`display`) of a path that isn't UTF-8 isn't the file's.
@@ -1428,6 +1425,17 @@ fn in_use(path: &Path) -> Option<PathBuf> {
         let _ = path;
         None
     }
+}
+
+/// The name a file or folder of `what` (library, settings) unreadable
+/// today is set aside under, the first that `free` says is free:
+/// `<what>-broken-<date><ext>`, then `-2`, `-3`… before `ext`.
+pub(crate) fn broken_name(what: &str, ext: &str, free: impl Fn(&str) -> bool) -> Result<String> {
+    let date = date_of(now());
+    (1..)
+        .map(|n| if n == 1 { format!("{what}-broken-{date}{ext}") } else { format!("{what}-broken-{date}-{n}{ext}") })
+        .find(|name| free(name))
+        .context("no free name")
 }
 
 /// `secs` since 1970 as a UTC date, YYYY-MM-DD (Howard Hinnant's civil_from_days).

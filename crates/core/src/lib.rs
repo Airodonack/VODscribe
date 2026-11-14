@@ -305,9 +305,9 @@ impl Paths {
         self.local.join("clips")
     }
 
-    /// Clip `clip_id`'s file as made before 0.7.3, when each make got a file
-    /// of its own (`clip_make`): a clip made before then keeps it until it's
-    /// made again.
+    /// Clip `clip_id`'s file as made before 0.7.3, when a clip had one file,
+    /// made again in place; since then each make gets a file of its own
+    /// (`clip_make`). A clip made before then keeps it until it's made again.
     /// Edits are clips (the listed ones), so an edit's render is here too.
     pub fn clip_file(&self, clip_id: i64, ext: &str) -> PathBuf {
         with_ext(self.clips().join(clip_id.to_string()), ext)

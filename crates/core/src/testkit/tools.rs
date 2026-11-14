@@ -259,6 +259,13 @@ pub enum At {
     /// `Settings::save`: asked, before it takes its turn (and writes), so
     /// a save asked later can go first.
     SettingsSave,
+    /// A check for VODscriptions (`annotations_filter`), for a settings
+    /// file: asking found on, before it waits its turn behind a check
+    /// under way.
+    CheckTurn,
+    /// A check for VODscriptions, for a settings file: the pause between
+    /// two VODs' requests over, before it reads whether asking is on.
+    CheckPause,
 }
 
 /// The gates held at points of the library's own code (`hold_at`), with

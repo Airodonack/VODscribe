@@ -167,6 +167,21 @@ pub fn beside(path: &Path) -> Connection {
     Connection::open(path).unwrap()
 }
 
+/// The format the library on `conn` is at: how many migrations it has had
+/// (`PRAGMA user_version`).
+pub fn format_of(conn: &Connection) -> usize {
+    conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap() as usize
+}
+
+/// Column `column` of `table`'s row `id` (a clip's, in `renders`) in the
+/// library at `paths`, read as an older version reads it: through a
+/// read-only connection of its own, not through `Db`.
+pub fn old_column(paths: &Paths, table: &str, column: &str, id: i64) -> Option<String> {
+    let conn = Connection::open_with_flags(paths.db(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let key = if table == "renders" { "clip_id" } else { "id" };
+    conn.query_row(&format!("SELECT {column} FROM {table} WHERE {key} = ?1"), [id], |r| r.get(0)).unwrap()
+}
+
 /// A new library at `path` at format `version`, as a VODscribe whose newest
 /// migration was that one made it: the first `version` migrations
 /// (`db::MIGRATIONS`) run and `user_version` set, no rows. The test puts

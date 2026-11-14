@@ -289,8 +289,9 @@ impl Db {
     }
 
     /// The first request asked for with `status`, of a VOD in the library's
-    /// list (one taken out of it waits), with its VOD: the next one for that
-    /// stage. Of files on this computer only, if `local_only`.
+    /// list, with its VOD: the next one for that stage. Of files on this
+    /// computer only, if `local_only`. Taking a VOD out of the list ends its
+    /// requests; one left on it anyway isn't taken up.
     pub fn next_stretch(&self, status: Status, local_only: bool) -> Result<Option<(Vod, Stretch)>> {
         let id: Option<i64> = self
             .conn
@@ -714,7 +715,7 @@ mod tests {
         assert_eq!(db.count_stretches(Status::Downloading).unwrap(), 1);
         assert_eq!(db.vod(b).unwrap().unwrap().status, Status::Downloading);
         db.remove_entry(a).unwrap();
-        assert_eq!(next(&db), None, "out of the list, its work waits");
+        assert_eq!(next(&db), None, "out of the list, its work isn't taken up");
     }
 
     /// What the waveform asks of a request paused or failed (media.ts

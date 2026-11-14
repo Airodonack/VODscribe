@@ -1,8 +1,7 @@
 //! The library's layout: where `Paths` puts each file, and what clearing the cache keeps.
 
 use super::*;
-use crate::testkit::Library;
-use rusqlite::{Connection, OpenFlags};
+use crate::testkit::{Library, old_column};
 
 #[test]
 fn clearing_the_cache_keeps_the_library_and_settings() {
@@ -102,14 +101,6 @@ fn only_paths_joins_the_librarys_folders() {
 /// doesn't, in folders that need not exist.
 fn split() -> Paths {
     Paths::split("/lib/roaming", "/lib/local")
-}
-
-/// Column `column` of `table`'s row `id`, read as 0.7.1 reads it: through
-/// a read-only connection of its own, not through `Db`.
-fn old_column(paths: &Paths, table: &str, column: &str, id: i64) -> Option<String> {
-    let conn = Connection::open_with_flags(paths.db(), OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let sql = format!("SELECT {column} FROM {table} WHERE {} = ?1", if table == "renders" { "clip_id" } else { "id" });
-    conn.query_row(&sql, [id], |r| r.get(0)).unwrap()
 }
 
 /// The library and settings are in `root`; what downloads again is in

@@ -6,7 +6,6 @@
 use crate::testkit::TestApp;
 use serde_json::{Value, json};
 use vodscribe_core::chat::{ChatMessage, ChatPart, Kind};
-use vodscribe_core::fetch::VodInfo;
 use vodscribe_core::testkit::Reply;
 
 impl TestApp {
@@ -15,24 +14,6 @@ impl TestApp {
     fn lines(&self, vod: i64, from: Option<f64>, to: Option<f64>) -> Vec<(f64, String)> {
         let lines = self.invoke("transcript", json!({ "vodId": vod, "from": from, "to": to })).unwrap();
         lines.as_array().unwrap().iter().map(|l| (l["start"].as_f64().unwrap(), text(l))).collect()
-    }
-
-    /// A VOD of a site, in `channel`'s name.
-    fn add_channels_vod(&self, id: &str, channel: &str) -> vodscribe_core::db::Vod {
-        let info = VodInfo {
-            platform: "twitch".into(),
-            platform_id: id.into(),
-            url: format!("https://www.twitch.tv/videos/{id}"),
-            title: id.into(),
-            channel: Some(channel.into()),
-            channel_login: None,
-            channel_url: None,
-            duration: Some(60.0),
-            thumbnail: None,
-            published: None,
-            started_at: None,
-        };
-        self.db().add_vod(&info).unwrap().0
     }
 
     /// `author` writes `messages` messages in VOD `vod`'s chat.
@@ -111,7 +92,7 @@ fn a_files_captions_are_its_lines() {
 #[test]
 fn from_suggests_channels_first_then_chatters() {
     let app = TestApp::new();
-    let vod = app.add_channels_vod("1", "Stormy");
+    let vod = app.add_site_vod_of("twitch", "1", "1", 60.0, "Stormy");
     app.chats(vod.id, "stormfan", 3);
     app.chats(vod.id, "stormlover", 5);
     app.chats(vod.id, "elsewhere", 9);
@@ -121,7 +102,7 @@ fn from_suggests_channels_first_then_chatters() {
     );
 
     // In one VOD, only its own channel and chat.
-    let other = app.add_channels_vod("2", "Stoneface");
+    let other = app.add_site_vod_of("twitch", "2", "2", 60.0, "Stoneface");
     app.chats(other.id, "stoic", 1);
     assert_eq!(app.suggested("sto", Some(other.id)), [("Stoneface".to_string(), true), ("stoic".to_string(), false)]);
 }
