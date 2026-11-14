@@ -142,8 +142,18 @@ impl Videos {
 
     /// Stops every download and empties the queue (deleting what each had).
     pub(crate) fn stop_all(&self, app: &AppHandle) {
-        for (id, _) in self.0.take_waiting(|_| true) {
-            let _ = app.state::<AppState>().db.lock().unwrap().set_video_wanted(id, None);
+        // No longer asked, waiting or under way: a quit before the stopped
+        // download ends doesn't bring it back at the next start. Under the
+        // library's lock with the queue's take, as `keep_video` asks.
+        let state = app.state::<AppState>();
+        let taken = {
+            let db = state.db.lock().unwrap();
+            for (id, _) in self.0.listed() {
+                let _ = db.set_video_wanted(id, None);
+            }
+            self.0.take_waiting(|_| true)
+        };
+        for (id, _) in taken {
             crate::page::emit(app, "video-progress", VideoProgress::over(id, None));
         }
         self.0.stop_running(|_| true);

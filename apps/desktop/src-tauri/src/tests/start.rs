@@ -369,6 +369,25 @@ fn a_video_download_stopped_by_removing_its_vod_is_not_asked_after_a_quit() {
     assert!(!video_queue_took(&app, vod.id), "a download stopped by removing its VOD was started again, unasked");
 }
 
+/// A video download stopped by Delete all videos isn't asked any more, though
+/// the app quits before the stopped download ends: the next start doesn't
+/// download it again (videos.rs `stop_all`: "No longer asked, waiting or
+/// under way").
+#[test]
+fn a_video_download_stopped_by_delete_all_videos_is_not_asked_after_a_quit() {
+    let app = TestApp::new();
+    let vod = app.add_site_vod("youtube", "noa29qsTc4g", "Day 3", 60.0);
+    let begun = Gate::new();
+    app.yt_dlp.holds(&begun);
+    app.invoke("keep_video", json!({ "id": vod.id })).unwrap();
+    begun.reached();
+    app.invoke("delete_all_videos", json!({})).unwrap();
+    let folder = app.quit();
+    assert_eq!(library_of(&folder).wanted_videos().unwrap(), Vec::<(i64, u32)>::new(), "the quit kept the ask");
+    let app = TestApp::on(folder);
+    assert!(!video_queue_took(&app, vod.id), "a download stopped by Delete all videos was carried on, unasked");
+}
+
 /// A removed VOD's video download isn't carried on at the next start: the
 /// start erases it (core db.rs `wanted_videos`: "only those in its list,
 /// and not gone"; vods.rs `Sweeper`; review of queues-resume, 2026-11-11,
