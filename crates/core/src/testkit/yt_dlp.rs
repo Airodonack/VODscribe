@@ -169,12 +169,20 @@ pub fn details(platform: &str, id: &str, url: &str, title: &str, duration: f64) 
 /// A line of a YouTube chat replay (`YtDlp::serves_chat`): `author` says
 /// `text` `at` seconds into the video.
 pub fn chat_line(at: f64, author: &str, text: &str) -> String {
+    let message = json!({ "liveChatTextMessageRenderer": {
+        "authorName": { "simpleText": author },
+        "message": { "runs": [{ "text": text }] },
+    } });
+    chat_item(at, message)
+}
+
+/// A line of a YouTube chat replay (`YtDlp::serves_chat`) that adds `item`
+/// (a `liveChatPaidMessageRenderer`, a membership…) `at` seconds into the
+/// video, to the millisecond.
+pub fn chat_item(at: f64, item: Value) -> String {
     json!({ "replayChatItemAction": {
         "videoOffsetTimeMsec": format!("{}", (at * 1000.0).round() as i64),
-        "actions": [{ "addChatItemAction": { "item": { "liveChatTextMessageRenderer": {
-            "authorName": { "simpleText": author },
-            "message": { "runs": [{ "text": text }] },
-        } } } }],
+        "actions": [{ "addChatItemAction": { "item": item } }],
     } })
     .to_string()
 }

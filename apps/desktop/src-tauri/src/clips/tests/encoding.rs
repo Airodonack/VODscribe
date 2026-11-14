@@ -351,9 +351,10 @@ fn an_old_settings_file_makes_clips_as_they_were_made_then() {
 }
 
 /// A change of codec within MP4 (H.264 to H.265) makes a made clip again on its
-/// next drag (CHANGELOG.md, 0.7.2: "Clips come in more formats."; 8896230, "A
-/// clip is made again after a change of codec or quality": "dragout.ts compared
-/// the file's extension only").
+/// next drag (CHANGELOG.md, 0.7.2: "Clips come in more formats."; dragout.ts
+/// `madeAsWanted`: "in its format and, with a picture, its codec and
+/// quality"). Decided for 0.7.2: a clip is made again after a change of codec
+/// or quality, not only of format.
 #[test]
 fn a_change_of_codec_within_mp4_makes_a_made_clip_again_on_its_next_drag() {
     let app = TestApp::new();

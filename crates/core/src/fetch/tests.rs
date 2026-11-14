@@ -385,29 +385,26 @@ fn progress_parsing() {
     assert_eq!(parse_progress(" NA NA NA NA NA"), None);
 }
 
-/// A link's lookup stops when canceled: a stand-in yt-dlp that never answers.
-#[cfg(unix)]
+/// A link's lookup stops when canceled, promptly, while yt-dlp hasn't
+/// answered (fetch.rs `probe`: "`cancel` stops it (yt-dlp can take a while
+/// to look a link up)").
 #[test]
 fn a_lookup_stops_when_canceled() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = crate::TempDir::new("probe-cancel");
-    let path = dir.join("yt-dlp");
-    fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    let yt_dlp = YtDlp { path, js_runtime: None };
-    let cancel = std::sync::Arc::new(AtomicBool::new(false));
-    let stopper = {
-        let cancel = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            cancel.store(true, Ordering::Relaxed);
-            std::time::Instant::now()
-        })
-    };
-    let result = probe(&yt_dlp, "https://example.com/v/1", &dir.join("info.json"), &cancel);
-    let stopped = stopper.join().unwrap();
-    assert!(result.is_err_and(|e| crate::is_canceled(&e)));
-    assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the cancel", stopped.elapsed());
+    let dir = TempDir::new("probe-cancel");
+    let fake = crate::testkit::YtDlp::at(dir.join("yt-dlp"));
+    let looking = crate::testkit::Gate::new();
+    fake.holds_details(&looking);
+    let yt_dlp = YtDlp { path: fake.path().into(), js_runtime: None };
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let probing = s.spawn(|| probe(&yt_dlp, "https://example.com/v/1", &dir.join("info.json"), &cancel));
+        looking.reached();
+        let canceled = std::time::Instant::now();
+        cancel.store(true, Ordering::Relaxed);
+        let result = probing.join().unwrap();
+        assert!(result.is_err_and(|e| crate::is_canceled(&e)));
+        assert!(canceled.elapsed() < std::time::Duration::from_secs(1), "{:?} after the cancel", canceled.elapsed());
+    });
 }
 
 #[test]

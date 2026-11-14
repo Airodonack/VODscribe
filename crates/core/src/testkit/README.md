@@ -102,7 +102,7 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is; `holds_at(0.5, &gate)` once half of it is in. A download is written a quarter at a time to a part file beside its file till it's whole, as yt-dlp's is: one stopped or held partway leaves it, and the next carries on from it. A section's progress is gauged from its part file too, against its bitrate (`tbr` in the details).
 - `app.yt_dlp.is_version("2025.11.12")`: what `--version` says.
 - `app.yt_dlp.holds_details(&gate)`: each look-up of a link's details (an add, a refresh) waits at the gate before it answers.
-- `app.yt_dlp.serves_chat(url, lines)`: a YouTube video's chat replay, each line a moment's messages (`yt_dlp::chat_line(12.0, "@ada", "hi")`), written a line at a time as yt-dlp writes it. A video it serves none of has none. `holds_chat(&gate)` holds each once its first line is written.
+- `app.yt_dlp.serves_chat(url, lines)`: a YouTube video's chat replay, each line a moment's messages (`yt_dlp::chat_line(12.0, "@ada", "hi")`, or `chat_item(12.0, item)` for a Super Chat, a membership…), written a line at a time as yt-dlp writes it. A video it serves none of has none. `holds_chat(&gate)` holds each once its first line is written.
 - `app.worker().holds(&gate)` waits after the first minute it transcribes, and `fails_at(200.0, "message")` fails there.
 - `works()` puts ffmpeg back as it was, and the worker too, keeping what it hears.
 - `app.ffmpeg.runs()` gives the arguments of each run so far, in order.
@@ -173,7 +173,8 @@ Fake media files hold what a file would (length, picture, sound) and what they w
 - `serves(prefix, body)` and `answers(prefix, 404)` answer the links starting with `prefix`, whatever is asked.
 - `replies(prefix, |request| …)` reads each request as the site does (`method`, `url`, `header(…)`, `json()`) and answers with a `Reply` (`Reply::json(&value)`, `Reply::status(429)`, `.with_header("ETag", …)`), or None for a request that isn't the test's, which the next answer is asked.
 - `holds(prefix, &gate)` holds each request to those links at the gate before it's answered.
-- `twitch_chat("2901646294", &[(10.0, "ada", "hello")])` is Twitch's API with that VOD's chat (sites.rs).
+- `twitch_chat("2901646294", &[(10.0, "ada", "hello")])` is Twitch's API with that VOD's chat (sites.rs). `twitch_comments(id, &TwitchChat::of(comments))` serves comments as Twitch gives them (`sites::twitch_comment`), with its cheermotes (`listing`, `listing_none`), pages past the VOD's end refused (`ending_at`), pages refused now and then (`failing`), and the pages asked counted (`pages_asked`). `twitch_clip(slug, Some((vod, offset)), duration)` is a clip.
+- `kick_vod(&KickVod::new(id, channel, duration).started(at).chat(messages))` is Kick's API with that VOD: its playback answer, its playlists, and its channel's chat history (`sites::kick_message`), paged back as Kick pages it.
 
 A request goes to the fake whether it's made through `net::get` or the HTTP clients (Kick's API, Twitch's GQL, the emote services, the file host), and the client does with the answer what it does with a site's: its status, headers, redirects and limits. Tests run at once and see each other's answers, so give a test's links a host of its own, or on a site's own host answer only the test's own ids:
 
@@ -185,7 +186,7 @@ app.net.replies("https://gql.twitch.tv/gql", |asked| {
 });
 ```
 
-Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file (a settings file's read or save, or a check for VODscriptions waiting its turn, `CheckTurn`, or at the end of its pause, `CheckPause`), and `tools::path_for(&bin, &[dir])` for the PATH the system's programs are found on (`NvidiaSmi::in_dir(&dir)` there).
+Core tests use the same fakes without the app: `Library::new()` for the library (`said(10.0, text)` its words half a second each, `spoken(start, text, every, long)` at other times, `library::line(words)` them as one line), `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file (a settings file's read or save, or a check for VODscriptions waiting its turn, `CheckTurn`, or at the end of its pause, `CheckPause`), and `tools::path_for(&bin, &[dir])` for the PATH the system's programs are found on (`NvidiaSmi::in_dir(&dir)` there).
 
 ## Older libraries
 

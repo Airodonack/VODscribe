@@ -243,10 +243,9 @@ fn encoding(codec: ClipCodec, quality: ClipQuality) -> ClipEncoding {
 /// A file is as wanted when it "was made as clips are made now (`now`): in
 /// its format and, with a picture, its codec and quality" (core clips.rs,
 /// `made_as`), so a codec or quality changed in Settings makes a file made
-/// otherwise out of date, as a change of format does. In 0.7.2, changing the
-/// encoding and remaking a clip from the same slice did nothing; 8896230 ("A
-/// clip is made again after a change of codec or quality") fixed it, and this
-/// is its core half.
+/// otherwise out of date, as a change of format does. Decided for 0.7.2: a
+/// clip is made again after a change of codec or quality, not only of format;
+/// this is its core half.
 #[test]
 fn a_file_is_as_wanted_only_in_its_format_codec_and_quality() {
     use ClipCodec::*;

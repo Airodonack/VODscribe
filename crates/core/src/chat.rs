@@ -62,7 +62,7 @@ pub fn vod_start(starts: &[f64]) -> Option<f64> {
 
 /// What a chat message is: someone writing, or an event the site posts in
 /// chat. Recognized from how each site words them (see `twitch_event`,
-/// `kick_event` and `parse_youtube`).
+/// `kick_event` and `parse_youtube_line`).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -511,8 +511,8 @@ fn fetch_kick(
 }
 
 /// Pages back through Kick's history into `store` in `slices` (see
-/// `fetch_kick`); `page` gets the page before a cursor. Apart, so tests can
-/// page through their own.
+/// `fetch_kick`); `page` gets the page before a cursor. Apart, so the live
+/// measure of the slices (`chat_slices_live`) can choose how many.
 fn kick_into(
     store: &mut dyn ChatStore,
     start: f64,
@@ -765,8 +765,8 @@ fn count_gift_bombs_once(store: &mut dyn ChatStore) -> Result<()> {
 }
 
 /// Pages through Twitch's comments into `store` in `slices` (see
-/// `fetch_twitch`); `page` gets the page from an offset. Apart, so tests can
-/// page through their own.
+/// `fetch_twitch_from`); `page` gets the page from an offset. Apart, so the
+/// live measure of the slices (`chat_slices_live`) can choose how many.
 fn twitch_into(
     store: &mut dyn ChatStore,
     span: Span,
@@ -1160,15 +1160,6 @@ impl Tail {
         }
         Ok(())
     }
-}
-
-#[cfg(test)]
-fn parse_youtube(text: &str) -> Vec<ChatMessage> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        parse_youtube_line(line, &mut out);
-    }
-    out
 }
 
 /// Adds the chat messages in one line of yt-dlp's `live_chat.json` to `out`.

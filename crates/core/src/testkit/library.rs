@@ -129,33 +129,45 @@ pub fn add_site_vod_of(db: &Db, platform: &str, id: &str, title: &str, duration:
 
 /// `Library::says`, into `db`: one line of `words`.
 pub fn says(db: &mut Db, vod_id: i64, words: Vec<Word>) {
-    let Some(segment) = line(words) else { return };
-    db.insert_segments(vod_id, &[segment]).unwrap();
+    if words.is_empty() {
+        return;
+    }
+    db.insert_segments(vod_id, &[line(words)]).unwrap();
 }
 
 /// `Library::says_as`, into `db`: one line of `words`, by `speaker`, as an
 /// import writes it (a transcription names no one).
 pub fn says_as(db: &mut Db, vod_id: i64, words: Vec<Word>, speaker: &str) {
-    let Some(s) = line(words) else { return };
+    if words.is_empty() {
+        return;
+    }
+    let s = line(words);
     let sql = format!("INSERT INTO segments ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", crate::db::SEGMENT_COLUMNS);
     let words = serde_json::to_string(&s.words).unwrap();
     db.conn.execute(&sql, rusqlite::params![vod_id, s.start, s.end, s.text, words, speaker]).unwrap();
 }
 
-/// `words` as one line: their text, from the first's start to the last's end.
-fn line(words: Vec<Word>) -> Option<Segment> {
-    let (start, end) = (words.first()?.start, words.last()?.end);
+/// `words` (one at least) as one line of a transcript, as the library keeps
+/// one: their text, from the first's start to the last's end.
+pub fn line(words: Vec<Word>) -> Segment {
+    let (start, end) = (words.first().expect("a word").start, words.last().expect("a word").end);
     let text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
-    Some(Segment { start, end, text, words })
+    Segment { start, end, text, words }
 }
 
 /// `text`'s words said from `start` seconds on, half a second each.
 pub fn said(start: f64, text: &str) -> Vec<Word> {
+    spoken(start, text, 0.5, 0.5)
+}
+
+/// `text`'s words said from `start` seconds on, one every `every` seconds,
+/// each `long` seconds long.
+pub fn spoken(start: f64, text: &str, every: f64, long: f64) -> Vec<Word> {
     text.split_whitespace()
         .enumerate()
         .map(|(i, word)| {
-            let at = start + i as f64 * 0.5;
-            Word { text: word.into(), start: at, end: at + 0.5 }
+            let at = start + i as f64 * every;
+            Word { text: word.into(), start: at, end: at + long }
         })
         .collect()
 }

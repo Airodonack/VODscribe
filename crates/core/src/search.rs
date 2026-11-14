@@ -1166,4 +1166,4 @@ pub(crate) fn highlight(words: &[Word], ranges: &[(usize, usize)]) -> Vec<TextPa
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

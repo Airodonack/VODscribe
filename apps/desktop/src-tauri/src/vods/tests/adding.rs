@@ -548,17 +548,26 @@ fn refresh_details_runs_beside_a_download_or_transcription_without_touching_eith
 /// A second Refresh details of a VOD while its first is under way gets
 /// nothing to do; another VOD's goes ahead, and once the first ends, its
 /// next does (vods.rs `refresh_details`: "None when one for the VOD is
-/// under way already: a second press does nothing"). At `Refreshing::claim`:
-/// at the command it needs yt-dlp's details held at a gate, which the fake
-/// doesn't do yet.
+/// under way already: a second press does nothing"). The first is held
+/// while the site looks it up.
 #[test]
 fn a_second_refresh_of_a_vod_under_way_does_nothing_and_another_vods_goes_ahead() {
-    let under_way = Mutex::default();
-    let first = Refreshing::claim(&under_way, 7).unwrap();
-    assert!(Refreshing::claim(&under_way, 7).is_none());
-    assert!(Refreshing::claim(&under_way, 8).is_some());
-    drop(first);
-    assert!(Refreshing::claim(&under_way, 7).is_some());
+    let app = TestApp::new();
+    let vod = site_vod(&app);
+    let other = app.add_site_vod("peertube", "talk-2", "Another talk", 600.0);
+    let looking = Gate::new();
+    app.yt_dlp.holds_details(&looking);
+    // As the page awaits it, on a thread of its own.
+    let handle = app.handle().clone();
+    let first = thread::spawn(move || tauri::async_runtime::block_on(crate::vods::refresh_details(handle, vod.id)));
+    looking.reached();
+    assert_eq!(refresh(&app, vod.id).unwrap().map(|v| v.id), None, "a second press does nothing");
+    // The site answers what's asked from now at once; the first is still held.
+    app.yt_dlp.holds_details(&Gate::opened());
+    assert_eq!(refresh(&app, other.id).unwrap().map(|v| v.id), Some(other.id), "another VOD's goes ahead");
+    looking.open();
+    assert_eq!(first.join().unwrap().unwrap().map(|v| v.id), Some(vod.id));
+    assert_eq!(refresh(&app, vod.id).unwrap().map(|v| v.id), Some(vod.id), "its next, once the first ended");
 }
 
 /// The file picker offers the extensions VODscribe plays, and a file of each

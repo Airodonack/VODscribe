@@ -1204,6 +1204,11 @@ pub(crate) fn at(stamp: &str) -> f64 {
         .expect("a time as 1:02:03")
 }
 
+/// Whether two lengths in seconds are the same to the millisecond.
+pub(crate) fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() < 0.001
+}
+
 /// The system's desktop as the tests have it (system.rs): what it was asked
 /// to show and open.
 #[derive(Default)]

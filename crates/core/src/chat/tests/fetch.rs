@@ -1,8 +1,10 @@
 //! Fetching a chat: slices, carrying on where a fetch stopped, pages asked again, YouTube's file read as
-//! yt-dlp writes it.
+//! yt-dlp writes it. Twitch's and Kick's come from their APIs as the kit's network answers them (`TwitchChat`,
+//! `KickVod`), YouTube's from the kit's yt-dlp.
 
 use super::*;
-use std::sync::atomic::AtomicUsize;
+use crate::testkit::sites::{self, TwitchChat};
+use crate::testkit::{Gate, Net, yt_dlp};
 
 /// When the fake chats' VOD started (Unix seconds).
 const FAKE_START: f64 = 1790631000.0;
@@ -32,54 +34,70 @@ fn saved(store: &MemoryChat) -> Vec<String> {
     m.iter().map(|m| m.text()).collect()
 }
 
+/// Every message of `all`, by its text, in time order.
+fn all_of(all: &[(String, ChatMessage)]) -> Vec<String> {
+    saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None })
+}
+
+/// `all` as Twitch's GraphQL API gives its comments, each with its id, and when it was sent to the second.
+fn comments(all: &[(String, ChatMessage)]) -> Vec<Value> {
+    let comment = |(id, m): &(String, ChatMessage)| {
+        let mut c = sites::twitch_comment(m.time, &m.author, &m.text());
+        (c["id"], c["createdAt"]) = (json!(id), json!(m.at.map(crate::db::utc_time)));
+        c
+    };
+    all.iter().map(comment).collect()
+}
+
+/// `fetch` of Twitch or Kick VOD `info`'s chat into `store`, with how far it got each time it said.
+fn fetched_with_progress(info: &VodInfo, store: &mut MemoryChat) -> (Result<bool>, Vec<f64>) {
+    let mut progress = Vec::new();
+    let result = fetch(info, None, Path::new("no-yt-dlp-chat"), store, &AtomicBool::new(false), |f| progress.push(f));
+    (result, progress)
+}
+
+/// A Twitch chat's fetch that stopped partway, the network dropping, carries on from where each slice got to and ends
+/// with every message once (chat.rs `ChatStore`: "so one that's interrupted (quitting, a network error) carries on from
+/// there"); a clip's is its broadcast's over its stretch, at the clip's times (chat.rs `fetch_twitch_from`: "A clip's
+/// chat is its broadcast's over the clip's stretch, at the clip's times"); and a VOD's whose length Twitch didn't say
+/// is read to its end.
 #[test]
 fn a_twitch_fetch_carries_on_where_it_stopped() {
-    // 3,000 messages, 7 a second; pages of 100 from an offset, as Twitch serves them.
-    let all: Vec<_> = (0..3000).map(|n| fake(n, 7)).collect();
-    let page = |offset: i64, _: &AtomicBool| {
-        let from: Vec<_> = all.iter().filter(|(_, m)| m.time as i64 >= offset).cloned().collect();
-        let more = from.len() > 100;
-        Ok((from.into_iter().take(100).collect::<Vec<_>>(), more))
-    };
-    let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None });
-    let no = AtomicBool::new(false);
-
-    for slices in [1, 4] {
+    // 3,000 messages, 7 a second, fetched in one slice; 2,400, one a second, in four.
+    let seven_a_second: Vec<_> = (0..3000).map(|n| fake(n, 7)).collect();
+    let one_a_second: Vec<_> = (0..2400).map(|n| fake(n, 1)).collect();
+    for (slices, duration, all) in [(1, 430.0, &seven_a_second), (4, 2400.0, &one_a_second)] {
+        assert_eq!(slices_for(duration), slices);
+        let number = own_twitch_number();
+        let info = twitch_vod(&number, Some(duration));
         // Fails partway (the network drops), after some batches were saved.
         let mut store = MemoryChat::default();
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let failing = |offset: i64, stop: &AtomicBool| {
-            if calls.fetch_add(1, Ordering::Relaxed) >= 20 { anyhow::bail!("network down") } else { page(offset, stop) }
-        };
-        assert!(
-            twitch_into(
-                &mut store,
-                Span { start: 0.0, duration: Some(430.0), end: None },
-                slices,
-                failing,
-                &no,
-                &mut |_| {}
-            )
-            .is_err()
-        );
+        let net = Net::new();
+        net.twitch_comments(&number, &TwitchChat::of(comments(all)).failing(|n| n >= 20));
+        assert!(fetch_from_site(&info, &mut store, &AtomicBool::new(false)).is_err(), "{slices} slices");
+        drop(net);
         let partial = store.messages.len();
-        assert!((1000..3000).contains(&partial), "{slices} slices: saved {partial} before failing");
+        assert!((1000..all.len()).contains(&partial), "{slices} slices: saved {partial} before failing");
         assert_eq!(store.positions.as_ref().map(Vec::len), Some(slices));
 
         // Carrying on ends with every message, once.
-        let mut progress = Vec::new();
-        twitch_into(&mut store, Span { start: 0.0, duration: Some(430.0), end: None }, slices, page, &no, &mut |f| {
-            progress.push(f)
-        })
-        .unwrap();
-        assert_eq!(saved(&store), expected, "{slices} slices");
+        let net = Net::new();
+        net.twitch_comments(&number, &TwitchChat::of(comments(all)));
+        let (fetched, progress) = fetched_with_progress(&info, &mut store);
+        assert!(fetched.unwrap());
+        assert_eq!(saved(&store), all_of(all), "{slices} slices");
         assert_eq!(progress.last(), Some(&1.0));
     }
 
     // A clip: 30 s from 100 s in, at the clip's own times.
+    let all = &seven_a_second;
+    let number = own_twitch_number();
+    let slug = format!("AClipOf{number}");
+    let net = Net::new();
+    net.twitch_comments(&number, &TwitchChat::of(comments(all))).twitch_clip(&slug, Some((&number, 100.0)), 30.0);
     let mut store = MemoryChat::default();
-    let clip = Span { start: 100.0, duration: Some(30.0), end: Some(130.0) };
-    twitch_into(&mut store, clip, 1, page, &no, &mut |_| {}).unwrap();
+    let clip = VodInfo { platform_id: slug, ..twitch_vod(&number, Some(30.0)) };
+    assert!(fetch_from_site(&clip, &mut store, &AtomicBool::new(false)).unwrap());
     let in_clip: Vec<ChatMessage> = all
         .iter()
         .filter(|(_, m)| (100.0..130.0).contains(&m.time))
@@ -90,80 +108,27 @@ fn a_twitch_fetch_carries_on_where_it_stopped() {
 
     // A VOD whose length Twitch didn't say: one slice, read to its end.
     let mut store = MemoryChat::default();
-    let unknown = Span { start: 0.0, duration: None, end: None };
-    twitch_into(&mut store, unknown, 1, page, &no, &mut |_| {}).unwrap();
-    assert_eq!(saved(&store), expected, "every message");
+    assert!(fetch_from_site(&twitch_vod(&number, None), &mut store, &AtomicBool::new(false)).unwrap());
+    assert_eq!(saved(&store), all_of(all), "every message");
 }
 
-/// What Twitch answers for a comments page it won't give, as it did on
-/// 2026-10-24 for the test VOD (67 s long) from 69 s on.
-fn service_error() -> Value {
-    json!({ "errors": [{ "message": "service error", "path": ["video", "comments"] }],
-        "data": { "video": { "comments": null } },
-        "extensions": { "durationMilliseconds": 41, "requestID": "01M5Q9JGMYCF91S411PH3FN0ES" } })
-}
-
-/// Twitch's GraphQL API serving `all` in pages of 100 from an offset, as
-/// it does, for a VOD `length` seconds long, with `fail(n)` saying whether
-/// its nth comments page (from 0) is answered with an error instead, as
-/// Twitch answers now and then. Pages from more than a second past the
-/// end are always refused, as Twitch's are. Counts the comments pages
-/// asked for in `asked`.
-fn twitch_answering<'a>(
-    all: &'a [(String, ChatMessage)],
-    length: f64,
-    asked: &'a AtomicUsize,
-    fail: impl Fn(usize) -> bool + Sync + 'a,
-) -> impl Fn(&Value, &AtomicBool) -> Result<Value> + Sync + 'a {
-    move |body: &Value, _: &AtomicBool| {
-        // The cheermotes' list: none beyond the built-in ones.
-        let Some(offset) = body.pointer("/variables/offset").and_then(Value::as_i64) else {
-            return Ok(json!({ "data": {} }));
-        };
-        if fail(asked.fetch_add(1, Ordering::Relaxed)) || offset as f64 > length + 1.0 {
-            return Ok(service_error());
-        }
-        let from: Vec<_> = all.iter().filter(|(_, m)| m.time as i64 >= offset).collect();
-        let edges: Vec<Value> = from
-            .iter()
-            .take(100)
-            .map(|(id, m)| {
-                json!({ "node": { "id": id, "contentOffsetSeconds": m.time, "createdAt": m.at.map(crate::db::utc_time),
-                    "commenter": { "displayName": m.author },
-                    "message": { "userColor": null, "fragments": [{ "text": m.text(), "emote": null }] } } })
-            })
-            .collect();
-        Ok(json!({ "data": { "video": { "comments": {
-            "edges": edges, "pageInfo": { "hasNextPage": from.len() > 100 } } } } }))
-    }
-}
-
+/// A Twitch page that fails for a moment is asked again, up to five times, and then the fetch stops with what it had
+/// (chat.rs `PAGE_RETRIES`: "five tries over about half a minute, then the fetch stops (and keeps what it saved)").
 #[test]
 fn a_twitch_page_that_fails_for_a_moment_is_asked_again() {
     let all: Vec<_> = (0..3000).map(|n| fake(n, 7)).collect();
-    let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None });
-    let info = VodInfo {
-        platform: "twitch".into(),
-        platform_id: "2901646294".into(),
-        url: String::new(),
-        title: String::new(),
-        channel: None,
-        channel_login: None,
-        channel_url: None,
-        duration: Some(430.0),
-        thumbnail: None,
-        published: None,
-        started_at: None,
-    };
-    let no = AtomicBool::new(false);
+    let number = own_twitch_number();
+    let info = twitch_vod(&number, Some(430.0));
 
     // Page, "service error", page: the error is asked again, and the fetch ends whole.
     let mut store = MemoryChat::default();
-    let asked = AtomicUsize::new(0);
-    let ask = twitch_answering(&all, 430.0, &asked, |n| n == 1);
-    assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
-    assert_eq!(saved(&store), expected);
-    assert!(asked.load(Ordering::Relaxed) > 30, "paged through");
+    let net = Net::new();
+    let chat = TwitchChat::of(comments(&all)).ending_at(430.0).failing(|n| n == 1);
+    net.twitch_comments(&number, &chat);
+    assert!(fetch_from_site(&info, &mut store, &AtomicBool::new(false)).unwrap());
+    drop(net);
+    assert_eq!(saved(&store), all_of(&all));
+    assert!(chat.pages_asked() > 30, "paged through");
     // Each message sent within its second, given to the second: the VOD started then.
     let starts: Vec<f64> = store.messages.iter().filter_map(ChatMessage::start).collect();
     assert_eq!(starts.len(), 3000);
@@ -173,37 +138,28 @@ fn a_twitch_page_that_fails_for_a_moment_is_asked_again() {
     // Twitch keeps refusing from the 11th page on: five tries, then the
     // fetch stops with what it had, and carries on from there once Twitch answers.
     let mut store = MemoryChat::default();
-    let asked = AtomicUsize::new(0);
-    let ask = twitch_answering(&all, 430.0, &asked, |n| n >= 10);
-    let e = fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap_err();
+    let net = Net::new();
+    let chat = TwitchChat::of(comments(&all)).ending_at(430.0).failing(|n| n >= 10);
+    net.twitch_comments(&number, &chat);
+    let e = fetch_from_site(&info, &mut store, &AtomicBool::new(false)).unwrap_err();
+    drop(net);
     assert_eq!(format!("{e:#}"), "Twitch wouldn't give the chat: service error");
-    assert_eq!(asked.load(Ordering::Relaxed), 10 + PAGE_RETRIES.len() + 1, "asked five times");
+    assert_eq!(chat.pages_asked(), 10 + PAGE_RETRIES.len() + 1, "asked five times");
     let partial = store.messages.len();
     assert!((900..3000).contains(&partial), "saved {partial} before it stopped");
-    let ask = twitch_answering(&all, 430.0, &asked, |_| false);
-    assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
-    assert_eq!(saved(&store), expected, "every message, once");
+    let net = Net::new();
+    net.twitch_comments(&number, &TwitchChat::of(comments(&all)).ending_at(430.0));
+    assert!(fetch_from_site(&info, &mut store, &AtomicBool::new(false)).unwrap());
+    assert_eq!(saved(&store), all_of(&all), "every message, once");
 }
 
+/// A Twitch fetch ends at the VOD's end, though Twitch's pages say there are more and refuse to give them (chat.rs
+/// `twitch_into`: "the last one runs on to the span's end, or past the VOD's").
 #[test]
 fn a_twitch_fetch_stops_at_the_vods_end() {
     // 3,024 messages, 7 a second, to 431 s: the chat runs on past the
     // VOD's end, at 418 s.
     let all: Vec<_> = (0..3024).map(|n| fake(n, 7)).collect();
-    let info = VodInfo {
-        platform: "twitch".into(),
-        platform_id: "2901646294".into(),
-        url: String::new(),
-        title: String::new(),
-        channel: None,
-        channel_login: None,
-        channel_url: None,
-        duration: Some(418.0),
-        thumbnail: None,
-        published: None,
-        started_at: None,
-    };
-    let no = AtomicBool::new(false);
     // The messages before `end` saved, and all of them.
     let before = |store: &MemoryChat, end: f64| {
         let of = |m: &[ChatMessage]| {
@@ -214,79 +170,73 @@ fn a_twitch_fetch_stops_at_the_vods_end() {
 
     // The page from 406 s ends at 420 s and says there's more, which
     // Twitch refuses to give.
+    let number = own_twitch_number();
+    let net = Net::new();
+    net.twitch_comments(&number, &TwitchChat::of(comments(&all)).ending_at(418.0));
     let mut store = MemoryChat::default();
-    let asked = AtomicUsize::new(0);
-    let ask = twitch_answering(&all, 418.0, &asked, |_| false);
-    assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
+    assert!(fetch_from_site(&twitch_vod(&number, Some(418.0)), &mut store, &AtomicBool::new(false)).unwrap());
     let (got, all_before) = before(&store, 418.0);
     assert_eq!(got, all_before, "every message before the end");
 
     // Every page saying there's more, even the empty ones after the chat's
     // last message: still the end.
     for length in [418.0, 440.0] {
+        let number = own_twitch_number();
+        net.twitch_comments(&number, &TwitchChat::of(comments(&all)).ending_at(length).always_saying_more());
         let mut store = MemoryChat::default();
-        let asked = AtomicUsize::new(0);
-        let honest = twitch_answering(&all, length, &asked, |_| false);
-        let ask = |body: &Value, stop: &AtomicBool| {
-            let mut page = honest(body, stop)?;
-            if let Some(more) = page.pointer_mut("/data/video/comments/pageInfo/hasNextPage") {
-                *more = json!(true);
-            }
-            Ok(page)
-        };
-        let info = VodInfo { duration: Some(length), ..info.clone() };
-        assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap(), "{length} s");
+        assert!(fetch_from_site(&twitch_vod(&number, Some(length)), &mut store, &AtomicBool::new(false)).unwrap());
         let (got, all_before) = before(&store, length);
         assert_eq!(got, all_before, "{length} s");
         // Of unknown length, with the chat ending before the VOD: up to the first empty page.
         if length > 431.0 {
-            let info = VodInfo { duration: None, ..info.clone() };
             let mut store = MemoryChat::default();
-            assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap(), "unknown length");
+            assert!(fetch_from_site(&twitch_vod(&number, None), &mut store, &AtomicBool::new(false)).unwrap());
             let (got, all_before) = before(&store, length);
             assert_eq!(got, all_before, "unknown length");
         }
     }
 }
 
+/// A Kick chat's fetch that stopped partway carries on from where each slice got to and ends with every message once
+/// (chat.rs `ChatStore`: "so one that's interrupted (quitting, a network error) carries on from there"), each saying
+/// when the VOD started.
 #[test]
 fn a_kick_fetch_carries_on_where_it_stopped() {
-    // 3,000 messages over 500 s from Unix time 1000, paged back 25 at a time by cursor, as Kick serves them.
-    let start = 1000.0;
-    // Kick's cursors are to the microsecond, so no two messages share one.
-    let all: Vec<_> = (0..3000)
-        .map(|n| {
-            let (id, m) = fake(n, 1);
-            (id, ChatMessage { time: n as f64 / 6.0, ..m })
-        })
-        .collect();
-    let page = |cursor: i64, _: &AtomicBool| {
-        let mut older: Vec<_> = all.iter().filter(|(_, m)| ((start + m.time) * 1e6) < cursor as f64).cloned().collect();
-        older.sort_by(|a, b| {
-            b.1.time.total_cmp(&a.1.time).then(b.0.parse::<usize>().unwrap().cmp(&a.0.parse().unwrap()))
-        });
-        let page: Vec<_> = older.into_iter().take(25).collect();
-        let next = page.last().map(|(_, m)| ((start + m.time) * 1e6) as i64);
-        let rows = page.into_iter().map(|(id, m)| (start + m.time, id, ChatMessage { time: 0.0, ..m }, None)).collect();
-        Ok((rows, next))
-    };
-    let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None });
-    let no = AtomicBool::new(false);
+    // 3,000 messages paged back 25 at a time by cursor, as Kick serves them: over 500 s, fetched in one slice, and over
+    // 2,400 s, in four. Kick's cursors are to the microsecond, so no two messages share one.
+    for (slices, duration) in [(1, 500.0), (4, 2400.0)] {
+        assert_eq!(slices_for(duration), slices);
+        let all: Vec<_> = (0..3000)
+            .map(|n| {
+                let (id, m) = fake(n, 1);
+                (id, ChatMessage { time: n as f64 * duration / 3000.0, ..m })
+            })
+            .collect();
+        let history: Vec<Value> = all
+            .iter()
+            .map(|(id, m)| {
+                let mut said = sites::kick_message(FAKE_START + m.time, &m.author, &m.text());
+                said["id"] = json!(id);
+                said
+            })
+            .collect();
+        let vod = own_kick_vod(duration).started(FAKE_START).chat(history);
+        let info = kick_vod(&vod, duration);
 
-    for slices in [1, 4] {
         let mut store = MemoryChat::default();
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let failing = |cursor: i64, stop: &AtomicBool| {
-            if calls.fetch_add(1, Ordering::Relaxed) >= 60 { anyhow::bail!("network down") } else { page(cursor, stop) }
-        };
-        assert!(kick_into(&mut store, start, 500.0, slices, failing, &no, &mut |_| {}).is_err());
+        let net = Net::new();
+        net.kick_vod(&vod.clone().failing(|n| n >= 60));
+        assert!(fetch_from_site(&info, &mut store, &AtomicBool::new(false)).is_err(), "{slices} slices");
+        drop(net);
         assert!(!store.messages.is_empty() && store.messages.len() < 3000, "{slices} slices");
         assert_eq!(store.positions.as_ref().map(Vec::len), Some(slices));
 
-        kick_into(&mut store, start, 500.0, slices, page, &no, &mut |_| {}).unwrap();
-        assert_eq!(saved(&store), expected, "{slices} slices");
+        let net = Net::new();
+        net.kick_vod(&vod);
+        assert!(fetch_from_site(&info, &mut store, &AtomicBool::new(false)).unwrap());
+        assert_eq!(saved(&store), all_of(&all), "{slices} slices");
         // Each message's time sent is Kick's, so each says when the VOD started.
-        assert!(store.messages.iter().all(|m| m.start().is_some_and(|s| (s - start).abs() < 1e-6)));
+        assert!(store.messages.iter().all(|m| m.start().is_some_and(|s| (s - FAKE_START).abs() < 1e-5)));
     }
 }
 
@@ -313,33 +263,16 @@ fn tail_reads_whole_lines_as_they_come() {
     assert_eq!(read(&mut tail, true), ["d"], "and the last one at the end");
 }
 
-/// A stand-in yt-dlp that writes its chat file as yt-dlp does: to a `.part`,
-/// a line at a time (one message at 10 s, 20 s, …), `step` seconds apart,
-/// then renamed.
-#[cfg(unix)]
-fn fake_yt_dlp(dir: &Path, lines: u32, step: f64) -> YtDlp {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join(format!("yt-dlp-{lines}"));
-    let mut script =
-        "#!/bin/sh\nwhile [ \"$1\" != -o ]; do shift; done\nf=\"$2.live_chat.json\"\n: > \"$f.part\"\n".to_string();
-    for i in 1..=lines {
-        let line = format!(
-            r#"{{"replayChatItemAction":{{"videoOffsetTimeMsec":"{}","actions":[{{"addChatItemAction":{{"item":{{"liveChatTextMessageRenderer":{{"authorName":{{"simpleText":"@a"}},"message":{{"runs":[{{"text":"hi"}}]}}}}}}}}}}]}}}}"#,
-            i * 10_000
-        );
-        script += &format!("echo '{line}' >> \"$f.part\"\nsleep {step}\n");
-    }
-    script += "mv \"$f.part\" \"$f\"\n";
-    fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    YtDlp { path, js_runtime: None }
-}
-
-#[cfg(unix)]
+/// A YouTube chat's fetch stopped while yt-dlp writes it ends promptly, and leaves no files behind; left to finish,
+/// the chat is read as it's written, with how far it has got, and its file removed (chat.rs `fetch_youtube`: "reading
+/// it into `store` as yt-dlp writes it … and reporting how far into the VOD it has got", "`cancel` stops yt-dlp and the
+/// reading").
 #[test]
 fn youtube_chat_stops_and_fetches() {
     let tools = crate::TempDir::new("youtube-chat-tools");
     let work = crate::TempDir::new("youtube-chat");
+    let fake = crate::testkit::YtDlp::at(tools.join("yt-dlp"));
+    let yt_dlp = YtDlp { path: fake.path().into(), js_runtime: None };
     let info = VodInfo {
         platform: "youtube".into(),
         platform_id: "x".into(),
@@ -353,44 +286,42 @@ fn youtube_chat_stops_and_fetches() {
         published: None,
         started_at: None,
     };
-    // Stopped while yt-dlp runs: it ends promptly, and leaves no files behind.
-    let cancel = std::sync::Arc::new(AtomicBool::new(false));
-    let stopper = {
-        let cancel = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            cancel.store(true, Ordering::Relaxed);
-            std::time::Instant::now()
-        })
-    };
-    let yt_dlp = fake_yt_dlp(&tools, 1, 30.0);
-    let result = fetch_youtube(&info, &yt_dlp, &work.join("chat-7"), &mut MemoryChat::default(), &cancel, &mut |_| {});
-    let stopped = stopper.join().unwrap();
-    assert!(result.is_err_and(|e| crate::is_canceled(&e)));
-    assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the stop", stopped.elapsed());
+    // One message at 10 s, 20 s and 30 s.
+    fake.serves_chat(&info.url, [10.0, 20.0, 30.0].iter().map(|&at| yt_dlp::chat_line(at, "@a", "hi")).collect());
+    let stem = work.join("chat-7");
+
+    // Stopped while yt-dlp writes it: it ends promptly, and leaves no files behind.
+    let writing = Gate::new();
+    fake.holds_chat(&writing);
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let fetching = s.spawn(|| fetch(&info, Some(&yt_dlp), &stem, &mut MemoryChat::default(), &cancel, |_| {}));
+        writing.reached();
+        let stopped = std::time::Instant::now();
+        cancel.store(true, Ordering::Relaxed);
+        assert!(fetching.join().unwrap().is_err_and(|e| crate::is_canceled(&e)));
+        assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the stop", stopped.elapsed());
+    });
     assert_eq!(fs::read_dir(&*work).unwrap().count(), 0, "no files left");
+
     // Left to finish: the chat is read as it's written, with how far it has
     // got (of a 40 s VOD), and its file removed.
+    let writing = Gate::new();
+    fake.holds_chat(&writing);
     let mut store = MemoryChat::default();
-    let begun = std::time::Instant::now();
-    let mut progress = Vec::new();
-    let yt_dlp = fake_yt_dlp(&tools, 3, 0.4);
-    let fetched = fetch_youtube(&info, &yt_dlp, &work.join("chat-7"), &mut store, &AtomicBool::new(false), &mut |f| {
-        progress.push((f, begun.elapsed()))
+    let (told, progress) = std::sync::mpsc::channel();
+    let fetched = std::thread::scope(|s| {
+        let fetching = s.spawn(|| {
+            fetch(&info, Some(&yt_dlp), &stem, &mut store, &AtomicBool::new(false), |f| told.send(f).unwrap())
+        });
+        let first = progress.recv_timeout(std::time::Duration::from_secs(5));
+        assert_eq!(first, Ok(0.25), "the first line read while yt-dlp writes the rest");
+        writing.open();
+        fetching.join().unwrap()
     });
-    let ended = begun.elapsed();
     assert!(fetched.unwrap());
     assert_eq!(store.messages.len(), 3);
-    let fractions: Vec<f64> = progress.iter().map(|p| p.0).collect();
-    assert_eq!(fractions, [0.25, 0.5, 0.75]);
-    // The first line is written 1.2 s before the rename. Measured from the
-    // end, not the start: a script just written may take most of a second
-    // to start on macOS.
-    let before_the_end = ended - progress[0].1;
-    assert!(
-        before_the_end > std::time::Duration::from_millis(600),
-        "the first line read {before_the_end:?} before yt-dlp was done"
-    );
+    assert_eq!(progress.try_iter().collect::<Vec<f64>>(), [0.5, 0.75]);
     assert_eq!(fs::read_dir(&*work).unwrap().count(), 0, "no files left");
 }
 

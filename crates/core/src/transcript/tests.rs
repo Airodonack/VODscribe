@@ -2,6 +2,7 @@
 //! the lines the library keeps, the terms a search matches, and captions.
 
 use super::*;
+use crate::testkit::library::line;
 
 fn s(v: &[&str]) -> Vec<String> {
     v.iter().map(|x| x.to_string()).collect()
@@ -10,16 +11,6 @@ fn s(v: &[&str]) -> Vec<String> {
 /// A word said at `start`, for 0.3 s.
 fn w(text: &str, start: f64) -> Word {
     Word { text: text.into(), start, end: start + 0.3 }
-}
-
-/// A line of the transcript made of `words`, as the library keeps one.
-fn line(words: Vec<Word>) -> Segment {
-    Segment {
-        start: words[0].start,
-        end: words.last().unwrap().end,
-        text: words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "),
-        words,
-    }
 }
 
 fn texts(cues: &[Cue]) -> Vec<&str> {

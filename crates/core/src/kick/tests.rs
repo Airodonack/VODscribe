@@ -1,9 +1,25 @@
 //! The specs of `kick.rs`: its parsers of Kick's links and answers (a
-//! parser, so the function is the spec), and what's refused before Kick is
-//! asked. Kick's API itself isn't faked yet, so `resolve`, `variants` and
-//! `chat_origin` against its answers wait.
+//! parser, so the function is the spec), what's refused before Kick is
+//! asked, and `resolve`, `variants` and `chat_origin` against Kick's API as
+//! the kit's network answers it (`KickVod`).
 
 use super::*;
+use crate::testkit::sites::KickVod;
+use crate::testkit::{Net, Reply};
+
+/// When the VODs here started, in Unix seconds: 2026-09-28T21:30:00Z.
+const STARTED: f64 = 1790631000.0;
+
+/// Kick VOD `n` of these tests', an hour long, on channel `6_000_000 + n`.
+fn a_kick_vod(n: u64) -> KickVod {
+    KickVod::new(&format!("01a0e9a8-a9e0-797e-9647-{n:012x}"), 6_000_000 + n, 3600.0)
+}
+
+/// Its playback answer for a VOD of these tests' is `status` with `body`.
+fn playback_answers(net: &Net, vod: u64, status: u16, body: Value) {
+    let url = format!("https://web.kick.com/api/v1/stream/01a0e9a8-a9e0-797e-9647-{vod:012x}/playback");
+    net.replies(&url, move |_| Some(Reply { status, ..Reply::json(&body) }));
+}
 
 /// A `kick.com/<channel>/videos/<id>` link gives its channel's slug and
 /// the video's id, and nothing else is one (kick.rs `parse_vod_url`: "Returns (channel
@@ -102,6 +118,81 @@ fn a_master_playlist_lists_each_quality_with_its_height_and_playlist() {
     assert_eq!(v.len(), 2);
     assert_eq!((v[0].name.as_str(), v[0].height, v[0].url.as_str()), ("720p60", 720, "https://cdn/1.m3u8"));
     assert_eq!((v[1].name.as_str(), v[1].height, v[1].url.as_str()), ("160p30", 160, "https://cdn/4.m3u8"));
+}
+
+/// A Kick VOD is resolved, as Kick's playback answer gives it, to its
+/// details and its manifest (kick.rs `resolve`: "Resolves a Kick VOD to its
+/// metadata and a (short-lived, signed) HLS manifest URL").
+#[test]
+fn a_kick_vod_resolves_to_its_details_and_manifest() {
+    let net = Net::new();
+    let vod = a_kick_vod(1);
+    net.kick_vod(&vod);
+    let (info, manifest) = resolve(&vod.url()).unwrap();
+    assert_eq!((info.platform.as_str(), info.url.as_str()), ("kick", vod.url().as_str()));
+    assert_eq!((info.title.as_str(), info.channel.as_deref()), ("A stream", Some("Barky")));
+    assert_eq!((info.channel_login.as_deref(), info.duration), (Some("barky"), Some(3600.0)));
+    assert_eq!(manifest, vod.master());
+}
+
+/// A VOD Kick says doesn't exist, and one Kick fails to answer for, aren't
+/// resolved, saying which (kick.rs `resolve`: "Kick says this VOD doesn't
+/// exist. It may have been deleted or made private.", "Kick isn't
+/// responding right now ({status} {kind}). Try again later.").
+#[test]
+fn a_kick_vod_kick_does_not_have_or_does_not_answer_for_is_not_resolved() {
+    let net = Net::new();
+    playback_answers(&net, 2, 404, json!({}));
+    playback_answers(&net, 3, 503, json!({ "data": { "type": "unavailable" } }));
+    let gone = resolve(&a_kick_vod(2).url()).unwrap_err();
+    assert_eq!(format!("{gone:#}"), "Kick says this VOD doesn't exist. It may have been deleted or made private.");
+    let down = resolve(&a_kick_vod(3).url()).unwrap_err();
+    assert_eq!(format!("{down:#}"), "Kick isn't responding right now (503 unavailable). Try again later.");
+}
+
+/// A Kick VOD's qualities are those its master playlist lists, each with
+/// its own playlist, and a VOD whose playlist lists none can't be played
+/// (kick.rs `variants`: "Lists a VOD's quality levels, for playback",
+/// "Kick didn't offer a way to play this VOD.").
+#[test]
+fn a_kick_vods_qualities_are_those_its_master_playlist_lists() {
+    let net = Net::new();
+    let vod = a_kick_vod(4);
+    net.kick_vod(&vod);
+    let listed: Vec<_> = variants(&vod.url()).unwrap().into_iter().map(|v| (v.name, v.height, v.url)).collect();
+    assert_eq!(
+        listed,
+        [("1080p60".into(), 1080, vod.playlist("1080p60")), ("360p30".into(), 360, vod.playlist("360p30"))]
+    );
+    let none = a_kick_vod(5);
+    net.serves(&none.master(), "#EXTM3U\n");
+    net.kick_vod(&none);
+    assert_eq!(format!("{:#}", variants(&none.url()).unwrap_err()), "Kick didn't offer a way to play this VOD.");
+}
+
+/// A VOD's chat is in its channel's history, from when its playlist's first
+/// segment was, or failing that the time in its id (kick.rs `chat_origin`:
+/// "Finds VOD `id`'s channel and start time. The start is the wall-clock
+/// time the media playlist gives its first segment; failing that, the time
+/// in the VOD's id (a UUIDv7, made when the stream started)").
+#[test]
+fn a_kick_vods_chat_is_its_channels_from_when_it_started() {
+    let net = Net::new();
+    let vod = a_kick_vod(6).started(STARTED);
+    net.kick_vod(&vod);
+    let (_, id) = parse_vod_url(&vod.url()).unwrap();
+    assert_eq!(chat_origin(&id).unwrap(), ChatOrigin { channel: 6_000_006, start: STARTED });
+    let undated = a_kick_vod(7);
+    net.kick_vod(&undated);
+    let (_, id) = parse_vod_url(&undated.url()).unwrap();
+    // 01a0e9a8-a9e0 is 2026-09-28T20:15:40Z.
+    assert_eq!(chat_origin(&id).unwrap(), ChatOrigin { channel: 6_000_007, start: 1790626540.0 });
+    playback_answers(&net, 8, 500, json!({}));
+    let (_, id) = parse_vod_url(&a_kick_vod(8).url()).unwrap();
+    assert_eq!(
+        format!("{:#}", chat_origin(&id).unwrap_err()),
+        "Kick isn't responding right now (500). Try again later."
+    );
 }
 
 #[test]

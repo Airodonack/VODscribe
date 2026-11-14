@@ -78,7 +78,7 @@ test("quotes make strict pieces", () => {
   assert.deepEqual(tree('"" hello'), typing("hello"), "an empty quote is nothing");
 });
 
-test("the owner's examples", () => {
+test("the worked examples read as decided", () => {
   assert.deepEqual(tree('well that was a good shot "damn"'), and([loose("well that was a good shot"), strict("damn")]));
   assert.deepEqual(tree('(well that was a good shot "damn")'), tree('well that was a good shot "damn"'));
   assert.deepEqual(tree("i did it -frick"), and([loose("i did it"), not(loose("frick"))]));

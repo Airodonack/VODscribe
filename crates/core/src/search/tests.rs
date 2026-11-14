@@ -16,24 +16,21 @@ thread_local! {
     pub(super) static EACH_WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn library() -> Db {
+/// An empty library in memory, for the search specs here and in
+/// db/tests/search.rs.
+pub(crate) fn library() -> Db {
     Db::open(Path::new(":memory:")).unwrap()
 }
 
 /// A VOD of a site, `id`, an hour long, streamed on `channel`.
-fn vod(db: &Db, id: &str, channel: &str) -> i64 {
+pub(crate) fn vod(db: &Db, id: &str, channel: &str) -> i64 {
     crate::testkit::library::add_site_vod_of(db, "twitch", id, id, 3600.0, Some(channel)).id
 }
 
-/// A line of `text` from `start`, a word every 0.3 s, each 0.25 s long.
-fn say(db: &mut Db, vod: i64, start: f64, text: &str) {
-    let words: Vec<Word> = text
-        .split(' ')
-        .enumerate()
-        .map(|(i, t)| Word { text: t.into(), start: start + i as f64 * 0.3, end: start + i as f64 * 0.3 + 0.25 })
-        .collect();
-    let end = words.last().unwrap().end;
-    db.insert_segments(vod, &[Segment { start, end, text: text.into(), words }]).unwrap();
+/// A line of `text` from `start`, a word every 0.3 s, each 0.25 s long, as
+/// the website's demo search says its lines (search.test.mjs).
+pub(crate) fn say(db: &mut Db, vod: i64, start: f64, text: &str) {
+    crate::testkit::library::says(db, vod, crate::testkit::library::spoken(start, text, 0.3, 0.25));
 }
 
 /// The anchor, the word a search looks up first, is the pieces' rarest

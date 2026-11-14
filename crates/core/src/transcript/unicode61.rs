@@ -1,6 +1,6 @@
 //! How the search index's tokenizer, SQLite's `unicode61 remove_diacritics
-//! 2`, treats each character past ASCII, from SQLite 3.53.1 itself:
-//! written by scripts/unicode61.py, checked by transcript/tests.rs.
+//! 2`, treats each character past ASCII, as the app's SQLite 3.53.2 does:
+//! written by scripts/unicode61.py, checked against it by transcript/tests.rs.
 
 /// The characters that part words, as inclusive ranges in order.
 #[rustfmt::skip]

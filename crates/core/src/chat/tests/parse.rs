@@ -1,83 +1,46 @@
 //! What each site's chat says, read: each message's time, author, colour and emotes; the subs, gifts and
 //! tips the sites post in chat, and their amounts; and when the VOD started, by the messages' times sent.
-//! Twitch's chat is read through `fetch_twitch_from` with Twitch's answers recorded, Kick's through
-//! `kick_into` with its history pages recorded (Kick's API itself, and the step after that makes
-//! announced resubs plain messages, wait for its fake), and YouTube's a line of yt-dlp's file at a time
-//! (yt-dlp itself waits for its fake).
+//! Each chat is fetched as the chat queue fetches it (`fetch`): Twitch's and Kick's from their APIs as the
+//! kit's network answers them (`TwitchChat`, `KickVod`), YouTube's from the kit's yt-dlp a line at a time.
 
 use super::*;
 use crate::db::utc_time;
+use crate::testkit::sites::{self, TwitchChat};
+use crate::testkit::{Net, yt_dlp};
 
 /// When the VODs here started, in Unix seconds: 2026-09-28T21:30:00Z.
 const STARTED: f64 = 1790631000.0;
 
 // Twitch
 
-/// The test Twitch VOD, `duration` seconds long, as yt-dlp describes it.
-fn twitch_vod(duration: f64) -> VodInfo {
-    VodInfo {
-        platform: "twitch".into(),
-        platform_id: "2901646294".into(),
-        url: "https://www.twitch.tv/videos/2901646294".into(),
-        title: "A stream".into(),
-        channel: None,
-        channel_login: None,
-        channel_url: None,
-        duration: Some(duration),
-        thumbnail: None,
-        published: None,
-        started_at: None,
-    }
-}
-
 /// A comment as Twitch's GraphQL API gives it: `time` seconds into the VOD, sent then, by `author`.
 fn comment(time: f64, author: &str, fragments: Value) -> Value {
-    json!({ "contentOffsetSeconds": time, "createdAt": utc_time(STARTED + time),
-        "commenter": { "displayName": author },
-        "message": { "userColor": null, "fragments": fragments } })
+    let mut c = said(time, author, "");
+    c["message"]["fragments"] = fragments;
+    c
 }
 
 /// A comment of plain text.
 fn said(time: f64, author: &str, text: &str) -> Value {
-    comment(time, author, json!([{ "text": text, "emote": null }]))
+    let mut c = sites::twitch_comment(time, author, text);
+    c["createdAt"] = json!(utc_time(STARTED + time));
+    c
 }
 
-/// Twitch's GraphQL API for a VOD whose chat is `comments`, paging from an offset 100 at a time as Twitch does, and
-/// answering the ask for its cheermotes with `cheermotes`, or failing it when that's None.
-fn twitch(comments: Vec<Value>, cheermotes: Option<Value>) -> impl Fn(&Value, &AtomicBool) -> Result<Value> + Sync {
-    move |body: &Value, _: &AtomicBool| {
-        let Some(offset) = body.pointer("/variables/offset").and_then(Value::as_i64) else {
-            return cheermotes.clone().context("couldn't contact gql.twitch.tv");
-        };
-        let from: Vec<Value> = comments
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c["contentOffsetSeconds"].as_f64().unwrap() as i64 >= offset)
-            .map(|(i, c)| {
-                let mut node = c.clone();
-                node["id"] = json!(i.to_string());
-                json!({ "node": node })
-            })
-            .collect();
-        let more = from.len() > 100;
-        let edges: Vec<Value> = from.into_iter().take(100).collect();
-        Ok(json!({ "data": { "video": { "comments": { "edges": edges, "pageInfo": { "hasNextPage": more } } } } }))
-    }
-}
-
-/// What a fetch of a Twitch VOD `duration` seconds long saves, in time order, Twitch answering as `ask`.
-fn fetched(duration: f64, ask: &TwitchAsk) -> Vec<ChatMessage> {
+/// What a fetch of a Twitch VOD `duration` seconds long saves, in time order, Twitch serving `chat`.
+fn fetched(duration: f64, chat: TwitchChat) -> Vec<ChatMessage> {
+    let net = Net::new();
+    let number = own_twitch_number();
+    net.twitch_comments(&number, &chat);
     let mut store = MemoryChat::default();
-    assert!(fetch_twitch_from(&twitch_vod(duration), &mut store, &AtomicBool::new(false), &mut |_| {}, ask).unwrap());
-    let mut messages = store.messages;
-    messages.sort_by(|a, b| a.time.total_cmp(&b.time));
-    messages
+    assert!(fetch_from_site(&twitch_vod(&number, Some(duration)), &mut store, &AtomicBool::new(false)).unwrap());
+    in_order(store.messages)
 }
 
 /// The chat of a ten-minute Twitch VOD whose comments are `comments`, Twitch listing no cheermotes beyond the built-in
 /// ones.
 fn twitch_chat(comments: Vec<Value>) -> Vec<ChatMessage> {
-    fetched(600.0, &twitch(comments, Some(json!({ "data": {} }))))
+    fetched(600.0, TwitchChat::of(comments))
 }
 
 /// What a message is, and how much.
@@ -285,7 +248,7 @@ fn a_gift_bombs_lines_in_the_next_slice_stay_messages() {
         said(601.0, "big", "big gifted a Tier 1 sub to b!"),
     ];
     assert_eq!(slices_for(2400.0), 4, "fetched in slices");
-    let chat = fetched(2400.0, &twitch(comments, Some(json!({ "data": {} }))));
+    let chat = fetched(2400.0, TwitchChat::of(comments));
     let seen: Vec<_> = chat.iter().map(|m| (m.time, m.kind)).collect();
     assert_eq!(seen, [(599.0, Kind::Gift), (600.0, Kind::Message), (601.0, Kind::Message)]);
 }
@@ -329,7 +292,7 @@ fn emotes_ending_in_digits_are_not_bits() {
 fn a_number_alone_is_no_cheer() {
     let listed = json!({ "data": { "cheerConfig": { "groups": [{ "nodes": [{ "prefix": "" }] }] } } });
     let comments = || vec![said(1.0, "v", "100 viewers"), said(2.0, "v", "1 2 3")];
-    let chat = fetched(600.0, &twitch(comments(), Some(listed)));
+    let chat = fetched(600.0, TwitchChat::of(comments()).listing(listed));
     assert_eq!(chat.iter().map(kind).collect::<Vec<_>>(), [(Kind::Message, None); 2]);
     assert_eq!(twitch_chat(comments()).iter().map(kind).collect::<Vec<_>>(), [(Kind::Message, None); 2]);
 }
@@ -347,9 +310,9 @@ fn retired_cheermotes_in_an_old_vod_count_as_bits() {
 fn a_cheermote_twitch_lists_now_counts_as_bits() {
     let comments = || vec![said(1.0, "v", "NewCheer50 hype")];
     let listed = json!({ "data": { "cheerConfig": { "groups": [{ "nodes": [{ "prefix": "Cheer" }, { "prefix": "NewCheer" }] }] } } });
-    let chat = fetched(600.0, &twitch(comments(), Some(listed)));
+    let chat = fetched(600.0, TwitchChat::of(comments()).listing(listed));
     assert_eq!(kind(&chat[0]), (Kind::Tip, Some(50.0)));
-    let chat = fetched(600.0, &twitch(comments(), Some(json!({ "data": {} }))));
+    let chat = fetched(600.0, TwitchChat::of(comments()));
     assert_eq!(kind(&chat[0]), (Kind::Message, None), "not one Twitch lists");
 }
 
@@ -357,7 +320,7 @@ fn a_cheermote_twitch_lists_now_counts_as_bits() {
 #[test]
 fn a_channels_own_cheermotes_count_as_bits() {
     let listed = json!({ "data": { "video": { "owner": { "cheer": { "cheerGroups": [{ "nodes": [{ "prefix": "DriveCheer" }] }] } } } } });
-    let chat = fetched(600.0, &twitch(vec![said(1.0, "v", "DriveCheer25 for the drive")], Some(listed)));
+    let chat = fetched(600.0, TwitchChat::of(vec![said(1.0, "v", "DriveCheer25 for the drive")]).listing(listed));
     assert_eq!(kind(&chat[0]), (Kind::Tip, Some(25.0)));
 }
 
@@ -365,7 +328,7 @@ fn a_channels_own_cheermotes_count_as_bits() {
 #[test]
 fn without_twitchs_list_the_built_in_cheermotes_count() {
     let comments = vec![said(1.0, "v", "Cheer100"), said(2.0, "v", "NewCheer50")];
-    let chat = fetched(600.0, &twitch(comments, None));
+    let chat = fetched(600.0, TwitchChat::of(comments).listing_none());
     assert_eq!(chat.iter().map(kind).collect::<Vec<_>>(), [(Kind::Tip, Some(100.0)), (Kind::Message, None)]);
 }
 
@@ -394,28 +357,22 @@ fn twitch_comments_say_when_the_vod_started() {
 
 /// A message as Kick's chat history gives it: sent `time` seconds into the VOD, by `sender`.
 fn kick_message(time: f64, sender: &str, content: &str) -> Value {
-    json!({ "content": content, "created_at": utc_time(STARTED + time),
-        "sender": { "username": sender, "identity": { "color": "#53FC18" } } })
+    sites::kick_message(STARTED + time, sender, content)
 }
 
-/// The chat a ten-minute Kick VOD saves when its history holds `messages` (newest first, as Kick's pages are), in time
-/// order: before `fetch_kick` makes the resubs KickBot announced plain messages.
-fn kick_chat(messages: Vec<Value>) -> Vec<ChatMessage> {
-    let messages: Vec<Value> = messages
-        .into_iter()
-        .enumerate()
-        .map(|(i, mut m)| {
-            m["id"] = json!(format!("id-{i}"));
-            m
-        })
-        .collect();
-    let page = json!({ "data": { "messages": messages, "cursor": null } });
+/// The chat a Kick VOD `duration` seconds long saves when its channel's history holds `messages`, in time order.
+fn kick_chat_of(duration: f64, messages: Vec<Value>) -> Vec<ChatMessage> {
+    let net = Net::new();
+    let vod = own_kick_vod(duration).started(STARTED).chat(messages);
+    net.kick_vod(&vod);
     let mut store = MemoryChat::default();
-    kick_into(&mut store, STARTED, 600.0, 1, |_, _| parse_kick_page(&page), &AtomicBool::new(false), &mut |_| {})
-        .unwrap();
-    let mut chat = store.messages;
-    chat.sort_by(|a, b| a.time.total_cmp(&b.time));
-    chat
+    assert!(fetch_from_site(&kick_vod(&vod, duration), &mut store, &AtomicBool::new(false)).unwrap());
+    in_order(store.messages)
+}
+
+/// The chat a ten-minute Kick VOD saves when its channel's history holds `messages`, in time order.
+fn kick_chat(messages: Vec<Value>) -> Vec<ChatMessage> {
+    kick_chat_of(600.0, messages)
 }
 
 /// The kinds of a Kick chat of `(sender, content)`, a second apart.
@@ -546,54 +503,76 @@ fn a_resubscribers_celebration_is_a_sub_at_when_the_sub_happened() {
 
 /// chat.rs `resubs_announced` ("A resub can show twice on Kick: KickBot's announcement when it happens, and the
 /// subscriber's celebration message … Of `subs`, the celebrations KickBot announced, which should stay in chat as plain
-/// messages").
+/// messages"), as `fetch_kick` saves them.
 #[test]
 fn a_resub_kickbot_announced_counts_once() {
-    let sub = |time: f64, author: &str, text: &str, subbed_at: Option<f64>| ChatMessage {
-        time,
-        author: author.into(),
-        color: None,
-        parts: vec![ChatPart::Text { text: text.into() }],
-        kind: Kind::Sub,
-        amount: None,
-        event_time: subbed_at,
-        at: None,
+    let celebration = |time: f64, author: &str, text: &str, subbed_at: f64| {
+        let mut m = kick_message(time, author, text);
+        let subbed =
+            json!({ "celebration": { "type": "subscription_renewed", "created_at": utc_time(STARTED + subbed_at) } });
+        m["metadata"] = json!(subbed.to_string());
+        m
     };
-    let subs = vec![
-        (1, sub(7194.0, "KickBot", "@Ari_letric has subbed for 15 months!", None)),
-        (2, sub(7211.0, "KickBot", "@blixtyyy has subbed for 15 months!", None)),
-        // Shared an hour after the sub KickBot announced.
-        (3, sub(11017.0, "Ari_letric", "oh wow", Some(7194.0))),
-        // Never announced (the channel has KickBot's announcements off, say).
-        (4, sub(23814.0, "tetraspis", "been at it for ages", Some(23000.0))),
-        // Subbed as KickBot announced someone else's: not announced.
-        (5, sub(9000.0, "zed", "thanks", Some(7200.0))),
-    ];
-    assert_eq!(resubs_announced(&subs), [3]);
+    let chat = kick_chat_of(
+        24000.0,
+        vec![
+            kick_message(7194.0, "KickBot", "@Ari_letric has subbed for 15 months!"),
+            kick_message(7211.0, "KickBot", "@blixtyyy has subbed for 15 months!"),
+            // Shared an hour after the sub KickBot announced.
+            celebration(11017.0, "Ari_letric", "oh wow", 7194.0),
+            // Never announced (the channel has KickBot's announcements off, say).
+            celebration(23814.0, "tetraspis", "been at it for ages", 23000.0),
+            // Subbed as KickBot announced someone else's: not announced.
+            celebration(9000.0, "zed", "thanks", 7200.0),
+        ],
+    );
+    let seen: Vec<_> = chat.iter().map(|m| (m.author.as_str(), m.kind)).collect();
+    assert_eq!(
+        seen,
+        [
+            ("KickBot", Kind::Sub),
+            ("KickBot", Kind::Sub),
+            ("zed", Kind::Sub),
+            ("Ari_letric", Kind::Message),
+            ("tetraspis", Kind::Sub)
+        ]
+    );
 }
 
 // YouTube
 
-/// A line of yt-dlp's `live_chat.json`: `item` at `ms` milliseconds into the video.
-fn line(ms: &str, item: Value) -> String {
-    json!({ "replayChatItemAction": { "videoOffsetTimeMsec": ms, "actions": [{ "addChatItemAction": { "item": item } }] } })
-        .to_string()
+/// What `fetch` saves of a YouTube video's chat replay of `lines` (`yt_dlp::chat_item`), as the kit's yt-dlp writes it.
+fn youtube_chat(lines: Vec<String>) -> Vec<ChatMessage> {
+    let dir = crate::TempDir::new("youtube-chat");
+    let fake = crate::testkit::YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    fake.serves_chat(url, lines);
+    let yt_dlp = YtDlp { path: fake.path().into(), js_runtime: None };
+    let info = VodInfo {
+        platform: "youtube".into(),
+        platform_id: "noa29qsTc4g".into(),
+        url: url.into(),
+        ..twitch_vod("1", Some(600.0))
+    };
+    let mut store = MemoryChat::default();
+    assert!(fetch(&info, Some(&yt_dlp), &dir.join("chat-1"), &mut store, &AtomicBool::new(false), |_| {}).unwrap());
+    store.messages
 }
 
 /// What YouTube's chat of these lines holds: (author, kind, amount, text).
-fn youtube_kinds(lines: &[String]) -> Vec<(String, Kind, Option<f64>, String)> {
-    parse_youtube(&lines.join("\n")).into_iter().map(|m| (m.author.clone(), m.kind, m.amount, m.text())).collect()
+fn youtube_kinds(lines: Vec<String>) -> Vec<(String, Kind, Option<f64>, String)> {
+    youtube_chat(lines).into_iter().map(|m| (m.author.clone(), m.kind, m.amount, m.text())).collect()
 }
 
 /// CHANGELOG.md, 0.2.0 ("each line with the messages sent while it was said"); chat.rs `ChatMessage::time` and
 /// `parse_youtube_line` ("Adds the chat messages in one line of yt-dlp's `live_chat.json`").
 #[test]
 fn a_youtube_message_is_at_its_time_into_the_video_by_its_author() {
-    let chat = parse_youtube(&line(
-        "12345",
+    let chat = youtube_chat(vec![yt_dlp::chat_item(
+        12.345,
         json!({ "liveChatTextMessageRenderer": {
             "authorName": { "simpleText": "@viewer" }, "message": { "runs": [{ "text": "nice" }] } } }),
-    ));
+    )]);
     let seen: Vec<_> = chat.iter().map(|m| (m.time, m.author.as_str(), m.text())).collect();
     assert_eq!(seen, [(12.345, "@viewer", "nice".to_string())]);
 }
@@ -602,8 +581,8 @@ fn a_youtube_message_is_at_its_time_into_the_video_by_its_author() {
 /// by its name) and a comment in `parse_youtube_line` ("A standard emoji is its own character").
 #[test]
 fn a_youtube_custom_emoji_is_its_image_and_a_standard_one_its_character() {
-    let chat = parse_youtube(&line(
-        "1000",
+    let chat = youtube_chat(vec![yt_dlp::chat_item(
+        1.0,
         json!({ "liveChatTextMessageRenderer": {
             "authorName": { "simpleText": "@viewer" },
             "message": { "runs": [
@@ -612,7 +591,7 @@ fn a_youtube_custom_emoji_is_its_image_and_a_standard_one_its_character() {
                     "image": { "thumbnails": [{ "url": "https://yt3.ggpht.com/abc=w24-h24" }] } } },
                 { "emoji": { "emojiId": "😂", "shortcuts": [":joy:"] } },
             ] } } }),
-    ));
+    )]);
     assert_eq!(
         chat[0].parts,
         [
@@ -628,8 +607,8 @@ fn a_youtube_custom_emoji_is_its_image_and_a_standard_one_its_character() {
 /// instead, in whatever currency it was").
 #[test]
 fn a_super_chat_is_a_tip_with_its_amount_in_its_text() {
-    let chat = youtube_kinds(&[line(
-        "1000",
+    let chat = youtube_kinds(vec![yt_dlp::chat_item(
+        1.0,
         json!({ "liveChatPaidMessageRenderer": {
             "authorName": { "simpleText": "@fan" }, "purchaseAmountText": { "simpleText": "$5.00" },
             "message": { "runs": [{ "text": "love the stream" }] } } }),
@@ -640,8 +619,8 @@ fn a_super_chat_is_a_tip_with_its_amount_in_its_text() {
 /// chat.rs `Kind::Tip` ("a Super Chat or Super Sticker (YouTube)") and `ChatMessage::amount` (its amount in its text).
 #[test]
 fn a_super_sticker_is_a_tip_saying_its_amount() {
-    let chat = youtube_kinds(&[line(
-        "2000",
+    let chat = youtube_kinds(vec![yt_dlp::chat_item(
+        2.0,
         json!({ "liveChatPaidStickerRenderer": {
             "authorName": { "simpleText": "@fan" }, "purchaseAmountText": { "simpleText": "¥500" } } }),
     )]);
@@ -652,14 +631,14 @@ fn a_super_sticker_is_a_tip_saying_its_amount() {
 /// (""Welcome to …!" for a new member, "Member for 6 months" for a milestone").
 #[test]
 fn a_new_membership_and_a_milestone_are_subs_saying_which() {
-    let chat = youtube_kinds(&[
-        line(
-            "3000",
+    let chat = youtube_kinds(vec![
+        yt_dlp::chat_item(
+            3.0,
             json!({ "liveChatMembershipItemRenderer": { "authorName": { "simpleText": "@new" },
                 "headerSubtext": { "runs": [{ "text": "Welcome to " }, { "text": "Channel" }, { "text": "!" }] } } }),
         ),
-        line(
-            "4000",
+        yt_dlp::chat_item(
+            4.0,
             json!({ "liveChatMembershipItemRenderer": { "authorName": { "simpleText": "@old" },
                 "headerPrimaryText": { "runs": [{ "text": "Member for " }, { "text": "6" }, { "text": " months" }] },
                 "message": { "runs": [{ "text": "half a year!" }] } } }),
@@ -680,8 +659,8 @@ fn a_new_membership_and_a_milestone_are_subs_saying_which() {
 fn gift_memberships_are_a_gift_of_how_many_were_sent() {
     let header = json!({ "liveChatSponsorshipsHeaderRenderer": { "authorName": { "simpleText": "@generous" },
         "primaryText": { "runs": [{ "text": "Sent " }, { "text": "5" }, { "text": " Channel gift memberships" }] } } });
-    let chat = youtube_kinds(&[line(
-        "5000",
+    let chat = youtube_kinds(vec![yt_dlp::chat_item(
+        5.0,
         json!({ "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer": { "header": header } }),
     )]);
     assert_eq!(chat, [("@generous".into(), Kind::Gift, Some(5.0), "Sent 5 Channel gift memberships".into())]);
@@ -692,12 +671,12 @@ fn gift_memberships_are_a_gift_of_how_many_were_sent() {
 #[test]
 fn a_youtube_line_with_no_chat_message_adds_none() {
     let text = [
-        line("20000", json!({ "liveChatViewerEngagementMessageRenderer": {} })),
+        yt_dlp::chat_item(20.0, json!({ "liveChatViewerEngagementMessageRenderer": {} })),
         "not json".into(),
         json!({ "something": "else" }).to_string(),
         String::new(),
     ];
-    assert!(parse_youtube(&text.join("\n")).is_empty());
+    assert!(youtube_chat(text.to_vec()).is_empty());
 }
 
 /// chat.rs `ChatMessage::at` ("YouTube's `timestampUsec`") and `ChatMessage::start`.
@@ -707,14 +686,14 @@ fn youtube_messages_say_when_the_vod_started() {
         .map(|i| {
             let ms = i * 5000;
             let sent = format!("{}", (STARTED as u64 + i as u64 * 5) * 1_000_000 + 123);
-            line(
-                &ms.to_string(),
+            yt_dlp::chat_item(
+                ms as f64 / 1000.0,
                 json!({ "liveChatTextMessageRenderer": { "authorName": { "simpleText": "@v" }, "timestampUsec": sent,
                     "message": { "runs": [{ "text": "hi" }] } } }),
             )
         })
         .collect();
-    let chat = parse_youtube(&lines.join("\n"));
+    let chat = youtube_chat(lines);
     assert!((chat[1].at.unwrap() - (STARTED + 5.000123)).abs() < 1e-6, "{:?}", chat[1].at);
     let starts: Vec<f64> = chat.iter().filter_map(ChatMessage::start).collect();
     assert_eq!(starts.len(), START_MESSAGES);
@@ -828,7 +807,7 @@ fn when_a_message_was_sent_is_not_saved_with_it() {
 fn a_file_or_another_sites_vod_has_no_chat_replay() {
     let dir = crate::TempDir::new("chat-replay");
     for platform in [crate::local::PLATFORM, "dailymotion"] {
-        let info = VodInfo { platform: platform.into(), ..twitch_vod(600.0) };
+        let info = VodInfo { platform: platform.into(), ..twitch_vod("2901646294", Some(600.0)) };
         let mut store = MemoryChat::default();
         let found =
             crate::chat::fetch(&info, None, &dir.join("chat-1"), &mut store, &AtomicBool::new(false), |_| {}).unwrap();

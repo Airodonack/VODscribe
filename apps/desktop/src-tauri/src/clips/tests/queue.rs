@@ -1,9 +1,9 @@
 use super::*;
 
 use serde_json::{Value, json};
-use vodscribe_core::testkit::Gate;
+use vodscribe_core::testkit::{Gate, eventually};
 
-use crate::testkit::{TestApp, at};
+use crate::testkit::{LetGo, Receiver, TestApp, at};
 
 /// ffmpeg held halfway through each clip of VOD `vod` it cuts, at a gate of
 /// its own: the test sees which clip is being made, then lets it go, and the
@@ -438,39 +438,54 @@ fn a_clip_moved_while_it_waits_leaves_the_list_of_jobs_once_it_is_made() {
 /// (apps/desktop/src-tauri/src/job_list.rs `describe`: "a clip made
 /// only for a drag out of the window that's still in the window's drag …
 /// is seen only once it's been let go there"; 0.7.1: "Dropped clips show in
-/// the jobs list."). Below the commands until the kit has a drag.
+/// the jobs list."). It's held while it's made.
 #[test]
 fn a_clip_only_dragged_out_is_listed_only_once_let_go_on_another_app() {
-    let (db, vod) = library();
-    let hidden = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap().id;
-    let pill = db.add_clip(vod, 3.0, 4.0, "pill", true).unwrap().id;
-    let cutter = Cutter::new();
-    let listed = |id| crate::job_list::describe(&db, crate::job_list::Queue::Render, id, |id| cutter.is_out(id));
-    assert!(listed(hidden).is_none(), "listed while in the window's drag");
-    assert!(listed(pill).is_some(), "a pill's making");
-    cutter.dragged_out(&[hidden], true);
-    assert_eq!(listed(hidden).map(|(_, label)| label).as_deref(), Some("dragged"));
-    cutter.dragged_out(&[hidden], false);
-    assert!(listed(hidden).is_none(), "listed once the drag was over");
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let dragged = add_drag_clip(&app, vod.id, "0:01", "0:02").id;
+    halfway.reached();
+    let pill = app.add_clip(vod.id, "0:03", "0:04").unwrap().id;
+    app.drag_out(&[dragged]).unwrap();
+    assert_eq!(job_ids(&app), [pill], "listed while in the window's drag");
+    // Let go on an app that takes only files already made: that drag is over at once.
+    app.drags().last().let_go(LetGo::On(Receiver::finished_only("Photos")));
+    app.drag_ended();
+    assert_eq!(job_ids(&app), [pill], "listed once the drag was over");
+    // Let go on one that waits for it.
+    app.drag_out(&[dragged]).unwrap();
+    app.drags().last().let_go(LetGo::On(Receiver::taking_copies("Finder")));
+    eventually("listed once let go there", || job_ids(&app) == [dragged, pill]);
+    halfway.open();
+    assert_eq!(app.drag_ended()["delivered"], true);
 }
 
 /// The same clip dragged out again while the first drag still hands it over
 /// (let go on a file manager that copies it as it's made) stays listed till
 /// the last of them is over (app `clips.rs` `Cutter::out`: "the same clip
-/// can be dragged out again while the first still hands it over"). Below
-/// the commands until the kit has a drag.
+/// can be dragged out again while the first still hands it over"). It's
+/// held while it's made.
 #[test]
 fn a_drag_clip_stays_listed_till_its_last_drag_out_is_over() {
-    let (db, vod) = library();
-    let hidden = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap().id;
-    let cutter = Cutter::new();
-    let listed = |id| crate::job_list::describe(&db, crate::job_list::Queue::Render, id, |id| cutter.is_out(id));
-    cutter.dragged_out(&[hidden], true);
-    cutter.dragged_out(&[hidden], true);
-    cutter.dragged_out(&[hidden], false);
-    assert!(listed(hidden).is_some(), "left out as the first drag ended, the second still handing it over");
-    cutter.dragged_out(&[hidden], false);
-    assert!(listed(hidden).is_none(), "listed once both were over");
+    let app = TestApp::new();
+    let vod = app.add_video_file("Day 3.mp4", 60.0);
+    let halfway = Gate::new();
+    app.ffmpeg.holds_at(0.5, &halfway);
+    let dragged = add_drag_clip(&app, vod.id, "0:01", "0:02").id;
+    halfway.reached();
+    app.drag_out(&[dragged]).unwrap();
+    app.drags().last().let_go(LetGo::On(Receiver::taking_copies("Finder")));
+    eventually("listed once let go there", || job_ids(&app) == [dragged]);
+    // Dragged out again, and let go on an app that takes only files already made: over at once.
+    app.drag_out(&[dragged]).unwrap();
+    app.drags().last().let_go(LetGo::On(Receiver::finished_only("Photos")));
+    assert_eq!(app.drag_ended()["delivered"], false);
+    assert_eq!(job_ids(&app), [dragged], "left out as the second drag ended, the first still handing it over");
+    halfway.open();
+    assert_eq!(app.drag_ended()["delivered"], true);
+    assert_eq!(job_ids(&app), Vec::<i64>::new(), "made, and both drags over");
 }
 
 /// The part files in the clips' folder (`.<name>.part`, core clips.rs `cut`).

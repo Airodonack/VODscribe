@@ -1,9 +1,10 @@
 //! The specs of `twitch.rs`: its parsers of Twitch's answers (a parser, so
-//! the function is the spec), and what's refused before Twitch is asked.
-//! Twitch's GraphQL API isn't faked yet, so `clip` and `vod_channel`
-//! against its answers wait.
+//! the function is the spec), what's refused before Twitch is asked, and
+//! `clip` and `vod_channel` against Twitch's GraphQL API as the kit's
+//! network answers it.
 
 use super::*;
+use crate::testkit::{Net, Reply};
 
 /// A clip's slug is told from a VOD's number, which yt-dlp may give with a
 /// "v" (twitch.rs `is_clip`: "Whether `platform_id` (a Twitch item's id in the
@@ -68,6 +69,55 @@ fn only_a_vods_number_is_asked_about() {
     for id in ["CoweringRudeDiamond", "", "v", "v12a", "12 3"] {
         assert!(vod_channel(id, &AtomicBool::new(false)).is_err(), "{id:?}");
     }
+}
+
+/// A clip Twitch's API knows comes from the broadcast it names, while
+/// Twitch keeps it, and one it doesn't know is an error (twitch.rs `clip`:
+/// "What Twitch says of clip `slug`"; twitch.rs `ask`: "Twitch doesn't know
+/// this clip.").
+#[test]
+fn a_clip_twitch_knows_comes_from_its_broadcast_and_one_it_does_not_is_an_error() {
+    let net = Net::new();
+    net.twitch_clip("KitClipFromItsBroadcast", Some(("2896314708", 1805.0)), 32.0);
+    net.twitch_clip("KitClipWhoseBroadcastIsGone", None, 34.0);
+    net.replies(TWITCH_GQL, |asked| {
+        let unknown = asked.json()?["variables"]["slug"] == "KitClipTwitchDoesNotKnow";
+        unknown.then(|| Reply::json(&json!({ "data": { "clip": null } })))
+    });
+    assert_eq!(
+        clip("KitClipFromItsBroadcast").unwrap(),
+        Clip { source: Some(("2896314708".into(), 1805.0)), duration: 32.0, broadcaster: Some("1000".into()) }
+    );
+    let gone = clip("KitClipWhoseBroadcastIsGone").unwrap();
+    assert_eq!((gone.source, gone.duration), (None, 34.0));
+    assert_eq!(format!("{:#}", clip("KitClipTwitchDoesNotKnow").unwrap_err()), "Twitch doesn't know this clip.");
+}
+
+/// A VOD's channel is asked of Twitch's API by the VOD's number, with or
+/// without yt-dlp's "v", and is the login it names; its answer for another
+/// VOD is an error (twitch.rs `vod_channel`: "VOD `id`'s channel's login
+/// (yt-dlp's `uploader_id`), as Twitch's GraphQL API names it", "An error
+/// when … answers for another VOD").
+#[test]
+fn a_vods_channel_is_the_login_twitch_names_for_its_number() {
+    let net = Net::new();
+    net.replies(TWITCH_GQL, |asked| {
+        let body = asked.json()?;
+        if !body["query"].as_str()?.contains("owner { login }") {
+            return None;
+        }
+        let answered = match body["variables"]["id"].as_str()? {
+            "3100000001" => "3100000001",
+            "3100000002" => "3100000003",
+            _ => return None,
+        };
+        Some(Reply::json(&json!({ "data": { "video": { "id": answered, "owner": { "login": "quill" } } } })))
+    });
+    let never = AtomicBool::new(false);
+    assert_eq!(vod_channel("3100000001", &never).unwrap(), "quill");
+    assert_eq!(vod_channel("v3100000001", &never).unwrap(), "quill", "with yt-dlp's v");
+    let other = vod_channel("3100000002", &never).unwrap_err();
+    assert_eq!(format!("{other:#}"), "Twitch answered for another VOD.");
 }
 
 /// Asks Twitch for real: `cargo test -p vodscribe-core -- --ignored twitch_vod_channel_live`.

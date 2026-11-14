@@ -11,7 +11,7 @@ use super::*;
 use serde_json::{Value, json};
 use vodscribe_core::testkit::{Gate, Media, eventually};
 
-use crate::testkit::{TestApp, at};
+use crate::testkit::{TestApp, at, near};
 
 /// A clip is its stretch of the VOD, made from the VOD's own file when it's
 /// one on this computer (the module doc of crates/core/src/clips.rs: clips
@@ -256,8 +256,9 @@ fn a_rename_is_one_step_undo_takes_back() {
 }
 
 /// A clip moved to a new range is made again for it (app `clips.rs`
-/// `set_clip_range`: "its file is made again"; tests/e2e/scenarios/clip.mjs:
-/// "resized, it's made again, a new file in its place").
+/// `set_clip_range`: "its file is made again, as a new file";
+/// tests/e2e/scenarios/clip.mjs: "resized, it's made again as a new file, the
+/// one before gone").
 #[test]
 fn a_resized_clip_is_made_again_for_its_new_range() {
     let app = TestApp::new();
@@ -486,8 +487,9 @@ fn a_failed_clip_of_an_edit_clipped_again_is_made_again() {
 /// The same stretch of a VOD clipped twice gives the one clip, made: the
 /// command keeps the rule, as it does for an edit, not only the page
 /// (decided: one clip per stretch, and the command keeps the rule for VODs
-/// as for edits; CHANGELOG.md, 0.7.0 Fixes: "Pressing C twice on the same
-/// stretch of an edit makes one clip, as on a VOD").
+/// as for edits; CHANGELOG.md, 0.7.0 Fixes: "C twice in an edit makes one
+/// clip. Each press on the same stretch made another clip, where on a VOD it
+/// makes one").
 #[test]
 fn clipping_a_vod_s_stretch_twice_gives_the_one_clip() {
     let app = TestApp::new();
@@ -584,8 +586,8 @@ fn clips_made_at_once_give_the_one_made_already() {
 }
 
 /// A stretch of a VOD whose clip failed, clipped again, is made again
-/// (one clip per stretch, as above; CHANGELOG.md, 0.7.0 Fixes: "pressing it
-/// again on a clip that failed tries it again", for an edit "as on a VOD").
+/// (one clip per stretch, as above; CHANGELOG.md, 0.7.0 Fixes: "pressed
+/// again on a clip that failed, C tries it again", for an edit as "on a VOD").
 #[test]
 fn a_failed_clip_of_a_vod_clipped_again_is_made_again() {
     let app = TestApp::new();
@@ -815,10 +817,6 @@ fn a_clip_changed_in_the_editor_is_made_as_its_pieces_say() {
 }
 
 // The commands as the page calls them, times written as a clock shows them.
-
-fn near(a: f64, b: f64) -> bool {
-    (a - b).abs() < 0.001
-}
 
 /// Whether `media` was cut from `source` at `start` seconds.
 fn cut_from(media: &Media, source: &str, start: f64) -> bool {

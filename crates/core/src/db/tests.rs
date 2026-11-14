@@ -139,11 +139,9 @@ fn a_second_file_received_under_the_same_name_is_a_new_vod() {
     assert!(second.id != first.id && second.id != old.id, "found as VOD {} (the first file's)", second.id);
 }
 
+/// `text`'s words said from `start` seconds on, a second apart, each half a second long.
 fn words(text: &str, start: f64) -> Vec<Word> {
-    text.split(' ')
-        .enumerate()
-        .map(|(i, t)| Word { text: t.into(), start: start + i as f64, end: start + i as f64 + 0.5 })
-        .collect()
+    crate::testkit::library::spoken(start, text, 1.0, 0.5)
 }
 
 /// Adding files while the worker writes on its own connection: a

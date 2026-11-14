@@ -185,9 +185,8 @@ test("Ctrl+X takes out the clips it copied, not those of another VOD opened mean
   assert.deepEqual(fake.undone, [{ kind: "vod", id: 1 }]);
 });
 
-// Owner, walkthrough 2026-11-07: "Shouldn't Ctrl-X be cut? As in it's
-// intended to be pasted somewhere? So the video should not actually be
-// deleted until the clipboard is erased (through quit or overwritten or etc)".
+// Decided for 0.7.3: Ctrl+X cuts for a paste, so the clips it takes off a bar
+// keep their files until the clipboard is overwritten or the app quits.
 test("Ctrl+X holds the clips it takes off a VOD's bar for a paste, not deleted", async () => {
   reset([2]);
   cut();
