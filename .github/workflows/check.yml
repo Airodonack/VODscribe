@@ -59,6 +59,9 @@ jobs:
       # The unreleased changelog entry's shape: short headlines, fixes last under "- Fixes:".
       - run: python3 -I scripts/changelog-check.py
       - run: python3 -I scripts/test_changelog_check.py
+      # Comments cite no private plan, no owner, and no code by line number.
+      - run: python3 -I scripts/citations-check.py
+      - run: python3 -I scripts/test_citations_check.py
 
       - run: pnpm install --frozen-lockfile
       # The workflow files parse as workflows (after pnpm install: the checker needs the yaml package; a dropped indent ran no Checks job at all once).

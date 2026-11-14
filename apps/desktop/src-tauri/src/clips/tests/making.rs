@@ -14,9 +14,9 @@ use vodscribe_core::testkit::{Gate, Media, eventually};
 use crate::testkit::{TestApp, at};
 
 /// A clip is its stretch of the VOD, made from the VOD's own file when it's
-/// one on this computer (crates/core/src/clips.rs:1: clips "start and end on
-/// the exact frame asked for"; app clips.rs:1: "the VOD's file where it
-/// plays from one here").
+/// one on this computer (the module doc of crates/core/src/clips.rs: clips
+/// "start and end on the exact frame asked for"; app `clips.rs`'s module
+/// doc: "the VOD's file where it plays from one here").
 #[test]
 fn a_clip_of_a_file_is_its_stretch_of_that_file() {
     let app = TestApp::new();
@@ -28,9 +28,9 @@ fn a_clip_of_a_file_is_its_stretch_of_that_file() {
 }
 
 /// A clip is titled with the first words said in it, or failing that where
-/// it starts (crates/core/src/clips.rs:21, `title`: "the first words said in
-/// it, or failing that where it starts"; app clips.rs:650, `add_clip`:
-/// "titled with what's said in it").
+/// it starts (crates/core/src/clips.rs `title`: "the first words said in it,
+/// or failing that where it starts"; app `clips.rs` `add_clip`: "titled with
+/// what's said in it").
 #[test]
 fn a_clip_is_titled_with_what_is_said_in_it() {
     let app = TestApp::new();
@@ -44,9 +44,9 @@ fn a_clip_is_titled_with_what_is_said_in_it() {
 }
 
 /// A clip asked for past the VOD's end ends where the VOD does, and its
-/// file is that long (app clips.rs:673, `make_clips`: "its end kept within
-/// the VOD"; crates/core/src/clips.rs:39, `check_span`: "an end past the
-/// video's is cut there by whoever keeps the span").
+/// file is that long (app `clips.rs` `make_clips`: "its end kept within the
+/// VOD"; crates/core/src/clips.rs `check_span`: "an end past the video's is
+/// cut there by whoever keeps the span").
 #[test]
 fn a_clip_s_end_past_the_vod_s_is_cut_there() {
     let app = TestApp::new();
@@ -58,8 +58,9 @@ fn a_clip_s_end_past_the_vod_s_is_cut_there() {
 }
 
 /// A clip that would start where the VOD has ended is refused, saying so
-/// (crates/core/src/clips.rs:37: "That's past the end of the video.", and
-/// :39, `check_span`: "Every span a command is given is checked here").
+/// (crates/core/src/clips.rs `PAST_THE_END`: "That's past the end of the
+/// video.", and `check_span`: "Every span a command is given is checked
+/// here").
 #[test]
 fn a_clip_starting_past_the_vod_s_end_says_so() {
     let app = TestApp::new();
@@ -69,7 +70,8 @@ fn a_clip_starting_past_the_vod_s_end_says_so() {
 }
 
 /// A clip whose end comes before its start is refused, saying so
-/// (crates/core/src/clips.rs:35: "A clip has to end after it starts.").
+/// (crates/core/src/clips.rs `ENDS_BEFORE_START`: "A clip has to end after it
+/// starts.").
 #[test]
 fn a_clip_ending_before_it_starts_says_so() {
     let app = TestApp::new();
@@ -80,7 +82,7 @@ fn a_clip_ending_before_it_starts_says_so() {
 }
 
 /// A clip of a VOD taken out of the library is refused, saying so (app
-/// clips.rs:691, `make_clips_in`: "That VOD is gone.").
+/// `clips.rs` `make_clips_in`: "That VOD is gone.").
 #[test]
 fn a_clip_of_a_vod_that_is_gone_says_so() {
     let app = TestApp::new();
@@ -90,7 +92,7 @@ fn a_clip_of_a_vod_that_is_gone_says_so() {
 }
 
 /// Several stretches clipped at once go on the clip bar in the order they
-/// were picked (app clips.rs:665, `add_clips`: "in its clip bar, in that
+/// were picked (app `clips.rs` `add_clips`: "in its clip bar, in that
 /// order"; CHANGELOG.md, 0.6.0: "Clip and delete several at once." — "C
 /// (or Clip) makes a clip of each in the order you picked them";
 /// tests/e2e/scenarios/multi-select.mjs: "C makes a clip of each, in that
@@ -107,7 +109,7 @@ fn clips_made_at_once_go_on_the_bar_in_the_order_given() {
 }
 
 /// Several clips made at once are one change: one undo takes them all
-/// back (app clips.rs:665, `add_clips`: "as one change undo takes back
+/// back (app `clips.rs` `add_clips`: "as one change undo takes back
 /// whole"; CHANGELOG.md, 0.6.0: "Clip and delete several at once." — "in
 /// one go that a single undo brings back").
 #[test]
@@ -122,7 +124,7 @@ fn clips_made_at_once_are_one_step_that_undo_takes_back_whole() {
 }
 
 /// Several clips asked for at once, one of which can't be made, make none:
-/// the clip bar is as it was, with nothing to undo (app clips.rs:673,
+/// the clip bar is as it was, with nothing to undo (app `clips.rs`
 /// `make_clips`: "as one change (all of them, or none if one can't be
 /// made)").
 #[test]
@@ -135,7 +137,7 @@ fn clips_made_at_once_are_all_made_or_none_is() {
 }
 
 /// Undo names what it takes back: one clip added is "Clip added", several
-/// at once "Clips added" (app clips.rs:692, the labels;
+/// at once "Clips added" (app `clips.rs` `make_clips_in`, the labels;
 /// tests/e2e/scenarios/marks-undo.mjs: "each told in a toast").
 #[test]
 fn one_clip_added_is_undone_as_clip_added_and_several_as_clips_added() {
@@ -150,7 +152,7 @@ fn one_clip_added_is_undone_as_clip_added_and_several_as_clips_added() {
 }
 
 /// A clip made only to be dragged out of the window isn't on the clip bar
-/// (app clips.rs:650, `add_clip`: "in the clip bar unless `shown` is false
+/// (app `clips.rs` `add_clip`: "in the clip bar unless `shown` is false
 /// (one only dragged out of the window)"; CHANGELOG.md, 0.7.1: "Dropped
 /// clips show in the jobs list." — "A clip made only for a drag stays off
 /// the clip bar").
@@ -166,8 +168,8 @@ fn a_clip_only_dragged_out_is_off_the_clip_bar() {
 }
 
 /// A clip made only to be dragged out leaves nothing to undo: the clip bar
-/// is as it was (crates/core/src/db.rs:1502: "One only dragged out isn't in
-/// the bar: no change to the VOD's clip").
+/// is as it was (crates/core/src/db.rs `add_clip`: "One only dragged out
+/// isn't in the bar: no change to the VOD's clip").
 #[test]
 fn a_clip_only_dragged_out_adds_no_step_to_undo() {
     let app = TestApp::new();
@@ -178,7 +180,7 @@ fn a_clip_only_dragged_out_adds_no_step_to_undo() {
 }
 
 /// A clip dragged out and dropped on the clip bar is kept there, as a
-/// change undo takes back (app clips.rs:720, `keep_clip`: "Puts clip `id`
+/// change undo takes back (app `clips.rs` `keep_clip`: "Puts clip `id`
 /// (one dragged out of the window) in the clip bar"; CHANGELOG.md, 0.7.1:
 /// "A drag called off makes nothing." — "dropped on the clip bar, it's kept
 /// there"; tests/e2e/scenarios/drag-out.mjs: "on the clip bar, it's a clip
@@ -197,8 +199,8 @@ fn a_clip_kept_from_a_drag_joins_the_clip_bar_as_a_step() {
 
 /// A clip kept from a drag while it's being made: the newest news of it the
 /// page hears says both, on the clip bar and made, whichever came last
-/// (app clips.rs:727: "News of it too, in order with the cutter's (the page
-/// keeps the newest)").
+/// (the comment in app `clips.rs` `keep_clip`: "News of it too, in order
+/// with the cutter's (the page keeps the newest)").
 #[test]
 fn a_kept_clip_s_news_comes_in_order_with_its_making_s() {
     let app = TestApp::new();
@@ -216,10 +218,9 @@ fn a_kept_clip_s_news_comes_in_order_with_its_making_s() {
     assert_eq!(newest["shown"], json!(true), "the newest news: {newest}");
 }
 
-/// A clip's new name is trimmed and kept to 200 characters (app
-/// clips.rs:734, `rename_clip`; crates/core/src/clips.rs:55,
-/// `written_title`: "trimmed, at most 200 characters"; CHANGELOG.md, 0.4.1:
-/// "Enter or F2 renames a clip").
+/// A clip's new name is trimmed and kept to 200 characters (app `clips.rs`
+/// `rename_clip`; crates/core/src/clips.rs `written_title`: "trimmed, at
+/// most 200 characters"; CHANGELOG.md, 0.4.1: "Enter or F2 renames a clip").
 #[test]
 fn a_renamed_clip_has_its_name_trimmed_and_capped() {
     let app = TestApp::new();
@@ -232,7 +233,7 @@ fn a_renamed_clip_has_its_name_trimmed_and_capped() {
 }
 
 /// A clip can't be renamed to nothing, or to spaces: its name stays (app
-/// clips.rs:734, `rename_clip`: "A clip needs a name.").
+/// `clips.rs` `rename_clip`: "A clip needs a name.").
 #[test]
 fn a_clip_cannot_be_renamed_to_nothing() {
     let app = TestApp::new();
@@ -242,8 +243,8 @@ fn a_clip_cannot_be_renamed_to_nothing() {
     assert_eq!(app.clip(clip.id).unwrap().title, clip.title);
 }
 
-/// A rename is one change, which undo names and takes back (app
-/// clips.rs:738: "Clip renamed").
+/// A rename is one change, which undo names and takes back (app `clips.rs`
+/// `rename_clip`: "Clip renamed").
 #[test]
 fn a_rename_is_one_step_undo_takes_back() {
     let app = TestApp::new();
@@ -254,7 +255,7 @@ fn a_rename_is_one_step_undo_takes_back() {
     assert_eq!(app.clip(clip.id).unwrap().title, clip.title);
 }
 
-/// A clip moved to a new range is made again for it (app clips.rs:703,
+/// A clip moved to a new range is made again for it (app `clips.rs`
 /// `set_clip_range`: "its file is made again"; tests/e2e/scenarios/clip.mjs:
 /// "resized, it's made again, a new file in its place").
 #[test]
@@ -271,11 +272,10 @@ fn a_resized_clip_is_made_again_for_its_new_range() {
 }
 
 /// A clip made again for a new range is a new file in the library, named
-/// by its id and which make it is, and the one before goes (app clips.rs,
-/// `set_clip_range`: "made again, as a new file"; plans/clips-pilot.md
-/// "Decided" 4b: "Every make writes a new own file", which the owner agreed
-/// to on 2026-11-07: "Yes I agree"; CHANGELOG.md, 0.7.2: "Clips now live in
-/// the library.").
+/// by its id and which make it is, and the one before goes (app `clips.rs`
+/// `set_clip_range`: "made again, as a new file"; decided: every make writes
+/// a new file of its own; CHANGELOG.md, 0.7.2: "Clips now live in the
+/// library.").
 #[test]
 fn a_resized_clip_is_made_again_as_a_new_file_in_the_library() {
     let app = TestApp::new();
@@ -316,9 +316,9 @@ fn a_resize_undone_or_redone_makes_the_clip_again() {
 }
 
 /// A clip resized while its file is being made is made for its new range,
-/// not left as the old one (app clips.rs:524: "Stopped: moved (it's queued
-/// again)"; crates/core/src/db.rs:1639, `set_clip_file`: "unless its range
-/// has moved since `start`..`end` seconds was cut").
+/// not left as the old one (the comment in app `clips.rs` `cut`: "Stopped:
+/// moved (it's queued again)"; crates/core/src/db.rs `set_clip_file`:
+/// "unless its range has moved since `start`..`end` seconds was cut").
 #[test]
 fn a_clip_resized_while_it_is_made_is_made_for_its_new_range() {
     let app = TestApp::new();
@@ -358,10 +358,9 @@ fn a_piece_added_while_its_clip_is_cut_is_in_its_file() {
 
 /// The same as the cut ends, its ffmpeg done and the library not yet taken:
 /// the clip is recorded as made of what was cut, not of what it holds by
-/// then, so the change makes it again (`cut`, as `edits::render_edit` does;
-/// the 0.7.3 races review, finding 1). The window is held open by holding
-/// the library as ffmpeg ends, and the change is `add_range_to_edit`'s own
-/// steps under that lock.
+/// then, so the change makes it again (`cut`, as `edits::render_edit` does).
+/// The window is held open by holding the library as ffmpeg ends, and the
+/// change is `add_range_to_edit`'s own steps under that lock.
 #[test]
 fn a_piece_added_as_its_clip_s_cut_ends_is_in_its_file() {
     let app = TestApp::new();
@@ -391,7 +390,7 @@ fn a_piece_added_as_its_clip_s_cut_ends_is_in_its_file() {
 /// The same with another clip ahead of its remake in the queue: till that
 /// remake, the clip waits, and isn't handed out with the file of its first
 /// piece alone; a drag meanwhile waits for the remake and gets it
-/// (`status_once_made`; the 0.7.3 races re-review, finding 1).
+/// (`status_once_made`).
 #[test]
 fn a_clip_changed_as_its_cut_ends_is_not_handed_out_before_its_remake() {
     use crate::testkit::{LetGo, Receiver};
@@ -432,7 +431,7 @@ fn a_clip_changed_as_its_cut_ends_is_not_handed_out_before_its_remake() {
 }
 
 /// A clip of an edit is titled with what's said at its start, not later in
-/// it (app clips.rs:574, `add_edit_clip`: "titled with what's said at its
+/// it (app `clips.rs` `add_edit_clip`: "titled with what's said at its
 /// start").
 #[test]
 fn a_clip_of_an_edit_is_titled_with_what_is_said_at_its_start() {
@@ -448,8 +447,9 @@ fn a_clip_of_an_edit_is_titled_with_what_is_said_at_its_start() {
 }
 
 /// The same stretch of an edit clipped twice gives the one clip (app
-/// clips.rs:600: "A range with a clip already (C pressed twice) gives that
-/// one"; CHANGELOG.md, 0.7.0 Fixes: "C twice in an edit makes one clip.").
+/// `clips.rs` `make_edit_clips`: "A range with a clip already (C pressed
+/// twice) gives that one"; CHANGELOG.md, 0.7.0 Fixes: "C twice in an edit
+/// makes one clip.").
 #[test]
 fn clipping_an_edit_s_range_twice_gives_the_one_clip() {
     let app = TestApp::new();
@@ -466,9 +466,9 @@ fn clipping_an_edit_s_range_twice_gives_the_one_clip() {
 }
 
 /// A stretch of an edit whose clip failed, clipped again, is made again
-/// (app clips.rs:600: "made again only if it failed"; CHANGELOG.md, 0.7.0
-/// Fixes: "C twice in an edit makes one clip." — "pressed again on a clip
-/// that failed, C tries it again").
+/// (app `clips.rs` `make_edit_clips`: "made again only if it failed";
+/// CHANGELOG.md, 0.7.0 Fixes: "C twice in an edit makes one clip." —
+/// "pressed again on a clip that failed, C tries it again").
 #[test]
 fn a_failed_clip_of_an_edit_clipped_again_is_made_again() {
     let app = TestApp::new();
@@ -485,10 +485,9 @@ fn a_failed_clip_of_an_edit_clipped_again_is_made_again() {
 
 /// The same stretch of a VOD clipped twice gives the one clip, made: the
 /// command keeps the rule, as it does for an edit, not only the page
-/// (plans/clips-pilot.md, Decided 1: "One clip per stretch: the command
-/// keeps the rule for VODs as for edits"; CHANGELOG.md, 0.7.0 Fixes:
-/// "Pressing C twice on the same stretch of an edit makes one clip, as on a
-/// VOD").
+/// (decided: one clip per stretch, and the command keeps the rule for VODs
+/// as for edits; CHANGELOG.md, 0.7.0 Fixes: "Pressing C twice on the same
+/// stretch of an edit makes one clip, as on a VOD").
 #[test]
 fn clipping_a_vod_s_stretch_twice_gives_the_one_clip() {
     let app = TestApp::new();
@@ -508,8 +507,8 @@ fn clipping_a_vod_s_stretch_twice_gives_the_one_clip() {
 /// C on the stretch a clip of the clip bar is listed at gives that clip,
 /// though it was changed in the editor (a piece added after its first): the
 /// page finds it there and asks no download note, so the command gives the
-/// same one, as 0.7.2's page did (Decided 1, as above; clips.svelte.ts
-/// `find`: "The clip of exactly `start`..`end`"; the clips-fixes review, M1).
+/// same one, as 0.7.2's page did (one clip per stretch, as above;
+/// clips.svelte.ts `find`: "The clip of exactly `start`..`end`").
 #[test]
 fn c_on_the_stretch_of_a_clip_changed_in_the_editor_gives_that_clip() {
     let app = TestApp::new();
@@ -530,7 +529,7 @@ fn c_on_the_stretch_of_a_clip_changed_in_the_editor_gives_that_clip() {
 /// that piece: a clip of the VOD's clip bar listed at its stretch but changed
 /// in the editor (a piece added) isn't it, though one that plays just the
 /// stretch is given, made already (dragout.ts `carry`; CHANGELOG.md, 0.7.3
-/// Fixes: "A dragged piece reuses its clip."; the clips-fixes re-review, N1).
+/// Fixes: "A dragged piece reuses its clip.").
 #[test]
 fn a_piece_carried_out_is_a_clip_that_plays_just_it() {
     let app = TestApp::new();
@@ -571,7 +570,7 @@ fn stretches_dragged_to_the_clip_bar_are_clips_that_play_just_them() {
 }
 
 /// Several stretches clipped at once, one with a clip already, give that
-/// one and make the others, in their order (Decided 1, as above;
+/// one and make the others, in their order (one clip per stretch, as above;
 /// CHANGELOG.md, 0.6.0: "Clip and delete several at once.").
 #[test]
 fn clips_made_at_once_give_the_one_made_already() {
@@ -585,8 +584,8 @@ fn clips_made_at_once_give_the_one_made_already() {
 }
 
 /// A stretch of a VOD whose clip failed, clipped again, is made again
-/// (Decided 1, as above; CHANGELOG.md, 0.7.0 Fixes: "pressing it again on a
-/// clip that failed tries it again", for an edit "as on a VOD").
+/// (one clip per stretch, as above; CHANGELOG.md, 0.7.0 Fixes: "pressing it
+/// again on a clip that failed tries it again", for an edit "as on a VOD").
 #[test]
 fn a_failed_clip_of_a_vod_clipped_again_is_made_again() {
     let app = TestApp::new();
@@ -603,8 +602,9 @@ fn a_failed_clip_of_a_vod_clipped_again_is_made_again() {
 
 /// A stretch whose clip was made only for a drag out of the window, clipped,
 /// is that clip put on the clip bar; a drag of a stretch on the bar is the
-/// bar's clip (Decided 1, as above; app clips.rs `add_clip`: "in the clip
-/// bar unless `shown` is false (one only dragged out of the window)").
+/// bar's clip (one clip per stretch, as above; app `clips.rs` `add_clip`:
+/// "in the clip bar unless `shown` is false (one only dragged out of the
+/// window)").
 #[test]
 fn a_stretch_dragged_out_and_clipped_is_one_clip() {
     let app = TestApp::new();
@@ -620,7 +620,7 @@ fn a_stretch_dragged_out_and_clipped_is_one_clip() {
 }
 
 /// A clip of an edit that would start where the edit has ended is refused,
-/// saying so (crates/core/src/edits.rs:1676, `check_edit_span`: "a span of
+/// saying so (crates/core/src/edits.rs `check_edit_span`: "a span of
 /// clip `clip`'s timeline (an edit's: as long as what its pieces play),
 /// `clips::check_span`").
 #[test]
@@ -633,9 +633,9 @@ fn a_clip_past_an_edit_s_end_says_so() {
 }
 
 /// Several stretches of an edit clipped at once are one change undo takes
-/// back whole, and one that can't be made makes none (app clips.rs:589,
-/// `add_edit_clips`: "as one change undo takes back whole"; :598: "as one
-/// change (all of them, or none if one can't be made)").
+/// back whole, and one that can't be made makes none (app `clips.rs`
+/// `add_edit_clips`: "as one change undo takes back whole"; `make_edit_clips`:
+/// "as one change (all of them, or none if one can't be made)").
 #[test]
 fn clips_of_an_edit_made_at_once_are_one_step_and_all_or_none() {
     let app = TestApp::new();
@@ -654,7 +654,7 @@ fn clips_of_an_edit_made_at_once_are_one_step_and_all_or_none() {
 }
 
 /// An edit's clip bar lists its clips in their order: each one clipped goes
-/// after those before it, wherever its stretch is (app clips.rs:568,
+/// after those before it, wherever its stretch is (app `clips.rs`
 /// `edit_clips`: "The clips on edit `id`'s clip bar, in their order").
 #[test]
 fn an_edit_s_clip_bar_lists_its_clips_in_their_order() {
@@ -669,10 +669,10 @@ fn an_edit_s_clip_bar_lists_its_clips_in_their_order() {
 }
 
 /// A VOD's clip bar lists its clips in their order: each one clipped goes
-/// after those before it, wherever its stretch is (app clips.rs:646,
-/// `list_clips`; crates/core/src/db.rs:1528, `clips`: "VOD `vod_id`'s clips
-/// (the snippets on its clip bar), in their order"; db.rs:1487, `add_clip`:
-/// "after its others on the clip bar").
+/// after those before it, wherever its stretch is (app `clips.rs`
+/// `list_clips`; crates/core/src/db.rs `clips`: "VOD `vod_id`'s clips (the
+/// snippets on its clip bar), in their order"; db.rs `add_clip`: "after its
+/// others on the clip bar").
 #[test]
 fn a_vod_s_clip_bar_lists_its_clips_in_their_order() {
     let app = TestApp::new();
@@ -702,9 +702,9 @@ fn a_clip_brings_the_chapters_and_highlights_in_it_on_the_same_moments() {
 }
 
 /// A clip of a site's VOD is cut from a section of it downloaded into the
-/// footage folder (app clips.rs:1: "or else a section of it downloaded into
-/// the footage folder"; CHANGELOG.md, 0.7.1: "Clips start as you pick them
-/// up." — "a site's is downloaded").
+/// footage folder (app `clips.rs`'s module doc: "or else a section of it
+/// downloaded into the footage folder"; CHANGELOG.md, 0.7.1: "Clips start
+/// as you pick them up." — "a site's is downloaded").
 #[test]
 fn a_clip_of_a_site_s_vod_is_cut_from_a_section_downloaded_for_it() {
     let app = TestApp::new();
@@ -725,8 +725,8 @@ fn a_clip_of_a_site_s_vod_is_cut_from_a_section_downloaded_for_it() {
 
 /// A second clip of a site's VOD a little longer than the first is cut from
 /// the footage already downloaded: the site, refusing now, isn't asked
-/// (app clips.rs:1: "so a clip made a little longer, or put in an edit,
-/// needs no new download").
+/// (app `clips.rs`'s module doc: "so a clip made a little longer, or put in
+/// an edit, needs no new download").
 #[test]
 fn a_clip_made_a_little_longer_needs_no_new_download() {
     let app = TestApp::new();
@@ -739,8 +739,9 @@ fn a_clip_made_a_little_longer_needs_no_new_download() {
 }
 
 /// A clip of a site's VOD whose download the site refuses says why, and has
-/// no file (app clips.rs:526, the error recorded; CHANGELOG.md, 0.7.0 Fixes: "Errors
-/// show at the window's bottom." — "a clip that couldn't be made said so").
+/// no file (app `clips.rs` `cut`, the error recorded; CHANGELOG.md, 0.7.0
+/// Fixes: "Errors show at the window's bottom." — "a clip that couldn't be
+/// made said so").
 #[test]
 fn a_clip_whose_download_is_refused_says_why_and_has_no_file() {
     let app = TestApp::new();
@@ -755,7 +756,7 @@ fn a_clip_whose_download_is_refused_says_why_and_has_no_file() {
 }
 
 /// A clip whose cut fails says what ffmpeg said, and has no file (app
-/// clips.rs:526, the error recorded: `set_clip_file(… Error, None,
+/// `clips.rs` `cut`, the error recorded: `set_clip_file(… Error, None,
 /// Some(&format!("{e:#}")))`).
 #[test]
 fn a_clip_whose_cut_fails_says_ffmpeg_s_reason_and_has_no_file() {
@@ -771,7 +772,7 @@ fn a_clip_whose_cut_fails_says_ffmpeg_s_reason_and_has_no_file() {
 }
 
 /// A made clip has a picture of its first frame, for its drag; a clip of
-/// sound alone has none (app clips.rs:320, `thumb_path`: "Clip `id`'s first
+/// sound alone has none (app `clips.rs` `thumb_path`: "Clip `id`'s first
 /// frame, shown while it's dragged out").
 #[test]
 fn a_made_clip_has_a_picture_of_its_first_frame_and_sound_alone_has_none() {
@@ -798,7 +799,7 @@ fn a_long_clip_of_a_site_s_vod_is_made_with_no_question() {
 }
 
 /// A clip changed in the editor (a second kept, the rest taken out) is made
-/// again as its pieces now say (app clips.rs:266, `make`: "one changed in
+/// again as its pieces now say (app `clips.rs` `make`: "one changed in
 /// the editor … is rendered as an edit is"; CHANGELOG.md, 0.5.0:
 /// "Double-click a clip's name … its file is made again to match";
 /// tests/e2e/scenarios/snippet-editor.mjs: "cut a second in (B) and the rest

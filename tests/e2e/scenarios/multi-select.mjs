@@ -569,7 +569,7 @@ export default {
     await click(b, "plain");
     await says("", "a plain click on one of three picked");
     await until("the clicked row open", async () => (await openRow()) === b, 10_000);
-    // The owner's case: one clicked (opened), another Ctrl-clicked: both, the open one first.
+    // The case reported: one clicked (opened), another Ctrl-clicked: both, the open one first.
     await click(c, "toggle");
     await says("2 VODs", "one opened, another Ctrl-clicked");
     await pickedAre({ [b]: "1", [c]: "2" }, "one opened, another Ctrl-clicked");

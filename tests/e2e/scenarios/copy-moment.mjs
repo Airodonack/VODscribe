@@ -1,5 +1,5 @@
 // The timestamp in the player's header copies a link to where the playhead
-// is (Player.svelte `copyLink`), on a site's VOD: the owner's test VOD on
+// is (Player.svelte `copyLink`), on a site's VOD: our test VOD on
 // Twitch (or YouTube or Kick, with E2E_SITE=youtube or kick). Opened at its
 // start and played, the stamp comes up with the time playing; after a click
 // further on the timeline, it follows. Open on <site> beside it opens the

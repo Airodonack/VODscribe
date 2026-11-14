@@ -1,5 +1,5 @@
 // A site's VOD in its own player, with the app's picture under it (embed.ts,
-// embed_shim.js, embed.rs): the owner's test VOD on Twitch (or YouTube, with
+// embed_shim.js, embed.rs): our test VOD on Twitch (or YouTube, with
 // E2E_SITE=youtube) played from the app's controls. The app's player runs in
 // step with it, follows a jump and a pause, draws captions, and when it
 // steps aside (as for an ad in the stream) their player plays on alone.

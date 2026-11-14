@@ -587,7 +587,7 @@ fn a_restarted_app_has_its_worker_from_the_start() {
 /// file's picture asked for, vods.rs `announce_file`) still running as the
 /// app ends is waited for before the app's state goes: let go only once the
 /// end has begun, it still finds the state. (Ended under it, a real one read
-/// freed memory: sections-074 2A1's report.)
+/// freed memory.)
 #[test]
 fn the_apps_end_waits_for_the_threads_its_commands_started() {
     use std::sync::atomic::{AtomicBool, Ordering};

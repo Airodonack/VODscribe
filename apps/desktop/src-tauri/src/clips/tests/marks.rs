@@ -67,9 +67,9 @@ fn is(error: Result<Value, Value>, words: &str) {
     assert_eq!(error.unwrap_err(), json!(words));
 }
 
-/// A mark is a cut unless it's said to be a chapter or highlight
-/// (app clips.rs:940: "a cut (between two frames) unless `kind` says a chapter
-/// or a highlight").
+/// A mark is a cut unless it's said to be a chapter or highlight (app clips.rs
+/// `add_mark`: "a cut (between two frames) unless `kind` says a chapter or a
+/// highlight").
 #[test]
 fn a_mark_is_a_cut_unless_it_is_said_to_be_a_chapter_or_highlight() {
     let app = TestApp::new();
@@ -83,7 +83,7 @@ fn a_mark_is_a_cut_unless_it_is_said_to_be_a_chapter_or_highlight() {
 }
 
 /// A mark of another kind is refused: "That isn't a kind of mark." (app
-/// clips.rs:932 and :955), in a VOD and in an edit.
+/// clips.rs `add_mark` and `add_edit_mark`), in a VOD and in an edit.
 #[test]
 fn a_mark_of_another_kind_is_refused() {
     let app = TestApp::new();
@@ -98,8 +98,8 @@ fn a_mark_of_another_kind_is_refused() {
     assert!(app.edit_marks(edit).is_empty());
 }
 
-/// A mark before the start, or at no real time, is refused: "A mark has to
-/// be within the video." (app clips.rs:951).
+/// A mark before the start, or at no real time, is refused: "A mark has to be
+/// within the video." (core clips.rs `MARK_OUTSIDE`, from `check_mark`).
 #[test]
 fn a_mark_before_the_start_or_at_no_real_time_is_refused() {
     let app = TestApp::new();
@@ -118,9 +118,8 @@ fn a_mark_before_the_start_or_at_no_real_time_is_refused() {
 }
 
 /// A mark past the video's end is refused too, the same words: "A mark has to
-/// be within the video." (crates/core/src/clips.rs `check_mark`; plan
-/// disagreement 5, a bug: "Marks past the end are a bug, fix it", owner,
-/// 2026-11-11.) A file's and a site's VOD alike, added or moved there.
+/// be within the video." (crates/core/src/clips.rs `check_mark`). Marks past
+/// the end were a bug. A file's and a site's VOD alike, added or moved there.
 #[test]
 fn a_mark_past_the_video_s_end_is_refused() {
     let app = TestApp::new();
@@ -180,8 +179,8 @@ fn a_mark_on_a_vod_of_no_known_length_is_bounded_only_by_its_start() {
     }
 }
 
-/// A mark on a VOD that is gone says so: "That VOD is gone." (app
-/// clips.rs:959).
+/// A mark on a VOD that is gone says so: "That VOD is gone." (app clips.rs
+/// `add_mark`).
 #[test]
 fn a_mark_on_a_vod_that_is_gone_says_so() {
     let app = TestApp::new();
@@ -190,8 +189,8 @@ fn a_mark_on_a_vod_that_is_gone_says_so() {
 }
 
 /// A mark's text is trimmed, at most 200 characters, and none when nothing is
-/// left (app clips.rs:935; crates/core/src/clips.rs:55 `written_title`), when
-/// it is added and when it is changed.
+/// left (app clips.rs `mark_text`; crates/core/src/clips.rs `written_title`),
+/// when it is added and when it is changed.
 #[test]
 fn a_mark_s_text_is_trimmed_and_capped_and_none_when_empty() {
     let app = TestApp::new();
@@ -212,7 +211,7 @@ fn a_mark_s_text_is_trimmed_and_capped_and_none_when_empty() {
     assert_eq!(text(&app)[3], Some("x".repeat(200)));
 }
 
-/// A VOD's marks are listed in time order (app clips.rs:878: "in time
+/// A VOD's marks are listed in time order (app clips.rs `list_marks`: "in time
 /// order").
 #[test]
 fn a_vod_s_marks_are_listed_in_time_order() {
@@ -225,8 +224,8 @@ fn a_vod_s_marks_are_listed_in_time_order() {
     assert_eq!(times, [10.0, 20.0, 30.0]);
 }
 
-/// Adding a mark is one step, named for its kind (app clips.rs:923; marks-undo.mjs:
-/// "each told in a toast").
+/// Adding a mark is one step, named for its kind (app clips.rs `added`;
+/// marks-undo.mjs: "each told in a toast").
 #[test]
 fn adding_a_mark_is_one_step_named_for_its_kind() {
     let app = TestApp::new();
@@ -243,8 +242,8 @@ fn adding_a_mark_is_one_step_named_for_its_kind() {
     assert!(app.marks(vod).is_empty());
 }
 
-/// A moved mark is where it was moved, and undo puts it back (app
-/// clips.rs:988; 0.7.1 Fixes: "Undo undoes the latest change. Undo (Ctrl+Z)
+/// A moved mark is where it was moved, and undo puts it back (app clips.rs
+/// `move_mark`; 0.7.1 Fixes: "Undo undoes the latest change. Undo (Ctrl+Z)
 /// pressed right after a change, such as moving a mark, could undo the one
 /// before it instead.").
 #[test]
@@ -260,9 +259,9 @@ fn a_moved_mark_is_where_it_was_moved_and_undo_puts_it_back() {
     assert_eq!(times(&app), [5.0, 40.0], "the move, not the adding before it");
 }
 
-/// A mark moved in an edit goes to the moment playing there (app
-/// clips.rs:993; 0.5.0: "Edits have chapters and highlights of their own ...
-/// Each stays on its moment of the video, so it moves with its piece").
+/// A mark moved in an edit goes to the moment playing there (app clips.rs, the
+/// comment in `move_mark`; 0.5.0: "Edits have chapters and highlights of their
+/// own ... Each stays on its moment of the video, so it moves with its piece").
 #[test]
 fn a_mark_moved_in_an_edit_goes_to_the_moment_playing_there() {
     let app = TestApp::new();
@@ -276,8 +275,8 @@ fn a_mark_moved_in_an_edit_goes_to_the_moment_playing_there() {
     assert_eq!(app.edit_marks(edit)[0].1, 15.0, "of the edit");
 }
 
-/// A mark moved outside its edit, before its start or past its end, is
-/// refused: "A mark has to be within the edit." (app clips.rs:998).
+/// A mark moved outside its edit, before its start or past its end, is refused:
+/// "A mark has to be within the edit." (app clips.rs `move_mark`).
 #[test]
 fn a_mark_moved_outside_its_edit_is_refused() {
     let app = TestApp::new();
@@ -293,8 +292,8 @@ fn a_mark_moved_outside_its_edit_is_refused() {
     app.invoke("move_mark", json!({ "id": mark_id(&mark), "time": 20.0 })).unwrap();
 }
 
-/// A mark moved before the start is refused (app clips.rs:990: "A mark has
-/// to be within the video.").
+/// A mark moved before the start is refused (app clips.rs `move_mark`, by core
+/// `check_mark`: "A mark has to be within the video.").
 #[test]
 fn a_mark_moved_before_the_start_is_refused() {
     let app = TestApp::new();
@@ -305,8 +304,8 @@ fn a_mark_moved_before_the_start_is_refused() {
     assert_eq!(app.marks(vod)[0].1, 5.0);
 }
 
-/// A mark that is gone, moved or retitled, says so: "That mark is gone."
-/// (app clips.rs:970).
+/// A mark that is gone, moved or retitled, says so: "That mark is gone." (app
+/// clips.rs `marking`).
 #[test]
 fn a_mark_that_is_gone_moved_or_retitled_says_so() {
     let app = TestApp::new();
@@ -335,7 +334,7 @@ fn a_deleted_mark_comes_back_with_undo_and_goes_again_with_redo() {
     assert!(app.marks(vod).is_empty());
 }
 
-/// Deleting a mark already gone is no error (app clips.rs:1003).
+/// Deleting a mark already gone is no error (app clips.rs `delete_mark`).
 #[test]
 fn deleting_a_mark_already_gone_is_no_error() {
     let app = TestApp::new();
@@ -349,9 +348,10 @@ fn deleting_a_mark_already_gone_is_no_error() {
 }
 
 /// A mark canceled just after it was added leaves no step: it is gone and not
-/// in undo's history, so undo undoes the change before it (app clips.rs:1011;
-/// marks-undo.mjs: "gone, and not in undo's history (Ctrl+Z undoes the change
-/// before it)"; 0.4.0: "Pressed by mistake, Escape takes it back.").
+/// in undo's history, so undo undoes the change before it (app clips.rs
+/// `cancel_mark`; marks-undo.mjs: "gone, and not in undo's history (Ctrl+Z
+/// undoes the change before it)"; 0.4.0: "Pressed by mistake, Escape takes it
+/// back.").
 #[test]
 fn a_mark_canceled_just_after_it_was_added_leaves_no_step() {
     let app = TestApp::new();
@@ -382,9 +382,9 @@ fn what_undo_took_back_before_a_canceled_mark_can_still_be_redone() {
     assert_eq!(app.marks(vod), [("highlight".to_string(), 5.0, Some("kept".to_string()))]);
 }
 
-/// A mark canceled after other changes is an ordinary removal (app
-/// clips.rs:1011: "With anything changed since, it's an ordinary removal"):
-/// one step of its own, which undo brings back.
+/// A mark canceled after other changes is an ordinary removal (app clips.rs
+/// `cancel_mark`: "With anything changed since, it's an ordinary removal"): one
+/// step of its own, which undo brings back.
 #[test]
 fn a_mark_canceled_after_other_changes_is_an_ordinary_removal() {
     let app = TestApp::new();
@@ -401,8 +401,8 @@ fn a_mark_canceled_after_other_changes_is_an_ordinary_removal() {
     assert_eq!(app.marks(vod).len(), 2, "brought back");
 }
 
-/// An edit's mark goes on the moment of the VOD playing there (app
-/// clips.rs:892; 0.5.0: "Each stays on its moment of the video, so it moves
+/// An edit's mark goes on the moment of the VOD playing there (app clips.rs
+/// `add_edit_mark`; 0.5.0: "Each stays on its moment of the video, so it moves
 /// with its piece").
 #[test]
 fn an_edit_s_mark_goes_on_the_moment_of_the_vod_playing_there() {
@@ -424,7 +424,7 @@ fn an_edit_s_mark_goes_on_the_moment_of_the_vod_playing_there() {
 }
 
 /// An edit's mark outside the edit is refused: "A mark has to be within the
-/// edit." (app clips.rs:908).
+/// edit." (app clips.rs `add_edit_mark`).
 #[test]
 fn an_edit_s_mark_outside_it_is_refused() {
     let app = TestApp::new();
@@ -441,10 +441,10 @@ fn an_edit_s_mark_outside_it_is_refused() {
     assert!(app.edit_marks(edit).len() == 1);
 }
 
-/// An edit's marks show where their moments play (app clips.rs:884: "each
-/// where its moment plays"; 0.5.0: "Each stays on its moment of the video, so
-/// it moves with its piece"): one in a stretch taken out of the edit is not
-/// shown.
+/// An edit's marks show where their moments play (app clips.rs `edit_marks`:
+/// "each where its moment plays"; 0.5.0: "Each stays on its moment of the
+/// video, so it moves with its piece"): one in a stretch taken out of the edit
+/// is not shown.
 #[test]
 fn an_edit_s_marks_show_where_their_moments_play() {
     let app = TestApp::new();
@@ -465,11 +465,10 @@ fn an_edit_s_marks_show_where_their_moments_play() {
 }
 
 /// A chapter whose start is cut away starts where its piece plays again (0.5.0:
-/// "a chapter whose start is cut away starts where its piece plays again";
-/// app clips.rs:884, crates/core/src/edits.rs `place_marks`). Here the cut is
-/// the editor's Remove, which splits the piece in two, so the chapter starts
-/// where the next piece begins (owner, 2026-11-11: "Yes, the chapter should
-/// start where the next piece begins").
+/// "a chapter whose start is cut away starts where its piece plays again"; app
+/// clips.rs `edit_marks`, crates/core/src/edits.rs `place_marks`). Here the cut
+/// is the editor's Remove, which splits the piece in two. Decided: the chapter
+/// then starts where the next piece begins.
 #[test]
 fn a_chapter_whose_start_is_cut_away_starts_where_its_piece_plays_again() {
     let app = TestApp::new();
@@ -493,7 +492,8 @@ fn a_chapter_cut_away_after_the_last_piece_shows_nowhere() {
     assert_eq!(app.edit_marks(edit), []);
 }
 
-/// A mark's text change is one step (app clips.rs:964: "Text changed").
+/// A mark's text change is one step (app clips.rs `set_mark_text`: "Text
+/// changed").
 #[test]
 fn a_mark_s_text_change_is_one_step() {
     let app = TestApp::new();

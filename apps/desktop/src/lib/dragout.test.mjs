@@ -915,7 +915,7 @@ const wanted = (clip_format, clip_codec, clip_quality) =>
 
 /**
  * A file in another format is not as clips are made now (crates/core
- * clips.rs:116: "The page asks the same"; dragout.ts:308 `madeAsWanted`).
+ * clips.rs `made_as`: "The page asks the same"; dragout.ts `madeAsWanted`).
  */
 test("a file in another format is not as clips are made now", () => {
   assert.equal(
@@ -943,9 +943,8 @@ test("a file in another format is not as clips are made now", () => {
 
 /**
  * A file in another codec or quality is not as clips are made now
- * (0.7.2.md, "The owner's walkthrough", Fix before the tag (walk-clips): a
- * clip made as H.264 stayed as it was after clips were set to H.265;
- * dragout.ts:308 `madeAsWanted`).
+ * (a fix for 0.7.2: a clip made as H.264 stayed as it was after clips were
+ * set to H.265; dragout.ts `madeAsWanted`).
  */
 test("a file in another codec or quality is not as clips are made now", () => {
   const h264 = madeClip("/c/1.mp4", { codec: "h264", quality: "standard" });
@@ -960,8 +959,9 @@ test("a file in another codec or quality is not as clips are made now", () => {
 
 /**
  * A file with no encoding recorded reads as its format was made when codecs
- * were no choice: MP4 as H.264 standard, MOV as DNxHR proxy (dragout.ts:302
- * and :308: "else as a file of its format was made before that was").
+ * were no choice: MP4 as H.264 standard, MOV as DNxHR proxy (dragout.ts
+ * `encodingBefore` and `madeAsWanted`: "else as a file of its format was made
+ * before that was").
  */
 test("a file with no encoding recorded reads as its format was made then", () => {
   assert.equal(madeAsWanted(madeClip("/c/1.mp4"), wanted("mp4", "h264", "standard")), true);
@@ -983,8 +983,8 @@ test("a file with no encoding recorded reads as its format was made then", () =>
 });
 
 /**
- * Sound alone is as wanted in any codec of its format (dragout.ts:308: "Sound
- * alone is the same in every codec of its format"): .m4a is MP4's, .wav MOV's.
+ * Sound alone is as wanted in any codec of its format (dragout.ts
+ * `madeAsWanted`: "Sound alone is the same in every codec of its format"): .m4a is MP4's, .wav MOV's.
  */
 test("sound alone is as wanted in any codec of its format", () => {
   assert.equal(
@@ -1010,7 +1010,7 @@ test("sound alone is as wanted in any codec of its format", () => {
  * An app that takes finished files only is named when its name is known
  * (0.7.1: "Some apps take finished files only. If one takes nothing or
  * refuses the drop before the clip is made, VODscribe says which app it
- * was"; dragout.ts:108).
+ * was"; dragout.ts `finishedOnly`).
  */
 test("an app that takes finished files only is named when its name is known", () => {
   assert.equal(
@@ -1024,7 +1024,7 @@ test("an app that takes finished files only is named when its name is known", ()
   assert.equal(finishedOnly("", 1).startsWith("That app takes"), true, "an empty name is none");
 });
 
-/** Several clips refused by such an app are said as they (dragout.ts:108). */
+/** Several clips refused by such an app are said as they (dragout.ts `finishedOnly`). */
 test("several clips refused by such an app are said as they", () => {
   assert.equal(
     finishedOnly("Kdenlive", 2),
@@ -1038,7 +1038,8 @@ test("several clips refused by such an app are said as they", () => {
 
 /**
  * Clips let go while being made are said to land once made (0.7.1: "once you
- * let it go on another app, VODscribe says it's being made"; dragout.ts:123).
+ * let it go on another app, VODscribe says it's being made"; dragout.ts
+ * `making`).
  */
 test("clips let go while being made are said to land once made", () => {
   assert.equal(making(1), "Making the clip. It'll be where you dropped it once it's made.");
@@ -1050,7 +1051,7 @@ test("clips let go while being made are said to land once made", () => {
  * A clip downloaded into the clip bar instead says so (0.7.1 Fixes: "The
  * download note survives a drag ... Download clip puts it on the clip bar to
  * drag out once it's made"; drag-note.mjs: "Download clip makes the clip in
- * the clip bar ... and says so"; dragout.ts:115).
+ * the clip bar ... and says so"; dragout.ts `downloading`).
  */
 test("a clip downloaded into the clip bar instead says so", () => {
   assert.equal(downloading(1), "Downloading the clip. Drag it from the clip bar when it's ready.");
@@ -1106,7 +1107,7 @@ test("a drag's own files coming back are not added to the library", async () => 
   await tick();
 });
 
-/** A carried stretch is said as its length, then its times (dragout.ts:422: "0:05  1:00–1:05"). */
+/** A carried stretch is said as its length, then its times (dragout.ts `stretchSaid`: "0:05  1:00–1:05"). */
 test("a carried stretch is said as its length then its times", () => {
   assert.equal(stretchSaid(60, 65), "0:05  1:00–1:05");
   assert.equal(stretchSaid(3725, 3785), "1:00  1:02:05–1:03:05");

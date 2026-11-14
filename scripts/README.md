@@ -19,6 +19,9 @@ Builds, release packaging and checks, run by hand and by CI.
 - `test_release.py`: tests of the two release scripts.
 - `changelog-check.py`: checks the shape of `CHANGELOG.md`'s unreleased entries.
 - `test_changelog_check.py`: its tests.
+- `citations-check.py`: refuses comments that cite a private plan, the owner or code by line number.
+- `citations-allow.txt`: the files that check leaves out for now; to be emptied.
+- `test_citations_check.py`: its tests.
 
 ## Releasing
 

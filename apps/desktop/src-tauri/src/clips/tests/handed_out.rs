@@ -2,8 +2,7 @@
 //! second name could be made for it (a disk that takes no hard links, such
 //! as exFAT, on a drag; a names folder that can't be made, on Show in
 //! folder), the clip's own file is what went, and deleting the clip deleted
-//! it from under the app whose project used it (clips pilot plan,
-//! disagreement 4).
+//! it from under the app whose project used it.
 //!
 //! Sources, each test citing the one it states:
 //! - `Db::hand_out_clip`: "it's someone else's now, so it stays when the clip goes";
@@ -11,9 +10,9 @@
 //! - `handed_out`: "The clip's own file if none can be made";
 //! - `show_clip`: "from there it's the user's to take".
 //!
-//! Each make of a clip (or render of an edit) writes a file of its own
-//! (`Paths::clip_make`; owner, 2026-11-07, plans/clips-pilot.md "Decided"
-//! 4b): one made again at the path another app was given wrote over it.
+//! Decided: each make of a clip (or render of an edit) writes a file of its
+//! own (`Paths::clip_make`), as one made again at the path another app was
+//! given wrote over it.
 
 use super::*;
 
@@ -284,8 +283,8 @@ fn an_edit_shown_where_no_name_can_be_made_keeps_that_video_when_deleted() {
 
 /// A clip made again in the format it was (resized) is a new file: the one
 /// another app was given stays as it was, the same file byte for byte, and
-/// the clip plays its new one (`cut`, `Db::next_clip_file`; plans/clips-pilot.md
-/// "Decided" 4b).
+/// the clip plays its new one (`cut`, `Db::next_clip_file`; every make writes
+/// a file of its own, as above).
 #[test]
 fn a_clip_made_again_in_the_same_format_keeps_the_file_another_app_was_given() {
     let app = TestApp::new();
@@ -309,8 +308,8 @@ fn a_clip_made_again_in_the_same_format_keeps_the_file_another_app_was_given() {
 
 /// Made again as a MOV and then as an MP4 again, the clip never comes back
 /// to the path another app was given: that file stays as it was through both,
-/// and after the clip is deleted (the review's R2: the second remake wrote
-/// over it and the delete took it).
+/// and after the clip is deleted (the second remake once wrote over it and
+/// the delete took it).
 #[test]
 fn a_clip_made_again_as_a_mov_and_back_keeps_the_file_another_app_was_given() {
     let app = TestApp::new();
@@ -332,8 +331,7 @@ fn a_clip_made_again_as_a_mov_and_back_keeps_the_file_another_app_was_given() {
 
 /// An edit rendered again as it was is a new video: the one another app was
 /// given stays as it was, and the edit plays its new one (render_edit,
-/// `Db::next_clip_file`; plans/clips-pilot.md "Decided" 4b: "Edits' renders
-/// the same").
+/// `Db::next_clip_file`; decided: an edit's renders are as a clip's makes).
 #[test]
 fn an_edit_rendered_again_in_the_same_format_keeps_the_video_another_app_was_given() {
     let app = TestApp::new();
@@ -349,7 +347,7 @@ fn an_edit_rendered_again_in_the_same_format_keeps_the_video_another_app_was_giv
 }
 
 /// An edit rendered as a MOV and then as an MP4 again never comes back to
-/// the path another app was given (the review's R2, for an edit).
+/// the path another app was given.
 #[test]
 fn an_edit_rendered_as_a_mov_and_back_keeps_the_video_another_app_was_given() {
     let app = TestApp::new();
@@ -371,8 +369,8 @@ fn an_edit_rendered_as_a_mov_and_back_keeps_the_video_another_app_was_given() {
 
 /// An edit deleted as its render in another format ends: the delete keeps
 /// the video another app was given, and the render, finding the edit gone,
-/// leaves it too (the review's R1). The render is held at a `Gate` and
-/// `delete_edit`'s steps before it stops the render run while it's held.
+/// leaves it too. The render is held at a `Gate` and `delete_edit`'s steps
+/// before it stops the render run while it's held.
 #[test]
 fn an_edit_deleted_as_its_render_ends_keeps_the_video_another_app_was_given() {
     let app = TestApp::new();
@@ -393,9 +391,8 @@ fn an_edit_deleted_as_its_render_ends_keeps_the_video_another_app_was_given() {
 
 /// A clip made again while a drag of its own file is under way: once the
 /// drop is over, only the file the drag gave is another app's; the clip's
-/// new one is the app's, and goes with it (the review's R3: the file the drag
-/// gave is noted as it's given, `hand_out_made`, and the remake takes the
-/// clip back, `cut`).
+/// new one is the app's, and goes with it (the file the drag gave is noted as
+/// it's given, `hand_out_made`, and the remake takes the clip back, `cut`).
 #[test]
 fn a_clip_made_again_during_its_drag_lets_its_new_file_go_with_it() {
     let app = TestApp::new();
@@ -416,7 +413,7 @@ fn a_clip_made_again_during_its_drag_lets_its_new_file_go_with_it() {
 /// A clip whose own file went, shown in its folder later (a copy under its
 /// name, `hand_out_clip`), still keeps that file: the name handed out after
 /// doesn't take back the file before it (`Db::hand_out_clip`'s
-/// `max(handed_out, 1)`; the review's R5a).
+/// `max(handed_out, 1)`).
 #[test]
 fn a_name_handed_out_after_the_clip_s_own_file_keeps_that_file() {
     let app = TestApp::new();
@@ -462,13 +459,13 @@ fn files_in(dir: &Path) -> Vec<String> {
 
 /// A make the library didn't record (the clip was resized as its ffmpeg
 /// ended, so it's made again) is nobody's: it goes, and doesn't stay in the
-/// clips folder once the clip is deleted (`cut`; the re-review's RR1). The
-/// window, ffmpeg done and the library not yet taken, is held open by
-/// holding the library as ffmpeg ends. `set_clip_range`'s stop lands on that
-/// make, whose cut queues the clip again; the remake begins before the
-/// command's own queue, so the clip is both being made and waiting, and its
-/// delete takes it out of the queue but leaves the remake to end (CI run
-/// 43055187212, where this order came by chance).
+/// clips folder once the clip is deleted (`cut`). The window, ffmpeg done
+/// and the library not yet taken, is held open by holding the library as
+/// ffmpeg ends. `set_clip_range`'s stop lands on that make, whose cut queues
+/// the clip again; the remake begins before the command's own queue, so the
+/// clip is both being made and waiting, and its delete takes it out of the
+/// queue but leaves the remake to end (CI run 43055187212, where this order
+/// came by chance).
 #[test]
 fn a_make_the_library_did_not_record_goes() {
     use vodscribe_core::testkit::{Gate, eventually};
@@ -581,7 +578,7 @@ fn a_clip_deleted_as_its_render_ends_and_undone_keeps_the_file_another_app_took(
 /// On a disk without hard links a drag hands out the clip's own file as the
 /// app it's let go on asks; a remake that ends before the drop is over
 /// keeps that file, as it's noted handed out when it's given, not at the
-/// drop (`hand_out_made`; the re-review's RR2).
+/// drop (`hand_out_made`).
 #[test]
 fn a_clip_made_again_before_the_drop_keeps_the_own_file_the_drag_gave() {
     let app = TestApp::new();
@@ -601,7 +598,7 @@ fn a_clip_made_again_before_the_drop_keeps_the_own_file_the_drag_gave() {
 }
 
 /// The same where the disk takes links: the drag hands out a name, which a
-/// remake never touches (the re-review's RR2b).
+/// remake never touches.
 #[test]
 fn a_clip_made_again_before_the_drop_keeps_the_name_the_drag_gave() {
     let app = TestApp::new();
@@ -649,8 +646,7 @@ fn left_in_clips(app: &TestApp) -> Vec<PathBuf> {
 /// A clip copied out to an app that takes copies, then made again and
 /// deleted, leaves nothing in the library: the name its copy was written
 /// from was never another app's, so it goes with the make it held (`cut`;
-/// `delete_clip`: "its file unless that was dragged out"; the 0.7.3 races
-/// review, finding 2).
+/// `delete_clip`: "its file unless that was dragged out").
 #[test]
 fn a_clip_copied_out_then_made_again_and_deleted_leaves_nothing() {
     let app = TestApp::new();
@@ -680,8 +676,8 @@ fn a_clip_copied_out_then_changed_in_the_editor_and_deleted_leaves_nothing() {
 }
 
 /// A name another app took stays through a remake and the clip's delete,
-/// though the make it held is gone (plans/clips-pilot.md "Decided" 4b: "the
-/// one before goes as now unless it was handed out, then it stays").
+/// though the make it held is gone (decided: the make before goes, unless it
+/// was handed out; then it stays).
 #[test]
 fn a_name_another_app_took_stays_when_its_clip_is_made_again_and_deleted() {
     let app = TestApp::new();

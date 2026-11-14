@@ -32,10 +32,10 @@ fn paste(app: &TestApp, vod: i64, text: &str) -> Option<Vec<i64>> {
     Some(ids)
 }
 
-/// app clipboard.rs:4: "A paste goes ahead only while the system's
-/// clipboard still holds that text: something copied since, in any app, is
-/// what the user means to paste, not this."; plans/copy-paste.md ("The text
-/// doubles as the marker").
+/// app clipboard.rs's module doc: "A paste goes ahead only while the
+/// system's clipboard still holds that text: something copied since, in any
+/// app, is what the user means to paste, not this." Decided: the text
+/// doubles as the marker.
 #[test]
 fn a_paste_goes_ahead_only_while_the_clipboard_holds_the_copys_text() {
     let app = TestApp::new();
@@ -49,8 +49,9 @@ fn a_paste_goes_ahead_only_while_the_clipboard_holds_the_copys_text() {
     assert_eq!(app.clips(vod).len(), 1);
 }
 
-/// app clipboard.rs:1: "kept here, in the app, until the next copy or the
-/// app quits (a reload of the page keeps it)": pastes don't use it up.
+/// app clipboard.rs's module doc: "kept here, in the app, until the next
+/// copy or the app quits (a reload of the page keeps it)": pastes don't use
+/// it up.
 #[test]
 fn a_copy_lasts_till_the_next_copy_or_the_app_quits() {
     let app = TestApp::new();
@@ -65,9 +66,10 @@ fn a_copy_lasts_till_the_next_copy_or_the_app_quits() {
     assert_eq!(paste(&app, vod, "second"), None, "the app's quit ended the copy");
 }
 
-/// clipboardText.ts:12 ("as the app says it (src-tauri clipboard.rs
-/// `CopiedSaid`)"); app clipboard.rs:74: the page reads `kind`, `title`,
-/// `first` (`vodId`, `vodTitle`, `start`, `end`), `pieces` and `length`.
+/// clipboardText.ts `CopiedSaid` ("as the app says it (src-tauri
+/// clipboard.rs `CopiedSaid`)"); app clipboard.rs `CopiedSaid`: the page
+/// reads `kind`, `title`, `first` (`vodId`, `vodTitle`, `start`, `end`),
+/// `pieces` and `length`.
 #[test]
 fn the_copy_the_app_says_is_the_shape_the_page_reads() {
     let app = TestApp::new();
@@ -99,10 +101,9 @@ fn the_copy_the_app_says_is_the_shape_the_page_reads() {
     );
 }
 
-/// plans/sections-074.md, "Decided 2026-11-11": "an empty recorded copy
-/// text counts as no copy (no paste goes ahead on it)". A copy's text is
-/// empty until the page writes it (`copied_text`), and an empty system
-/// clipboard isn't the copy's text.
+/// Decided for 0.7.4: an empty recorded copy text counts as no copy (no
+/// paste goes ahead on it). A copy's text is empty until the page writes it
+/// (`copied_text`), and an empty system clipboard isn't the copy's text.
 #[test]
 fn a_copy_whose_text_is_empty_is_no_copy() {
     let app = TestApp::new();

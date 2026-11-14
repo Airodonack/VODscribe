@@ -73,7 +73,7 @@ fn a_vods_lines_are_all_of_them_or_those_from_a_moment_to_another() {
 
 /// A file's captions are its lines
 /// (vods.rs, the doc comment of `captions`: "VOD `vod_id`'s captions, for
-/// the player of a file played here"; their shape is 3B3's).
+/// the player of a file played here").
 #[test]
 fn a_files_captions_are_its_lines() {
     let app = TestApp::new();

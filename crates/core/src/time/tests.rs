@@ -1,6 +1,6 @@
 //! The specs of time in flicks, at its seam: `Flicks` and `Rate`'s public
 //! functions, and the text `timecode` writes and `parse` reads. A spec each,
-//! named as it is said (plans/sections-074.md, 3C1).
+//! named as it is said.
 
 use super::*;
 
@@ -29,8 +29,8 @@ fn off_grid(rate: Rate) -> [Flicks; 2] {
     [Flicks(Flicks::of_frame(5, rate).0 - 1), Flicks(Flicks::of_frame(5, rate).0 + 1)]
 }
 
-/// A flick is a 705,600,000th of a second (time.rs:1 "flicks, 705,600,000 to
-/// the second").
+/// A flick is a 705,600,000th of a second (`time.rs`'s module doc: "flicks,
+/// 705,600,000 to the second").
 #[test]
 fn a_second_is_705_600_000_flicks() {
     assert_eq!(PER_SECOND, 705_600_000);
@@ -39,9 +39,9 @@ fn a_second_is_705_600_000_flicks() {
     assert_eq!(Flicks::from_millis(1000), Flicks::SECOND);
 }
 
-/// time.rs:1 "a whole number of them in a frame at every common rate (24, 25,
-/// 30, 48, 50, 60, 90, 100 and 120 a second, the NTSC 1001 fractions, and 44.1
-/// and 48 kHz sound)".
+/// `time.rs`'s module doc: "a whole number of them in a frame at every common
+/// rate (24, 25, 30, 48, 50, 60, 90, 100 and 120 a second, the NTSC 1001
+/// fractions, and 44.1 and 48 kHz sound)".
 #[test]
 fn a_frame_is_a_whole_number_of_flicks_at_every_common_rate() {
     for rate in common_rates() {
@@ -57,8 +57,9 @@ fn a_frame_is_a_whole_number_of_flicks_at_every_common_rate() {
     assert_eq!(NTSC30.frame(), Flicks(23_543_520));
 }
 
-/// time.rs:1 "a whole number of them in a frame at every common rate", and
-/// `Rate::exact`: "Whether a frame at this rate is a whole number of flicks".
+/// `time.rs`'s module doc: "a whole number of them in a frame at every common
+/// rate", and `Rate::exact`: "Whether a frame at this rate is a whole number
+/// of flicks".
 #[test]
 fn a_rate_is_exact_when_its_frame_is_a_whole_number_of_flicks() {
     // 29.97 taken literally isn't; nor is 11 a second.
@@ -157,7 +158,7 @@ fn a_frames_start_is_in_that_frame_at_every_common_rate() {
 }
 
 /// `Flicks::snap`: "This moment moved to the nearest frame at `rate`", and
-/// time.rs:6 "the writer snaps a cut to its source's frames".
+/// `time.rs`'s module doc: "the writer snaps a cut to its source's frames".
 #[test]
 fn a_moment_snaps_to_the_nearest_frame() {
     let t = Flicks::from_seconds(7.0 / 60.0 + 0.004);
@@ -369,10 +370,11 @@ fn seconds_are_the_nearest_flick() {
     }
 }
 
-/// time.rs:7 "A value from a player's seconds (an embed before its footage is
-/// here) is exact to the millisecond, a whole number of flicks too": every
-/// millisecond over a day's first hours, as a float of seconds, is that many
-/// whole milliseconds of flicks, and reads back as the same milliseconds.
+/// `time.rs`'s module doc: "A value from a player's seconds (an embed before
+/// its footage is here) is exact to the millisecond, a whole number of flicks
+/// too": every millisecond over a day's first hours, as a float of seconds,
+/// is that many whole milliseconds of flicks, and reads back as the same
+/// milliseconds.
 #[test]
 fn a_players_seconds_are_exact_to_the_millisecond() {
     for ms in (0..12_000_000).step_by(7).chain([86_399_999]) {

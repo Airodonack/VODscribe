@@ -13,9 +13,9 @@ use vodscribe_core::testkit::{Gate, Media, eventually, media};
 use crate::testkit::{TestApp, frame_number};
 
 /// The tests' account of the player: none open, then one, as JSON the dump
-/// reads (player.rs:64: "What the app's player is at, for the end-to-end
-/// tests' page dump … whether one is open, for what, and what its threads
-/// are at"). A test hook's own spec.
+/// reads (player.rs `Seen`: "What the app's player is at, for the
+/// end-to-end tests' page dump … whether one is open, for what, and what
+/// its threads are at"). A test hook's own spec.
 #[test]
 fn the_player_seen_says_whether_one_is_open_and_what_its_threads_are_at() {
     let native = Native::default();
@@ -76,7 +76,7 @@ fn a_vod_opened_as_its_video_is_kept_plays_the_video_kept() {
 }
 
 /// Frames are scaled down for the page by mixing the pixels under each,
-/// or, more than halved, by their mean (player.rs:555: "each pixel the
+/// or, more than halved, by their mean (player.rs `scale_rgba`: "each pixel the
 /// bilinear mix at its centre (at half size, the mean of four); more than
 /// halved, the mean of all the pixels it covers").
 #[test]
@@ -119,10 +119,10 @@ fn frames_scale_down_by_mixing_or_by_area() {
 }
 
 /// The loudness set is between silent and full, whatever the page sends
-/// (`player_set_volume`: "The loudness, 0 to 1."; plans/sections-074.md
-/// "Decided", unstated behaviour 7, owner 2026-11-11: "the volume is clamped
-/// to 0..1: spec it"). A site's player can send more: the embed's stand-in
-/// for its video (embed_shim.js, `volume`) takes any number it's given.
+/// (`player_set_volume`: "The loudness, 0 to 1."). Decided for 0.7.4: the
+/// volume is clamped to 0..1. A site's player can send more: the embed's
+/// stand-in for its video (embed_shim.js, `volume`) takes any number it's
+/// given.
 #[test]
 fn the_volume_set_is_between_silent_and_full() {
     let app = TestApp::new();
@@ -216,9 +216,10 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
 }
 
 /// The window without a screen (Linux under X11 without one, a failed
-/// attach) has no player, and the page plays files itself (player.rs:154:
-/// "Whether there's a player here: a screen to draw on"; lib.rs: "Without
-/// a screen, the page plays files itself as before").
+/// attach) has no player, and the page plays files itself (player.rs
+/// `player_available`: "Whether there's a player here: a screen to draw
+/// on"; lib.rs `run`: "Without a screen, the page plays files itself as
+/// before").
 #[test]
 fn there_is_a_player_only_with_a_screen_to_draw_on() {
     let app = TestApp::new();
@@ -229,8 +230,8 @@ fn there_is_a_player_only_with_a_screen_to_draw_on() {
 
 /// A VOD opened while another plays takes its place: the screen shows the
 /// new one's frames, the commands move it, and nothing else plays
-/// (player.rs:1: "The app's own player … on the screen (screen.rs) … one
-/// player at a time").
+/// (player.rs's module doc: "The app's own player … on the screen
+/// (screen.rs) … one player at a time").
 #[test]
 fn one_player_plays_at_a_time() {
     let app = TestApp::new();
@@ -249,8 +250,8 @@ fn one_player_plays_at_a_time() {
 }
 
 /// A VOD opened at the time asked, paused or playing as asked, and the
-/// frame on screen is the one there (player.rs:160: "Opens VOD `id`'s file
-/// at `at` seconds, playing if `play`").
+/// frame on screen is the one there (player.rs `player_open`: "Opens VOD
+/// `id`'s file at `at` seconds, playing if `play`").
 #[test]
 fn a_vod_opened_plays_from_where_asked_playing_or_paused_as_asked() {
     let app = TestApp::new();
@@ -271,9 +272,9 @@ fn a_vod_opened_plays_from_where_asked_playing_or_paused_as_asked() {
 
 /// The VOD open already, asked for again, is the same player moved there:
 /// it keeps the speed it was set to, where another VOD's opening starts a
-/// new one (player.rs:160: "The one open for it already is kept, moved
-/// there"; :38: "Opened for this VOD or edit; a page that asks for the same
-/// one keeps it").
+/// new one (player.rs `player_open`: "The one open for it already is kept,
+/// moved there"; `Open`'s `doc`: "Opened for this VOD or edit; a page that
+/// asks for the same one keeps it").
 #[test]
 fn the_vod_open_already_is_kept_and_moved_there() {
     let app = TestApp::new();
@@ -297,14 +298,15 @@ fn the_vod_open_already_is_kept_and_moved_there() {
 /// A VOD from a site without its own player, its video still coming in,
 /// plays as far as it's in, then the time stands there, the picture holding
 /// its last frame, and the page is told it's waiting; a seek past what's in
-/// waits there too (player.rs:164: "A VOD from a site without its own
-/// player whose video is still downloading (videos.rs) plays as far as it's
-/// in"; :201: "where the download hasn't reached, the time stands (the
-/// picture holding its last frame) and the page says it's waiting … A seek
-/// past what's in waits the same way"; 0.6.0: "Other sites' VODs play by
-/// downloading." ("it plays in VODscribe as it comes in, waiting where it
-/// hasn't yet"); e2e download-play.mjs). As more comes in, it plays on
-/// (:229: "More of VOD `vod_id`'s footage is in … it plays on into what came").
+/// waits there too (player.rs `player_open`: "A VOD from a site without its
+/// own player whose video is still downloading (videos.rs) plays as far as
+/// it's in"; `streamed`: "where the download hasn't reached, the time
+/// stands (the picture holding its last frame) and the page says it's
+/// waiting … A seek past what's in waits the same way"; 0.6.0: "Other
+/// sites' VODs play by downloading." ("it plays in VODscribe as it comes
+/// in, waiting where it hasn't yet"); e2e download-play.mjs). As more comes
+/// in, it plays on (`footage_grew`: "More of VOD `vod_id`'s footage is in …
+/// it plays on into what came").
 #[test]
 fn a_vod_still_downloading_plays_as_far_as_it_is_in_and_waits_there() {
     let app = TestApp::new();
@@ -334,7 +336,7 @@ fn a_vod_still_downloading_plays_as_far_as_it_is_in_and_waits_there() {
 
 /// A VOD playing as its video downloads, once its video is kept, plays the
 /// video kept from where it is, waiting for nothing: the section it came as
-/// is gone, and the kept video plays anywhere (player.rs:252: "VOD
+/// is gone, and the kept video plays anywhere (player.rs `refile`: "VOD
 /// `vod_id`'s video is kept now … the player open playing it as it
 /// downloaded plays that from here on, where it is, waiting for nothing";
 /// 0.7.0 Fixes: "Playback survives the download finishing." ("it carries on
@@ -365,8 +367,8 @@ fn a_vod_playing_as_it_downloads_plays_the_kept_video_from_where_it_is() {
 }
 
 /// An edit plays its pieces one after the other, each from its own VOD's
-/// footage (player.rs:270: "Opens edit `id`, its pieces end to end from
-/// their footage, at `at` seconds, playing if `play`").
+/// footage (player.rs `player_open_edit`: "Opens edit `id`, its pieces end
+/// to end from their footage, at `at` seconds, playing if `play`").
 #[test]
 fn an_edit_opens_with_its_pieces_end_to_end() {
     let app = TestApp::new();
@@ -390,7 +392,8 @@ fn an_edit_opens_with_its_pieces_end_to_end() {
 }
 
 /// An edit's footage that isn't here is fetched as it opens; once it's in,
-/// the page asks for the plan again, and that plays it (player.rs:270:
+/// the page asks for the plan again, and that plays it (player.rs
+/// `player_open_edit`:
 /// "Footage not here yet is fetched, and the page asks for a plan again
 /// (`player_plan`) as it comes in").
 #[test]
@@ -416,8 +419,9 @@ fn an_edits_footage_not_here_is_fetched_and_its_plan_asked_again_as_it_comes() {
 
 /// A plan asked for while an edit plays, changed after the playhead, plays
 /// on without a break (the time keeps running), and plays the new plan from
-/// then on (player.rs:323: "the player open for it plays them from here on
-/// (without a break where the playhead's stretch is unchanged)").
+/// then on (player.rs `player_plan`: "the player open for it plays them
+/// from here on (without a break where the playhead's stretch is
+/// unchanged)").
 #[test]
 fn a_new_plan_plays_on_without_a_break_where_the_playheads_stretch_is_unchanged() {
     let app = TestApp::new();
@@ -441,9 +445,9 @@ fn a_new_plan_plays_on_without_a_break_where_the_playheads_stretch_is_unchanged(
 
 /// Each status made counts up, whichever of a command's reply or the
 /// `player-time` events carries it, so the newest by its count is the
-/// player as it is (player.rs:109: "Counts up with each status made: a
-/// command's reply and the `player-time` events travel apart, so the page
-/// keeps the newest").
+/// player as it is (player.rs `Status`'s `seq`: "Counts up with each status
+/// made: a command's reply and the `player-time` events travel apart, so
+/// the page keeps the newest").
 #[test]
 fn the_page_keeps_the_newest_status_by_its_count() {
     let app = TestApp::new();
@@ -464,7 +468,7 @@ fn the_page_keeps_the_newest_status_by_its_count() {
 
 /// The time the page shows is where the frame on screen is, and the frame
 /// rate it counts frames by: after a seek it's the frame's, not the time
-/// asked (player.rs:105: "`shown`, where the frame on screen is"; 0.5.0:
+/// asked (player.rs `Status`: "`shown`, where the frame on screen is"; 0.5.0:
 /// "The time under the player, as a clock or by frame, is the frame on
 /// screen").
 #[test]
@@ -488,10 +492,10 @@ fn the_time_shown_is_the_frame_on_screen() {
 
 /// The frame the page draws itself is empty when it's the one it has, and
 /// else its size, number and RGBA, scaled down to fit the box asked, never
-/// up (player.rs:481: "empty if it's frame `since` (or none shows), else
-/// its width and height (4 bytes each, little-endian) and number (8 bytes),
-/// then RGBA pixels, scaled down to fit in `width` by `height` (never
-/// up)").
+/// up (player.rs `player_frame`: "empty if it's frame `since` (or none
+/// shows), else its width and height (4 bytes each, little-endian) and
+/// number (8 bytes), then RGBA pixels, scaled down to fit in `width` by
+/// `height` (never up)").
 #[test]
 fn a_frame_asked_for_is_empty_if_unchanged_and_else_scaled_down_to_fit_never_up() {
     let app = TestApp::new();
@@ -518,9 +522,9 @@ fn a_frame_asked_for_is_empty_if_unchanged_and_else_scaled_down_to_fit_never_up(
 }
 
 /// The still the page shows while something covers the screen is the frame
-/// showing, its width and height, then its RGB (player.rs:461: "its width
-/// and height (each 4 bytes, little-endian), then its pixels as RGB. Empty
-/// if none shows").
+/// showing, its width and height, then its RGB (player.rs `player_still`:
+/// "its width and height (each 4 bytes, little-endian), then its pixels as
+/// RGB. Empty if none shows").
 #[test]
 fn the_still_is_the_frame_showing_as_its_size_then_rgb() {
     let app = TestApp::new();
@@ -537,9 +541,9 @@ fn the_still_is_the_frame_showing_as_its_size_then_rgb() {
 }
 
 /// The timeline's picture of a moment is the frame a seek there would show,
-/// and the player stays where it is (player.rs:516: "The frame a seek to
-/// `time` of `doc` would show … The player isn't moved"; 0.6.0: "The
-/// timeline shows a picture of each moment.").
+/// and the player stays where it is (player.rs `player_preview`: "The frame
+/// a seek to `time` of `doc` would show … The player isn't moved"; 0.6.0:
+/// "The timeline shows a picture of each moment.").
 #[test]
 fn a_preview_is_the_frame_a_seek_would_show_and_the_player_stays_where_it_is() {
     let app = TestApp::new();
@@ -564,10 +568,10 @@ fn a_preview_is_the_frame_a_seek_would_show_and_the_player_stays_where_it_is() {
 }
 
 /// Closing the player clears the screen, but not when a site's player is
-/// playing in it: only that session closes it (player.rs:613: "Closes the
-/// player, clearing the screen; not one an embed session has open (only
-/// that session closes it: `close_embed`), so a page that closes late
-/// leaves the next VOD's be").
+/// playing in it: only that session closes it (player.rs `player_close`:
+/// "Closes the player, clearing the screen; not one an embed session has
+/// open (only that session closes it: `close_embed`), so a page that closes
+/// late leaves the next VOD's be").
 #[test]
 fn closing_clears_the_screen_but_never_an_embed_sessions_player() {
     let app = TestApp::new();
@@ -593,12 +597,13 @@ fn closing_clears_the_screen_but_never_an_embed_sessions_player() {
 
 /// A site's player's session is the only one that changes what its player
 /// plays or closes it: another session's late change or close leaves it be
-/// (player.rs:40: "its session's token (embed.rs), so only that session
-/// changes or closes it"; :443: "a late close of an earlier VOD's leaves
-/// the next one's be"). Its VOD's footage coming in, or its video kept,
-/// changes nothing either (:229, :252: those are for "not a site's
-/// player"), and the timeline has no picture of it (:516: "a site's VOD
-/// played from its player has none").
+/// (player.rs `Open`'s `embed`: "its session's token (embed.rs), so only
+/// that session changes or closes it"; `close_embed`: "a late close of an
+/// earlier VOD's leaves the next one's be"). Its VOD's footage coming in,
+/// or its video kept, changes nothing either (`footage_grew`: "not a site's
+/// player"; `refile`: the player "playing it as it downloaded"), and the
+/// timeline has no picture of it (`player_preview`: "a site's VOD played
+/// from its player has none").
 #[test]
 fn only_an_embed_session_changes_or_closes_its_player() {
     let app = TestApp::new();
@@ -632,7 +637,8 @@ fn only_an_embed_session_changes_or_closes_its_player() {
 }
 
 /// A seek goes to the frame at the time asked, and plays from there if
-/// asked (player.rs:657: "Goes to `time`, playing from there if `play`").
+/// asked (player.rs `player_seek`: "Goes to `time`, playing from there if
+/// `play`").
 #[test]
 fn a_seek_goes_there_playing_if_asked() {
     let app = TestApp::new();
@@ -650,7 +656,8 @@ fn a_seek_goes_there_playing_if_asked() {
 }
 
 /// A step moves a frame (or several, or back) and pauses there
-/// (player.rs:668: "Moves `frames` frames (back, if negative), paused";
+/// (player.rs `player_step`: "Moves `frames` frames (back, if negative),
+/// paused";
 /// 0.4.0: "VODscribe's own player plays your files" (", and . step a
 /// frame")).
 #[test]
@@ -677,9 +684,10 @@ fn a_step_moves_frames_paused() {
 }
 
 /// A VOD playing holds back other VODs' work in the background (their
-/// storyboards), not its own; paused, it holds back none (player.rs:46:
-/// "Whether a player is playing footage other than VOD `vod`'s: work in
-/// the background for `vod` waits meanwhile, so playing stays smooth").
+/// storyboards), not its own; paused, it holds back none (player.rs
+/// `Native::playing_other`: "Whether a player is playing footage other than
+/// VOD `vod`'s: work in the background for `vod` waits meanwhile, so
+/// playing stays smooth").
 #[test]
 fn a_vod_playing_holds_back_other_vods_background_work() {
     let app = TestApp::new();
@@ -695,10 +703,10 @@ fn a_vod_playing_holds_back_other_vods_background_work() {
 
 /// An edit playing holds back the storyboards of other VODs only: those
 /// of its own pieces' VODs are made meanwhile, as the edit's timeline
-/// shows them, its pieces read as they are now (player.rs:48: "An edit
-/// plays its pieces' VODs, so their work goes on: the edit's timeline
-/// shows their storyboards. Its pieces are read as they are now, since
-/// they change while it plays").
+/// shows them, its pieces read as they are now (player.rs
+/// `Native::playing_other`: "An edit plays its pieces' VODs, so their work
+/// goes on: the edit's timeline shows their storyboards. Its pieces are
+/// read as they are now, since they change while it plays").
 #[test]
 fn an_edit_playing_holds_back_only_other_vods_work() {
     let app = TestApp::new();

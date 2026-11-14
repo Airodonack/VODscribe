@@ -1,0 +1,5 @@
+# Files citations-check.py leaves out, one path a line. These are still to be
+# rewritten; the list is to be emptied, not added to.
+apps/desktop/src-tauri/src/vods/tests/removing.rs
+crates/core/src/db.rs
+crates/core/src/edits.rs

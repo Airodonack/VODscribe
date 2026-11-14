@@ -38,7 +38,7 @@ const stretch = (vodId, start, end, more = {}) => ({
 });
 
 test("a site VOD's copy is its title, its stretch and a link to where it starts", () => {
-  // clipboardText.ts:24; plans/copy-paste.md "What goes on the system clipboard"; 0.7.1: "Copied clips go on the clipboard too."
+  // clipboardText.ts `copiedLine`; 0.7.1: "Copied clips go on the clipboard too."
   assert.equal(
     copiedLine(stretch(1, 3723, 3765), youtube),
     "Hello there (1:02:03–1:02:45) https://www.youtube.com/watch?v=noa29qsTc4g&t=3723s",
@@ -46,7 +46,7 @@ test("a site VOD's copy is its title, its stretch and a link to where it starts"
 });
 
 test("a file here's copy is named, never its path", () => {
-  // clipboardText.ts:5: "a file here is named, never its path (pasted into a chat, a path tells of the user's folders)".
+  // clipboardText.ts's module comment: "a file here is named, never its path (pasted into a chat, a path tells of the user's folders)".
   const line = copiedLine(stretch(2, 1, 2), file);
   assert.equal(line, "Hello there (0:01–0:02) — “My file”");
   assert.ok(!line.includes("/home"));
@@ -55,7 +55,7 @@ test("a file here's copy is named, never its path", () => {
 });
 
 test("several pieces copy as the first one's line and how many more", () => {
-  // clipboardText.ts:25: " + 2 more pieces" if it has more.
+  // clipboardText.ts `copiedLine`: " + 2 more pieces" if it has more.
   assert.equal(copiedLine(stretch(2, 1, 2, { pieces: 2 }), file), "Hello there (0:01–0:02) — “My file” + 1 more piece");
   assert.equal(
     copiedLine(stretch(2, 1, 2, { pieces: 4 }), file),
@@ -64,7 +64,7 @@ test("several pieces copy as the first one's line and how many more", () => {
 });
 
 test("each thing copied is a line, in order", () => {
-  // clipboardText.ts:36: "The text for all of `copied`, a line each."
+  // clipboardText.ts `copiedText`: "The text for all of `copied`, a line each."
   /** @type {Map<number, any>} */
   const vods = new Map([
     [1, youtube],
@@ -81,7 +81,7 @@ test("each thing copied is a line, in order", () => {
 });
 
 test("what a copy and a paste say", () => {
-  // clipboardText.ts:51 (copiedSaid) and :59 (pastedSaid): what the toasts say.
+  // clipboardText.ts `copiedSaid` and `pastedSaid`: what the toasts say.
   assert.equal(copiedSaid([stretch(2, 1, 13)]), "Copied 0:12 of “My file”");
   assert.equal(copiedSaid([{ ...stretch(2, 1, 2), kind: "clip" }]), "Copied “Hello there”");
   const clip = { ...stretch(2, 1, 2), kind: "clip" };

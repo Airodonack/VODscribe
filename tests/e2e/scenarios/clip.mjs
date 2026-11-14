@@ -1,10 +1,9 @@
 // A clip: cuts at 1 and 3 s (B), then Clip with the playhead between them
 // (App.clipOneToThree); resized, it's made again as a new file, the one
-// before gone (every make writes a file of its own: plans/clips-pilot.md
-// "Decided" 4b); then deleting it, and undoing
-// that and the resize. Last, its file deleted outside the app (as in a file
-// manager): back in the window, its pill goes; undone, the clip is made
-// again, and the chapter added before that goes only with the next undo.
+// before gone (every make writes a file of its own); then deleting it, and
+// undoing that and the resize. Last, its file deleted outside the app (as in
+// a file manager): back in the window, its pill goes; undone, the clip is
+// made again, and the chapter added before that goes only with the next undo.
 // Then I and O: O at 2 s selects back to the cut at 1, I at 4 s (past that
 // selection's end) makes it run from 2 to 4, and C clips just that, pressed
 // twice too.

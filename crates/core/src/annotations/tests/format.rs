@@ -42,8 +42,8 @@ fn chat_of_every_kind() -> Vec<ChatMessage> {
     vec![hi, sub, gift, tip]
 }
 
-/// annotations.rs:325 ("checking its format and version first; the error's message is for the user"); the
-/// page's `ANNOTATIONS_FORMAT` (annotations.ts:9).
+/// `annotations.rs` `parse` ("checking its format and version first; the error's message is for the user");
+/// the page's `ANNOTATIONS_FORMAT` (annotations.ts).
 #[test]
 fn a_file_of_another_format_is_refused_saying_so() {
     let err = parse("{\"format\": \"other\"}").unwrap_err().to_string();
@@ -55,7 +55,8 @@ fn a_file_of_another_format_is_refused_saying_so() {
     assert!(err.ends_with("its format is \"other\"."), "{err}");
 }
 
-/// annotations.ts:9 ("`version` counts breaking changes to the shape"); annotations.rs:34.
+/// annotations.ts `ANNOTATIONS_FORMAT` ("`version` counts breaking changes to the shape"); `annotations.rs`
+/// `FORMAT` and `VERSION`.
 #[test]
 fn a_file_of_another_version_is_refused_saying_which() {
     let err = parse(&format!("{{\"format\": \"{FORMAT}\", \"version\": 2}}")).unwrap_err().to_string();
@@ -66,7 +67,7 @@ fn a_file_of_another_version_is_refused_saying_which() {
     assert_eq!(err, "This isn't a VODscribe annotations file: version 0 isn't 1.");
 }
 
-/// annotations.rs:329 (`parse`: "it isn't JSON").
+/// `annotations.rs` `parse` ("it isn't JSON").
 #[test]
 fn a_file_that_is_not_json_is_refused_saying_so() {
     for text in ["not json", "", "{\"format\": ", "<html></html>"] {
@@ -75,9 +76,9 @@ fn a_file_that_is_not_json_is_refused_saying_so() {
     }
 }
 
-/// annotations.rs:47 (the comment: "well past what the longest VOD's annotations have, short of what would
-/// hold the app up") and :383 (`within_limits`: "saying what for the user"). A list or a text one past its
-/// limit is refused; at its limit it is read.
+/// `annotations.rs`, the comment on the `MAX_` limits ("well past what the longest VOD's annotations have,
+/// short of what would hold the app up") and `within_limits` ("saying what for the user"). A list or a text
+/// one past its limit is refused; at its limit it is read.
 #[test]
 fn a_file_with_more_than_the_app_takes_is_refused_with_a_message() {
     use serde_json::json;
@@ -130,7 +131,7 @@ fn a_file_with_more_than_the_app_takes_is_refused_with_a_message() {
     from_value(file_with(&["produced"], key(MAX_TEXT))).expect("a key at its limit");
 }
 
-/// annotations.rs:418 (`chat_within_limits`: "saying what for the user"). A chat file's messages, a message's
+/// `annotations.rs` `chat_within_limits` ("saying what for the user"). A chat file's messages, a message's
 /// parts and any text are limited, as a VODscription's are; at the limit it is read.
 #[test]
 fn a_chat_file_with_more_than_the_app_takes_is_refused_with_a_message() {
@@ -165,8 +166,8 @@ fn a_chat_file_with_more_than_the_app_takes_is_refused_with_a_message() {
     assert_eq!(err, "This chat file is too big: a text in it is longer than 10,000 characters.");
 }
 
-/// annotations.rs:436 (`chat_path`: "`x.chat.json` beside `x.json`"); annotations.ts:4 ("The chat comes as a
-/// second file beside it").
+/// `annotations.rs` `chat_path` ("`x.chat.json` beside `x.json`"); annotations.ts's header comment ("The chat
+/// comes as a second file beside it").
 #[test]
 fn the_chat_is_read_from_beside_the_file_as_name_dot_chat_dot_json() {
     let (dir, path) = v123();
@@ -196,8 +197,8 @@ fn the_chat_is_read_from_beside_the_file_as_name_dot_chat_dot_json() {
     assert!(err.ends_with("isn't a chat VODscribe can read"), "{err}");
 }
 
-/// annotations.rs:3 ("its chat in a second file in the app's own chat shape"); annotations.ts:4. A message of
-/// each kind, written as the app writes a chat, is read back whole.
+/// `annotations.rs`'s module doc ("its chat in a second file in the app's own chat shape"); annotations.ts's
+/// header comment. A message of each kind, written as the app writes a chat, is read back whole.
 #[test]
 fn a_chat_file_holds_messages_as_the_app_writes_them() {
     let (dir, path) = v123();
@@ -206,9 +207,9 @@ fn a_chat_file_holds_messages_as_the_app_writes_them() {
     assert_eq!(read(&path, None).unwrap().1, Some(chat));
 }
 
-/// plans/sections-074.md, "Decided 2026-11-11": a VODscription file with no format or version
-/// "is said plainly by app and page alike (\"it has no format\", \"it has no version\")"; the
-/// page's `parseAnnotations` (annotations.ts) says the same.
+/// Decided for 0.7.4: a VODscription file with no format or version says so plainly, in the app
+/// and the page alike ("it has no format", "it has no version"). `annotations.rs` `from_value`;
+/// the page's `parseAnnotations` (annotations.ts) says the same.
 #[test]
 fn a_file_with_no_format_or_version_says_it_has_none() {
     let err = parse("{\"version\": 1}").unwrap_err().to_string();
@@ -217,9 +218,9 @@ fn a_file_with_no_format_or_version_says_it_has_none() {
     assert_eq!(err, "This isn't a VODscribe annotations file: it has no version.");
 }
 
-/// annotations.rs:137 (`one_emoji`: "one emoji (a single character as the reader sees it, of no letter or
-/// digit and not plain ASCII), trimmed") and :530; a chapter's icon that is not one is left out by the
-/// import, not the file refused (the page's `oneEmoji` is the same rule).
+/// `annotations.rs` `one_emoji` ("one emoji (a single character as the reader sees it, of no letter or digit
+/// and not plain ASCII), trimmed") and its use in `import_marks`; a chapter's icon that is not one is left
+/// out by the import, not the file refused (the page's `oneEmoji` is the same rule).
 #[test]
 fn a_chapter_icon_is_one_emoji_or_none() {
     for icon in ["🎮", " 🍳 ", "👩‍🍳", "🏳️‍🌈", "❤️", "🇫🇷"] {
@@ -230,8 +231,8 @@ fn a_chapter_icon_is_one_emoji_or_none() {
     }
 }
 
-/// annotations.rs:175 (`card_id`: "lowercase letters, digits, `_` and `-`, a letter or digit first, at most
-/// 64; trimmed"; it names a file on the file host, so nothing else gets into the path).
+/// `annotations.rs` `card_id` ("lowercase letters, digits, `_` and `-`, a letter or digit first, at most 64;
+/// trimmed"; it names a file on the file host, so nothing else gets into the path).
 #[test]
 fn a_card_id_is_lowercase_letters_digits_dashes_and_underscores_a_letter_or_digit_first_at_most_64() {
     let longest = "a".repeat(64);
@@ -252,8 +253,8 @@ fn a_card_id_is_lowercase_letters_digits_dashes_and_underscores_a_letter_or_digi
     assert_eq!((cast[0].streamer.as_deref(), cast[1].streamer.as_deref()), (Some("marlowe"), None));
 }
 
-/// annotations.rs:215 (`Account::read`: "a listed platform (any case) and a login of letters, digits and
-/// `_.-`, not only dots, a YouTube handle with its "@" first; trimmed; None for anything else").
+/// `annotations.rs` `Account::read` ("a listed platform (any case) and a login of letters, digits and `_.-`,
+/// not only dots …, a YouTube handle with its "@" first; trimmed; None for anything else").
 #[test]
 fn an_account_is_a_listed_site_and_a_login_else_it_is_left_out() {
     let read =
@@ -299,7 +300,7 @@ fn an_account_is_a_listed_site_and_a_login_else_it_is_left_out() {
     assert_eq!((cast[0].account.as_ref(), cast[1].account.as_ref().map(|a| a.login.as_str())), (None, Some("b")));
 }
 
-/// annotations.rs:265 (`Pov::read`: "a player's name, an account `Account::read` takes, a video on a listed
+/// `annotations.rs` `Pov::read` ("a player's name, an account `Account::read` takes, a video on a listed
 /// platform with an id of letters, digits and `_-`, a start that reads as a time and a length that is one;
 /// trimmed; None for anything else").
 #[test]
@@ -353,7 +354,7 @@ fn a_point_of_view_is_read_only_whole_else_it_is_left_out() {
     assert_eq!(read_with(&["povs"], povs).povs.len(), 1);
 }
 
-/// annotations.rs:161 (`player`: "one that isn't a name is left out rather than the file refused").
+/// `annotations.rs` `CastMember::player` ("one that isn't a name is left out rather than the file refused").
 #[test]
 fn a_player_that_is_not_a_name_is_left_out_rather_than_the_file_refused() {
     let member = |player: serde_json::Value| serde_json::json!({ "name": "A", "role": "friend", "player": player });
@@ -366,7 +367,7 @@ fn a_player_that_is_not_a_name_is_left_out_rather_than_the_file_refused() {
     assert_eq!(cast.len(), 6, "every cast member is kept");
 }
 
-/// annotations.rs:91 ("one `context_id` can't take is left out").
+/// `annotations.rs` `Annotations::contexts` ("one `context_id` can't take is left out").
 #[test]
 fn a_context_that_is_not_an_id_is_left_out() {
     let contexts = serde_json::json!(["nopixel", " gta-rp ", "NoPixel", "../x", "", 7, null, "a b"]);
@@ -374,7 +375,8 @@ fn a_context_that_is_not_an_id_is_left_out() {
     assert!(read_with(&["contexts"], "nopixel".into()).contexts.is_empty(), "a list that isn't one is none");
 }
 
-/// annotations.rs:87 and :91 ("Optional"): a file that leaves out `povs` and `contexts` is read, with none.
+/// `annotations.rs` `Annotations::povs` and `contexts` ("Optional"): a file that leaves out `povs` and
+/// `contexts` is read, with none.
 #[test]
 fn a_file_without_povs_or_contexts_reads_with_none() {
     let mut json = serde_json::to_value(file("twitch", "v123")).unwrap();
@@ -388,8 +390,8 @@ fn a_file_without_povs_or_contexts_reads_with_none() {
     assert!(written.get("povs").is_none() && written.get("contexts").is_none(), "{written}");
 }
 
-/// annotations.rs:9 ("`<BASE_URL>/annotations/<platform>/<platform id>.json`") and :568 (`file_url`: each
-/// part with anything but letters, digits and `-._~` escaped, so an id can't reach another path).
+/// `annotations.rs`'s module doc ("`<BASE_URL>/annotations/<platform>/<platform id>.json`") and `file_url`
+/// ("each part with anything but letters, digits and `-._~` escaped, so an id can't reach another path").
 #[test]
 fn a_vods_published_file_is_at_its_site_and_id_escaped() {
     assert_eq!(
@@ -402,8 +404,8 @@ fn a_vods_published_file_is_at_its_site_and_id_escaped() {
     assert_eq!(file_url("http://h", "a/b", "x"), "http://h/annotations/a%2Fb/x.json", "the site is escaped too");
 }
 
-/// annotations.rs:14 ("`<BASE_URL>/streamers/<id>.json`, with an index of their accounts at
-/// `<BASE_URL>/streamers.json`") and :675, :681 (`card_url`, `index_url`).
+/// `annotations.rs`'s module doc ("`<BASE_URL>/streamers/<id>.json`, with an index of their accounts at
+/// `<BASE_URL>/streamers.json`") and `card_url`, `index_url`.
 #[test]
 fn a_streamer_card_is_at_its_id_and_the_index_beside_them() {
     assert_eq!(card_url("http://h", "marlowe").as_deref(), Some("http://h/streamers/marlowe.json"));
@@ -415,8 +417,8 @@ fn a_streamer_card_is_at_its_id_and_the_index_beside_them() {
     assert_eq!(index_url("http://h"), "http://h/streamers.json");
 }
 
-/// annotations.rs:491 (`twitch_number`: "The page's `twitchNumber` (platform.ts) is the same rule, tested
-/// with the same cases"); a Kick link names no time, as the page's don't.
+/// `annotations.rs` `twitch_number` ("The page's `twitchNumber` (platform.ts) is the same rule, tested with
+/// the same cases"); a Kick link names no time, as the page's don't.
 #[test]
 fn a_twitch_id_loses_its_v_only_before_a_number() {
     // The cases platform.test.mjs gives the page's `twitchNumber`.

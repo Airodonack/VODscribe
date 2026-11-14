@@ -1,7 +1,8 @@
 #!/bin/sh
 # Refuses a commit whose Rust or frontend code isn't formatted, a workflow
-# file that doesn't parse, or a staged CHANGELOG.md whose unreleased entry is
-# out of shape.
+# file that doesn't parse, a staged CHANGELOG.md whose unreleased entry is
+# out of shape, or a staged source file whose comments cite a private plan,
+# the owner or code by line number.
 # Enable once per clone: git config core.hooksPath .githooks
 # Fix with: cargo fmt --all && pnpm format
 root=$(git rev-parse --show-toplevel)
@@ -19,5 +20,9 @@ fi
 # The staged CHANGELOG.md, not the working copy: that is what gets committed.
 if git diff --cached --name-only --diff-filter=d | grep -qx 'CHANGELOG.md'; then
   git show :CHANGELOG.md | python3 -I scripts/changelog-check.py - >&2 || ok=1
+fi
+# The staged source files, as staged.
+if git diff --cached --name-only --diff-filter=d | grep -qE '^(crates|apps|tests)/'; then
+  python3 -I scripts/citations-check.py --staged >&2 || ok=1
 fi
 exit $ok

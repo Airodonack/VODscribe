@@ -110,11 +110,11 @@ fn copied_and_pasted(app: &TestApp, id: i64, vod_id: i64, between: impl FnOnce()
     app.made(id)
 }
 
-/// C1. Clips are made in the codec Settings › Encoding has, each in its file:
-/// H.264 and H.265 in MP4, DNxHR and ProRes in MOV (CHANGELOG.md, 0.7.2:
-/// "Clips come in more formats. Settings › Encoding adds H.265 and ProRes
-/// beside H.264 and DNxHR"; tests/e2e/scenarios/clip-format.mjs: "Clips made
-/// as chosen in Settings").
+/// Clips are made in the codec Settings › Encoding has, each in its file: H.264
+/// and H.265 in MP4, DNxHR and ProRes in MOV (CHANGELOG.md, 0.7.2: "Clips come
+/// in more formats. Settings › Encoding adds H.265 and ProRes beside H.264 and
+/// DNxHR"; tests/e2e/scenarios/clip-format.mjs: "Clips made as chosen in
+/// Settings").
 #[test]
 fn a_clip_is_made_as_settings_encoding_says() {
     let app = TestApp::new();
@@ -132,10 +132,10 @@ fn a_clip_is_made_as_settings_encoding_says() {
     }
 }
 
-/// C2. A clip of a file of sound alone is sound alone: an M4A (AAC) in MP4,
-/// a WAV in MOV (tests/e2e/scenarios/clip-format.mjs: "as MOV DNxHR, a
-/// sound-only file's clip is a .wav and a video's a .mov"; core clips.rs
-/// `extension`: "sound alone is M4A (AAC) or WAV (PCM)").
+/// A clip of a file of sound alone is sound alone: an M4A (AAC) in MP4, a WAV
+/// in MOV (tests/e2e/scenarios/clip-format.mjs: "as MOV DNxHR, a sound-only
+/// file's clip is a .wav and a video's a .mov"; core clips.rs `extension`:
+/// "sound alone is M4A (AAC) or WAV (PCM)").
 #[test]
 fn a_clip_of_sound_alone_is_an_m4a_or_a_wav_by_the_format() {
     let app = TestApp::new();
@@ -151,8 +151,8 @@ fn a_clip_of_sound_alone_is_an_m4a_or_a_wav_by_the_format() {
     }
 }
 
-/// C3. A made clip keeps what it was made with, codec and quality (app
-/// clips.rs:515, `cut`: "and what with, so a change of codec or quality does
+/// A made clip keeps what it was made with, codec and quality (app clips.rs,
+/// the comment in `cut`: "and what with, so a change of codec or quality does
 /// (dragout.ts)").
 #[test]
 fn a_clip_records_the_codec_and_quality_it_was_made_with() {
@@ -166,13 +166,10 @@ fn a_clip_records_the_codec_and_quality_it_was_made_with() {
     assert_eq!(prores.encoding, Some(made_with(PRORES, PROXY)));
 }
 
-/// C4. The 0.7.2 encoding-remake bug: with clips changed to H.265, a pill
-/// made as H.264 dragged out was handed over as it was. Made again, it's
-/// H.265 (handbook plans/0.7.2.md, "The owner's walkthrough", Fix before the
-/// tag (walk-clips): "changing the encoding and remaking a clip from the
-/// same slice does nothing"; tests/e2e/scenarios/drag-resolve.mjs step 5:
-/// "MP4 H.265, the pill made as H.264: dragged out, it's made again";
-/// fixed by 8896230).
+/// The 0.7.2 encoding-remake bug: with clips changed to H.265, a pill made as
+/// H.264 dragged out was handed over as it was. Made again, it's H.265
+/// (tests/e2e/scenarios/drag-resolve.mjs step 5: "MP4 H.265, the pill made as
+/// H.264: dragged out, it's made again"; fixed by 8896230).
 #[test]
 fn a_clip_made_again_after_a_change_of_codec_is_in_the_new_codec() {
     let app = TestApp::new();
@@ -185,8 +182,8 @@ fn a_clip_made_again_after_a_change_of_codec_is_in_the_new_codec() {
     assert_eq!(again.encoding, Some(made_with(H265, STANDARD)));
 }
 
-/// C5. A clip made again in another format leaves no file in the format
-/// before (app clips.rs:532, `cut`: "Its file in the format before goes";
+/// A clip made again in another format leaves no file in the format before (app
+/// clips.rs, the comment in `cut`: "Its file in the format before goes";
 /// CHANGELOG.md, 0.4.0: "Files you made and no longer use don't pile up in
 /// Videos/VODscribe").
 #[test]
@@ -214,12 +211,10 @@ fn made_while_switched_to_mov(app: &TestApp, vod_id: i64) -> Clip {
     app.made(clip.id)
 }
 
-/// C6. A clip being made when the format changes is made as its making
-/// began: the change doesn't reach a cut under way (dragout.ts:341,
-/// `remadeOnceMade`: "one still being made when the drag ended … is made in
-/// the format its making began in"; handbook reports master/072
-/// review-correctness-072.md finding 5: "The cutter reads the format at cut
-/// start").
+/// A clip being made when the format changes is made as its making began: the
+/// cutter reads the format as the cut starts, so the change doesn't reach a cut
+/// under way (dragout.ts `remadeOnceMade`: "one still being made when the drag
+/// ended … is made in the format its making began in").
 #[test]
 fn a_clip_being_made_when_the_format_changes_is_made_in_the_one_its_making_began_in() {
     let app = TestApp::new();
@@ -230,12 +225,11 @@ fn a_clip_being_made_when_the_format_changes_is_made_in_the_one_its_making_began
     assert_eq!(clip.encoding, Some(made_with(H264, STANDARD)), "recorded as what it wasn't made with");
 }
 
-/// C7. The 0.7.2 Resolve MOV bug, the app's half: switched to MOV while a
-/// clip was being made, it was made as MP4 and stayed so. Asked again once
-/// made, it's MOV DNxHR, and the MP4 goes (CHANGELOG.md, 0.7.2: "Dropping on
-/// DaVinci Resolve offers MOV."; tests/e2e/scenarios/drag-resolve.mjs:
-/// "Switch to MOV makes it again as MOV once it's made as MP4";
-/// review-correctness-072.md finding 5; fixed by 8499956).
+/// The 0.7.2 Resolve MOV bug, the app's half: switched to MOV while a clip was
+/// being made, it was made as MP4 and stayed so. Asked again once made, it's
+/// MOV DNxHR, and the MP4 goes (CHANGELOG.md, 0.7.2: "Dropping on DaVinci
+/// Resolve offers MOV."; tests/e2e/scenarios/drag-resolve.mjs: "Switch to MOV
+/// makes it again as MOV once it's made as MP4"; fixed by 8499956).
 #[test]
 fn switched_to_mov_a_clip_made_as_mp4_meanwhile_is_made_again_as_mov() {
     let app = TestApp::new();
@@ -258,11 +252,10 @@ fn switched_to_mov(app: &TestApp) {
     app.invoke("set_settings", json!({ "settings": settings })).unwrap();
 }
 
-/// C8. Switched to MOV, clips are made as DNxHR at the quality the user
-/// chose, its profile in the file (handbook plans/0.7.2.md, resolve-drop:
-/// "Switch to MOV sets MOV DNxHR at the user's quality (the old note forced
-/// Proxy)"; core clips.rs:130, `output_args`: DNxHR's profile `dnxhr_lb`,
-/// `dnxhr_sq` or `dnxhr_hq` by quality).
+/// Decided for 0.7.2: switched to MOV, clips are made as DNxHR at the quality
+/// the user chose, not always at Proxy, its profile in the file (core clips.rs
+/// `output_args`: DNxHR's profile `dnxhr_lb`, `dnxhr_sq` or `dnxhr_hq` by
+/// quality).
 #[test]
 fn switched_to_mov_clips_are_dnxhr_at_the_quality_chosen() {
     let app = TestApp::new();
@@ -283,11 +276,9 @@ fn switched_to_mov_clips_are_dnxhr_at_the_quality_chosen() {
     }
 }
 
-/// C9. A clip of an edit's clip bar is made again after a change of codec or
-/// quality, as a VOD's is (handbook plans/0.7.2.md, "The owner's
-/// walkthrough": "an edit's clip bar and a rendered edit are remade after an
-/// encoding change"; tests/e2e/scenarios/drag-resolve.mjs step 6: "The clip
-/// of its bar is made again on its drag, as the VOD's pill was"; fixed by
+/// A clip of an edit's clip bar is made again after a change of codec or
+/// quality, as a VOD's is (tests/e2e/scenarios/drag-resolve.mjs step 6: "The
+/// clip of its bar is made again on its drag, as the VOD's pill was"; fixed by
 /// 6fc7f41).
 #[test]
 fn a_clip_on_an_edit_s_clip_bar_is_made_again_after_a_change_of_codec_or_quality() {
@@ -303,13 +294,10 @@ fn a_clip_on_an_edit_s_clip_bar_is_made_again_after_a_change_of_codec_or_quality
     assert_eq!(again.encoding, Some(made_with(H265, HIGH)));
 }
 
-/// C10. A clip of an edit's clip bar, changed in the editor and rendered,
-/// made as clips are made now, isn't rendered again when it's asked to
-/// (handbook reports master/072 walk-clips-report.md, item 1: render_edit
-/// "now skips only when `vodscribe_core::clips::made_as` holds"; edits.rs
-/// `render_edit`: "A snippet whose file is of it as it is already …, and
-/// made as clips are made now …, isn't made again"; core clips.rs:118,
-/// `made_as`).
+/// A clip of an edit's clip bar, changed in the editor and rendered, made as
+/// clips are made now, isn't rendered again when it's asked to (edits.rs
+/// `render_edit`: "A snippet whose file is of it as it is already …, and made
+/// as clips are made now …, isn't made again"; core clips.rs `made_as`).
 #[test]
 fn a_clip_on_an_edit_s_clip_bar_made_as_wanted_is_not_rendered_again() {
     let app = TestApp::new();
@@ -329,10 +317,9 @@ fn a_clip_on_an_edit_s_clip_bar_made_as_wanted_is_not_rendered_again() {
     assert_eq!(app.clip_media(&after), media);
 }
 
-/// C11. A pasted copy of a made clip is given its file, and keeps what that
-/// was made with, though clips are made otherwise now (handbook reports
-/// master/072 walk-clips-report.md, files: "clipboard.rs (a pasted copy
-/// keeps the encoding)").
+/// A pasted copy of a made clip is given its file, and keeps what that was made
+/// with, though clips are made otherwise now (clipboard.rs `CopiedFile`'s
+/// `encoding`: "What the file was made with, if that's known").
 #[test]
 fn a_pasted_copy_keeps_what_its_file_was_made_with() {
     let app = TestApp::new();
@@ -343,12 +330,11 @@ fn a_pasted_copy_keeps_what_its_file_was_made_with() {
     assert_eq!(picture_in(&app, &pasted).0, "h264");
 }
 
-/// C12. A settings file from before codecs were a choice, with only its
-/// format, makes clips as they were made then: MP4 as H.264 Standard, MOV as
-/// DNxHR Proxy (core settings.rs:131, `clip_codec`: "unset only in a file
-/// from before they were a choice, read as clips were made then";
-/// `clip_encoding`: "H.264 at CRF 18 or DNxHR LB (the lowest step, as
-/// `ClipQuality::Proxy`)").
+/// A settings file from before codecs were a choice, with only its format,
+/// makes clips as they were made then: MP4 as H.264 Standard, MOV as DNxHR
+/// Proxy (core settings.rs `clip_codec`: "unset only in a file from before they
+/// were a choice, read as clips were made then"; `clip_encoding`: "H.264 at CRF
+/// 18 or DNxHR LB (the lowest step, as `ClipQuality::Proxy`)").
 #[test]
 fn an_old_settings_file_makes_clips_as_they_were_made_then() {
     let app = TestApp::new();
@@ -364,10 +350,10 @@ fn an_old_settings_file_makes_clips_as_they_were_made_then() {
     }
 }
 
-/// P1. A change of codec within MP4 (H.264 to H.265) makes a made clip again
-/// on its next drag (CHANGELOG.md, 0.7.2: "Clips come in more formats.";
-/// 8896230, "A clip is made again after a change of codec or quality":
-/// "dragout.ts compared the file's extension only").
+/// A change of codec within MP4 (H.264 to H.265) makes a made clip again on its
+/// next drag (CHANGELOG.md, 0.7.2: "Clips come in more formats."; 8896230, "A
+/// clip is made again after a change of codec or quality": "dragout.ts compared
+/// the file's extension only").
 #[test]
 fn a_change_of_codec_within_mp4_makes_a_made_clip_again_on_its_next_drag() {
     let app = TestApp::new();
@@ -377,10 +363,9 @@ fn a_change_of_codec_within_mp4_makes_a_made_clip_again_on_its_next_drag() {
     assert_eq!(picture_in(&app, &again), ("hevc".into(), "mp4".into()));
 }
 
-/// P2. A change of codec within MOV (DNxHR to ProRes) makes a made clip again
-/// on its next drag (CHANGELOG.md, 0.7.2: "Clips come in more formats.";
-/// 8896230; walk-clips-report.md item 1: "H.264→H.265 or ProRes→DNxHR
-/// changed nothing").
+/// A change of codec within MOV (DNxHR to ProRes) makes a made clip again on
+/// its next drag (CHANGELOG.md, 0.7.2: "Clips come in more formats."; before
+/// 8896230, a change of codec made nothing again).
 #[test]
 fn a_change_of_codec_within_mov_makes_a_made_clip_again_on_its_next_drag() {
     let app = TestApp::new();
@@ -390,10 +375,9 @@ fn a_change_of_codec_within_mov_makes_a_made_clip_again_on_its_next_drag() {
     assert_eq!(picture_in(&app, &again), ("prores".into(), "mov".into()));
 }
 
-/// P3. A change of quality alone makes a made clip again on its next drag
+/// A change of quality alone makes a made clip again on its next drag
 /// (CHANGELOG.md, 0.7.2: "a Proxy, Standard or High quality, for clips and
-/// edits alike"; 8896230; walk-clips-report.md item 1: "and a change of
-/// quality didn't either").
+/// edits alike"; before 8896230, a change of quality made nothing again).
 #[test]
 fn a_change_of_quality_alone_makes_a_made_clip_again_on_its_next_drag() {
     let app = TestApp::new();
@@ -403,11 +387,11 @@ fn a_change_of_quality_alone_makes_a_made_clip_again_on_its_next_drag() {
     assert_eq!(again.encoding, Some(made_with(H264, HIGH)));
 }
 
-/// P4. A copy pasted from a clip made before codecs were recorded keeps
-/// that unknown, and reads as a file of its format was made then: an MP4
-/// as H.264 Standard (8896230: "null for a file made before, read by its
-/// extension: mp4 as H.264 Standard, mov as DNxHR Proxy"; "a pasted copy
-/// keeps what it was made with (clipboard.rs)").
+/// A copy pasted from a clip made before codecs were recorded keeps that
+/// unknown, and reads as a file of its format was made then: an MP4 as H.264
+/// Standard (8896230: "null for a file made before, read by its extension: mp4
+/// as H.264 Standard, mov as DNxHR Proxy"; "a pasted copy keeps what it was
+/// made with (clipboard.rs)").
 #[test]
 fn a_copy_pasted_from_a_clip_made_before_codecs_were_recorded_reads_as_its_format_was_made_then() {
     let app = TestApp::new();
@@ -422,11 +406,9 @@ fn a_copy_pasted_from_a_clip_made_before_codecs_were_recorded_reads_as_its_forma
     assert!(!made_as_wanted(&app, &pasted), "an MP4 from then taken as H.264 High");
 }
 
-/// C on a stretch whose clip was made in an encoding other than the one
-/// Settings › Encoding has now makes it again as clips are made now; one made
-/// as wanted is given as it is (plans/clips-pilot.md, Decided 2: "C on a
-/// stretch whose clip was made in an older encoding makes it again"; core
-/// clips.rs `made_as`).
+/// Decided: C on a stretch whose clip was made in an encoding other than the
+/// one Settings › Encoding has now makes it again as clips are made now; one
+/// made as wanted is given as it is (core clips.rs `made_as`).
 #[test]
 fn clipping_a_stretch_whose_clip_was_made_in_an_older_encoding_makes_it_again() {
     let app = TestApp::new();
@@ -445,7 +427,7 @@ fn clipping_a_stretch_whose_clip_was_made_in_an_older_encoding_makes_it_again() 
 }
 
 /// The same on an edit's clip bar: C on a stretch whose clip was made in an
-/// older encoding makes it again (Decided 2, as above).
+/// older encoding makes it again (as above).
 #[test]
 fn clipping_an_edit_s_stretch_whose_clip_was_made_in_an_older_encoding_makes_it_again() {
     let app = TestApp::new();

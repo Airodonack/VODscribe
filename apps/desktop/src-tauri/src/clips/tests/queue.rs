@@ -96,10 +96,10 @@ fn add_edit(app: &TestApp, vod_id: i64, start: f64, end: f64) -> i64 {
 }
 
 /// Clips asked for one after another are made one at a time, each once the
-/// one before is done, in the order they were asked for (app clips.rs:1:
-/// "the queue that cuts their files, one at a time"; tests/e2e/scenarios/
-/// jobs.mjs: "three clips of all of a long file asked for at once, one made
-/// at a time").
+/// one before is done, in the order they were asked for (app `clips.rs`'s
+/// module doc: "the queue that cuts their files, one at a time";
+/// tests/e2e/scenarios/jobs.mjs: "three clips of all of a long file asked for
+/// at once, one made at a time").
 #[test]
 fn clips_are_made_one_at_a_time_in_the_order_asked() {
     let app = TestApp::new();
@@ -114,7 +114,7 @@ fn clips_are_made_one_at_a_time_in_the_order_asked() {
 }
 
 /// A clip made only to be dragged out of the window is made next, ahead of
-/// the clip bar's clips waiting (app clips.rs:171, `queue_made`: "made only
+/// the clip bar's clips waiting (app `clips.rs` `queue_made`: "made only
 /// to be dragged out of the window, first, ahead of those waiting"; 0.7.1:
 /// "Clips start as you pick them up.": "first in line").
 #[test]
@@ -131,7 +131,7 @@ fn a_clip_made_for_a_drag_out_is_made_next_ahead_of_those_waiting() {
 }
 
 /// Several clips made for one drag out of the window go first, in their
-/// order (app clips.rs:171, `queue_made`: "first, ahead of those waiting,
+/// order (app `clips.rs` `queue_made`: "first, ahead of those waiting,
 /// in their order, since the drag waits for their files"). At the queue
 /// itself: at the commands, a drag's clips are put in their order by
 /// `drag_clip`, which waits for the kit's drag.
@@ -161,8 +161,8 @@ fn several_clips_for_one_drag_are_made_in_their_order() {
 }
 
 /// A drag's clip put first doesn't stop the clip being made: that one is
-/// made to its end, and the drag's after it (app clips.rs:171,
-/// `queue_made`: "the one being made goes on: one encode at a time").
+/// made to its end, and the drag's after it (app `clips.rs` `queue_made`:
+/// "the one being made goes on: one encode at a time").
 #[test]
 fn the_clip_being_made_goes_on_while_a_drag_s_clips_are_put_first() {
     let app = TestApp::new();
@@ -179,7 +179,7 @@ fn the_clip_being_made_goes_on_while_a_drag_s_clips_are_put_first() {
 }
 
 /// Waiting clips dragged into another order in the list of jobs are made in
-/// that order (app clips.rs:255, `reorder`; 0.7.1: "Waiting clips and edits
+/// that order (app `clips.rs` `Cutter::reorder`; 0.7.1: "Waiting clips and edits
 /// can be reordered.": "to have it made sooner or later"; jobs.mjs: "the
 /// queue takes that order: it's the one made next").
 #[test]
@@ -197,7 +197,7 @@ fn waiting_clips_take_the_order_dragged_in_the_list_of_jobs() {
 
 /// A reorder names the clips waiting as the page last listed them: the one
 /// being made stays the one being made, and one put in the queue since (a
-/// drag's, put first) keeps its place (apps/desktop/src-tauri/src/jobs.rs:132,
+/// drag's, put first) keeps its place (apps/desktop/src-tauri/src/jobs.rs
 /// `reorder`: "the others (added since the order was read) keep theirs. The
 /// one running is begun, and stays").
 #[test]
@@ -245,7 +245,7 @@ fn the_list_of_jobs_shows_the_clip_being_made_and_those_waiting_by_name() {
 
 /// A waiting clip canceled from the list of jobs says it was canceled at
 /// once, while the one before it is still being made, and leaves the list
-/// (app clips.rs:237, `cancel_job`: "A clip then shows it was canceled … at
+/// (app `clips.rs` `cancel_job`: "A clip then shows it was canceled … at
 /// once if it was waiting"; 0.7.1: "A canceled clip or edit says so.";
 /// jobs.mjs: "the fourth's Cancel takes it out").
 #[test]
@@ -267,7 +267,7 @@ fn a_waiting_clip_canceled_says_canceled_at_once() {
 }
 
 /// A clip canceled while it's being made says so on the clip bar and has no
-/// file (app clips.rs:237, `cancel_job`: "once its job has ended if it was
+/// file (app `clips.rs` `cancel_job`: "once its job has ended if it was
 /// running"; CHANGELOG.md, 0.7.1: "A canceled clip or edit says so.").
 #[test]
 fn a_clip_canceled_while_it_is_made_says_so() {
@@ -289,7 +289,7 @@ fn a_clip_canceled_while_it_is_made_says_so() {
 /// the one canceled: it's made, and never shows it was canceled (the cancel
 /// was of the clip that went; `cancel_job`: "A clip then shows it was
 /// canceled … once its job has ended if it was running"). It comes back
-/// under its id, which the cancel names (review-undo-old-id F2).
+/// under its id, which the cancel names.
 #[test]
 fn a_clip_canceled_deleted_and_undone_as_its_cut_stops_is_made_and_never_shows_canceled() {
     let app = TestApp::new();
@@ -310,11 +310,10 @@ fn a_clip_canceled_deleted_and_undone_as_its_cut_stops_is_made_and_never_shows_c
 }
 
 /// A canceled clip is made once it's asked for again at its own range, as
-/// Clip on its stretch does (app clips.rs:293, `settle_canceled`: "so it
-/// isn't made again at the next start and Clip again makes it"; 0.7.1: "A
-/// canceled clip or edit says so.": "clip that stretch again to make it";
-/// clips.svelte.ts:236, "One that failed is tried again": `setClipRange` at
-/// its own range).
+/// Clip on its stretch does (app `clips.rs` `settle_canceled`: "so it isn't
+/// made again at the next start and Clip again makes it"; 0.7.1: "A canceled
+/// clip or edit says so.": "clip that stretch again to make it";
+/// clips.svelte.ts `move`: `setClipRange` at its own range).
 #[test]
 fn a_canceled_clip_moved_to_its_own_range_is_made_again() {
     let app = TestApp::new();
@@ -335,10 +334,10 @@ fn a_canceled_clip_moved_to_its_own_range_is_made_again() {
 }
 
 /// An edit canceled from the list of jobs is left not rendered: one being
-/// rendered once its render has stopped, one waiting at once (app
-/// clips.rs:293, `settle_canceled`: "a listed edit as before it was asked
-/// for, not rendered (as Stop render leaves it)"; 0.7.1: "A canceled clip or
-/// edit says so.": "a canceled edit is left not rendered").
+/// rendered once its render has stopped, one waiting at once (app `clips.rs`
+/// `settle_canceled`: "a listed edit as before it was asked for, not rendered
+/// (as Stop render leaves it)"; 0.7.1: "A canceled clip or edit says so.": "a
+/// canceled edit is left not rendered").
 #[test]
 fn a_canceled_edit_is_left_not_rendered() {
     let app = TestApp::new();
@@ -366,7 +365,7 @@ fn a_canceled_edit_is_left_not_rendered() {
 
 /// Removing a VOD stops the clip of it being made and makes none of its
 /// others, which leave no file behind; another VOD's clip waiting is still
-/// made (app clips.rs:212, `stop_vod`: "Stops the cut of a clip of VOD
+/// made (app `clips.rs` `stop_vod`: "Stops the cut of a clip of VOD
 /// `vod_id`, if one's being cut, and cuts none of its others"; 0.4.1 Fixes:
 /// "Removing a VOD while its clips waited to be made could still download
 /// them, leaving their files behind.").
@@ -392,7 +391,7 @@ fn removing_a_vod_stops_its_clip_being_made_and_makes_none_of_its_others() {
 }
 
 /// A clip on an edit's clip bar, being made as the VOD it's cut from is
-/// removed, is still made: it isn't the VOD's own bar's (app clips.rs:553,
+/// removed, is still made: it isn't the VOD's own bar's (app `clips.rs`
 /// `on_bar_of`: "edits keep their pieces of it, and their clip bars' clips
 /// too"; 0.7.0 Fixes: "Clips finish when their VOD is removed.").
 #[test]
@@ -415,8 +414,8 @@ fn a_clip_of_an_edit_s_bar_is_still_made_when_its_vod_is_removed() {
 /// leaves the list of jobs, which shows what's being made and what waits
 /// (0.7.1: "A list shows what's being made.": "the clips and edits being
 /// made"; jobs.mjs: "show there with their names, the first being made,
-/// the other two waiting"). The plan's disagreement 6: `set_clip_range`
-/// (app clips.rs:716) queued it again with `queue`, not `queue_once`.
+/// the other two waiting"). `set_clip_range` (app `clips.rs`) once queued it
+/// again with `queue`, not `queue_once`.
 #[test]
 fn a_clip_moved_while_it_waits_leaves_the_list_of_jobs_once_it_is_made() {
     let app = TestApp::new();
@@ -436,7 +435,7 @@ fn a_clip_moved_while_it_waits_leaves_the_list_of_jobs_once_it_is_made() {
 
 /// A clip made only for a drag out of the window shows in the list of jobs
 /// only once it's let go on another app, till that drag is over
-/// (apps/desktop/src-tauri/src/job_list.rs:186, `describe`: "a clip made
+/// (apps/desktop/src-tauri/src/job_list.rs `describe`: "a clip made
 /// only for a drag out of the window that's still in the window's drag …
 /// is seen only once it's been let go there"; 0.7.1: "Dropped clips show in
 /// the jobs list."). Below the commands until the kit has a drag.
@@ -457,7 +456,7 @@ fn a_clip_only_dragged_out_is_listed_only_once_let_go_on_another_app() {
 
 /// The same clip dragged out again while the first drag still hands it over
 /// (let go on a file manager that copies it as it's made) stays listed till
-/// the last of them is over (app clips.rs:52, `Cutter::out`: "the same clip
+/// the last of them is over (app `clips.rs` `Cutter::out`: "the same clip
 /// can be dragged out again while the first still hands it over"). Below
 /// the commands until the kit has a drag.
 #[test]
@@ -480,10 +479,10 @@ fn part_files(app: &TestApp) -> Vec<PathBuf> {
     entries.filter(|p| p.to_string_lossy().ends_with(".part")).collect()
 }
 
-/// D10. A clip canceled while it's made leaves no part file (app
-/// clips.rs:276, `cancel_job`: "stopped if it's being made (its ffmpeg ended
-/// and its part file deleted: `tools::encode`)"; jobs.mjs: "Cancel on the
-/// one being made ends it: its part file goes").
+/// A clip canceled while it's made leaves no part file (app `clips.rs`
+/// `cancel_job`: "stopped if it's being made (its ffmpeg ended and its part
+/// file deleted: `tools::encode`)"; jobs.mjs: "Cancel on the one being made
+/// ends it: its part file goes").
 #[test]
 fn a_clip_canceled_while_it_is_made_leaves_no_part_file() {
     let app = TestApp::new();
@@ -499,12 +498,12 @@ fn a_clip_canceled_while_it_is_made_leaves_no_part_file() {
     assert_eq!(part_files(&app), Vec::<PathBuf>::new());
 }
 
-/// D12. A clip whose file is made just as it's canceled stays made: the
-/// cancel finds it running and marks it, and as its job ends the mark finds
-/// it made (app clips.rs:355, `settle_canceled`: "What a clip or edit
-/// canceled from the list of jobs shows, unless it was made meanwhile";
-/// the comment at app clips.rs:171: "a cancel as it ends either finds it
-/// running and marks it, or doesn't").
+/// A clip whose file is made just as it's canceled stays made: the cancel
+/// finds it running and marks it, and as its job ends the mark finds it made
+/// (app `clips.rs` `settle_canceled`: "What a clip or edit canceled from the
+/// list of jobs shows, unless it was made meanwhile"; the comment in app
+/// `clips.rs` `Cutter::run`: "a cancel as it ends either finds it running and
+/// marks it, or doesn't").
 #[test]
 fn a_clip_made_just_as_it_is_canceled_stays_made() {
     let app = TestApp::new();
@@ -536,9 +535,9 @@ fn about(seen: &[f64], wanted: &[f64]) -> bool {
     seen.len() == wanted.len() && seen.iter().zip(wanted).all(|(s, w)| (s - w).abs() < 1e-6)
 }
 
-/// D24. A clip's progress is sent at most every quarter second: none before
-/// a quarter second has gone by since its cut began, and once one has, the
-/// next only a quarter second after that (app clips.rs:37, `PROGRESS_EVERY`:
+/// A clip's progress is sent at most every quarter second: none before a
+/// quarter second has gone by since its cut began, and once one has, the
+/// next only a quarter second after that (app `clips.rs` `PROGRESS_EVERY`:
 /// "How often a cut's progress is sent."; 0.7.1: "A list shows what's being
 /// made.": "how far the current one is"). ffmpeg says how far it is at each
 /// quarter of the clip, and once more at its end; the clock moves only
@@ -563,9 +562,9 @@ fn a_clip_s_progress_is_sent_at_most_every_quarter_second() {
     assert!(about(&quarter, &[0.25]), "a quarter second on, the first only: {quarter:?}");
 }
 
-/// D25. A site's clip's download is most of its progress: the download goes
-/// from 0 to 0.8, the cut after it from there to the end (the comment at
-/// app clips.rs:663: "Its footage downloaded first, if it isn't here: the
+/// A site's clip's download is most of its progress: the download goes from
+/// 0 to 0.8, the cut after it from there to the end (the comment in app
+/// `clips.rs` `cut`: "Its footage downloaded first, if it isn't here: the
 /// bulk of the time, so most of the progress"). The fake site says it's a
 /// quarter through, then done; ffmpeg a quarter through, and so on; the
 /// clock moves a quarter second before each says its first.

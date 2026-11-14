@@ -914,8 +914,7 @@ export default {
 
     // Renamed and rendered again: a new file, the one before gone (its path is
     // built from its id and which render it is, `Paths::clip_make`: every make
-    // writes a file of its own, plans/clips-pilot.md "Decided" 4b; its title is
-    // the name it's handed out by).
+    // writes a file of its own; its title is the name it's handed out by).
     const renderedIno = statSync(rendered.file_path).ino;
     await app.invoke("rename_edit", { id: made.id, title: `${NAME} 2` });
     await until("the rename", async () => (await app.invoke("list_edits"))[0]?.title === `${NAME} 2`, 10_000);

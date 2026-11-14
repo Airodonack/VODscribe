@@ -58,7 +58,7 @@ fn vods(app: &TestApp) -> Vec<Vod> {
 }
 
 /// A link of nothing (empty, or spaces) is answered with what to do,
-/// and adds nothing (vods.rs:55, `add_vod`: "Paste a VOD link first.").
+/// and adds nothing (vods.rs `add_vod`: "Paste a VOD link first.").
 #[test]
 fn a_link_of_nothing_says_paste_a_vod_link_first() {
     let app = TestApp::new();
@@ -71,7 +71,7 @@ fn a_link_of_nothing_says_paste_a_vod_link_first() {
 /// A link to this computer or the local network is refused, and nothing is
 /// added (CHANGELOG.md, 0.3.0: "VODscribe won't follow links to this
 /// computer or your local network."). Its host is checked as the name it
-/// resolves as (vods.rs:68, `add_vod`: "Checked, and passed on as the name
+/// resolves as (vods.rs `add_vod`: "Checked, and passed on as the name
 /// it resolves as"), so one written in look-alike characters is refused
 /// too, and so is a name that resolves there.
 #[test]
@@ -96,7 +96,7 @@ fn a_link_to_this_computer_or_the_local_network_is_refused() {
 }
 
 /// A ✕ that reaches the app before its add has begun is found by the add,
-/// which then fails as canceled and adds nothing (vods.rs:42, `cancel_add`:
+/// which then fails as canceled and adds nothing (vods.rs `cancel_add`:
 /// "A cancel that gets here before its add has started is left for the add
 /// to find"). The link is an address, so it needs no lookup, and the add is
 /// canceled before the site is asked.
@@ -262,7 +262,7 @@ fn a_vod_added_from_a_site_has_its_chat_fetched() {
 }
 
 /// Files dropped on the window or picked are added as VODs that play from
-/// where they are, and the files are left as they were (vods.rs:167,
+/// where they are, and the files are left as they were (vods.rs
 /// `add_files`: "They're played and transcribed in place and never
 /// modified").
 #[test]
@@ -285,7 +285,7 @@ fn files_dropped_or_picked_are_added_and_played_where_they_are_never_changed() {
 }
 
 /// Of files added together, each that can't be added says why in a message
-/// of its own, naming it, and the others are added (vods.rs:163,
+/// of its own, naming it, and the others are added (vods.rs
 /// `AddedFiles::errors`: "One message per file that couldn't be added").
 #[test]
 fn each_file_that_cannot_be_added_says_why_and_the_others_are_added() {
@@ -383,7 +383,7 @@ fn a_sound_file_is_added_as_sound_alone() {
 /// A file of the app's own data (a clip's file, a kept video, one received
 /// from another app's drag) can't be added; one in the kept videos' folder
 /// is only when it's received there, as another app's drag gives it
-/// (vods.rs:217, `add_local`: "one in the app's own data only if it's one
+/// (vods.rs `add_local`: "one in the app's own data only if it's one
 /// `received` (into the kept videos' folder)"). Received, it's the app's
 /// own copy (`Vod::received`).
 #[test]
@@ -497,7 +497,7 @@ fn refresh_details_gets_the_channels_link_and_asks_the_file_host_again() {
 /// A refresh loses nothing the VOD has: a site that names no channel now
 /// leaves the one it had, and a refresh that fails changes nothing
 /// (CHANGELOG.md, 0.7.2: "Refresh a VOD's details." ("Nothing the VOD has
-/// is lost."); vods.rs:140, `refresh_details`: "a failure changes nothing").
+/// is lost."); vods.rs `refresh_details`: "a failure changes nothing").
 #[test]
 fn refresh_details_loses_nothing_the_vod_has() {
     let app = TestApp::new();
@@ -523,7 +523,7 @@ fn refresh_details_loses_nothing_the_vod_has() {
 
 /// A refresh runs beside the VOD's video downloading, and leaves it to
 /// finish: the refresh is answered while the download is under way, and the
-/// download then keeps its video (vods.rs:138, `refresh_details`: "It runs
+/// download then keeps its video (vods.rs `refresh_details`: "It runs
 /// beside a download or transcription of the VOD without touching either").
 #[test]
 fn refresh_details_runs_beside_a_download_or_transcription_without_touching_either() {
@@ -547,7 +547,7 @@ fn refresh_details_runs_beside_a_download_or_transcription_without_touching_eith
 
 /// A second Refresh details of a VOD while its first is under way gets
 /// nothing to do; another VOD's goes ahead, and once the first ends, its
-/// next does (vods.rs:140, `refresh_details`: "None when one for the VOD is
+/// next does (vods.rs `refresh_details`: "None when one for the VOD is
 /// under way already: a second press does nothing"). At `Refreshing::claim`:
 /// at the command it needs yt-dlp's details held at a gate, which the fake
 /// doesn't do yet.
@@ -562,10 +562,9 @@ fn a_second_refresh_of_a_vod_under_way_does_nothing_and_another_vods_goes_ahead(
 }
 
 /// The file picker offers the extensions VODscribe plays, and a file of each
-/// is added (vods.rs:310, `media_extensions`: "The file extensions
-/// VODscribe accepts, for the file picker"). The list is today's (handbook
-/// plans/sections-074.md, "Decided", unstated item 4: "the test pins
-/// today's list").
+/// is added (vods.rs `media_extensions`: "The file extensions VODscribe
+/// accepts, for the file picker"). Decided for 0.7.4: the test pins
+/// today's list.
 #[test]
 fn the_file_picker_takes_the_extensions_vodscribe_plays() {
     let app = TestApp::new();

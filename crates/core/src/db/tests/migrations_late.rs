@@ -1,6 +1,6 @@
 //! Upgrades of libraries from the clip model on (V22 on), and the libraries
 //! releases left: old schema and rows in, the same data out, read back
-//! through the library's readers (plans/sections-074.md, 1A specs 29 to 56).
+//! through the library's readers.
 
 use super::*;
 use crate::testkit::{Released, at_version, back_to, format_of};
@@ -66,11 +66,10 @@ fn at_21(path: &Path) {
         .unwrap();
 }
 
-/// Spec 29: "`clips` holds every document: a VOD's own clip over the whole
-/// VOD (`whole_of` …), the edits (listed, `position`), and the clip bar's
-/// clips, now snippets hanging off their VOD's clip (`bar_of`). `items`
-/// holds their pieces" (db.rs:517, `MIGRATE_V22`; 0.5.0: "VODs and edits
-/// open in one player").
+/// db.rs `MIGRATE_V22`: "`clips` holds every document: a VOD's own clip over
+/// the whole VOD (`whole_of` …), the edits (listed, `position`), and the clip
+/// bar's clips, now snippets hanging off their VOD's clip (`bar_of`). `items`
+/// holds their pieces" (0.5.0: "VODs and edits open in one player").
 #[test]
 fn vods_clips_and_edits_become_documents_with_the_vods_own_clip_listing_it() {
     let (_dir, path) = library("migrate-v22");
@@ -117,9 +116,9 @@ fn vods_clips_and_edits_become_documents_with_the_vods_own_clip_listing_it() {
     assert_eq!(db.edit_pieces(edit.id).unwrap().len(), 2, "the edit keeps its pieces of the other VOD");
 }
 
-/// Spec 30: a VOD's own clip comes "with the VOD's place in the library's
-/// list, which `vods.position` held", and the edits are listed by
-/// `position` (db.rs:517, `MIGRATE_V22`).
+/// A VOD's own clip comes "with the VOD's place in the library's list, which
+/// `vods.position` held", and the edits are listed by `position` (db.rs
+/// `MIGRATE_V22`).
 #[test]
 fn the_library_keeps_its_order_through_the_clip_model() {
     let (_dir, path) = library("migrate-v22-order");
@@ -131,9 +130,9 @@ fn the_library_keeps_its_order_through_the_clip_model() {
     assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [2, 1], "VODs list in the order too");
 }
 
-/// Spec 31: "Clips keep their ids (their pictures are named by them); VODs'
-/// clips and edits get ids above them" (db.rs:517, `MIGRATE_V22`): each
-/// clip's picture (`Paths::clip_thumb`) is the one it had.
+/// "Clips keep their ids (their pictures are named by them); VODs' clips and
+/// edits get ids above them" (db.rs `MIGRATE_V22`): each clip's picture
+/// (`Paths::clip_thumb`) is the one it had.
 #[test]
 fn clips_keep_their_ids_through_the_clip_model_so_their_pictures_are_found() {
     let (dir, path) = library("migrate-v22-ids");
@@ -157,8 +156,8 @@ fn clips_keep_their_ids_through_the_clip_model_so_their_pictures_are_found() {
     assert!(others.iter().all(|&id| id > 3), "a VOD's clip or an edit took a clip's id: {others:?}");
 }
 
-/// Spec 32: "Marks belong to a clip (the VOD's own, for those made so far)
-/// and keep the VOD moment they're at" (db.rs:517, `MIGRATE_V22`).
+/// "Marks belong to a clip (the VOD's own, for those made so far) and keep
+/// the VOD moment they're at" (db.rs `MIGRATE_V22`).
 #[test]
 fn marks_stay_on_their_moment_through_the_clip_model() {
     let (_dir, path) = library("migrate-v22-marks");
@@ -178,8 +177,8 @@ fn marks_stay_on_their_moment_through_the_clip_model() {
     assert_eq!(own, [(7, 1, Flicks::from_seconds(65.25))]);
 }
 
-/// Spec 33: "the struck stretches, JSON seconds till now, are put in flicks
-/// by `Db::open` in the same transaction" (db.rs:517, `MIGRATE_V22`;
+/// "The struck stretches, JSON seconds till now, are put in flicks by
+/// `Db::open` in the same transaction" (db.rs `MIGRATE_V22`;
 /// `struck_to_flicks`): they're read in seconds, from a library from before
 /// the clip model and from one already in flicks, then taken out (V46,
 /// `struck_stretches_become_splits`): the piece is split there, to the flick.
@@ -215,11 +214,10 @@ fn struck_stretches_read_the_same_in_flicks() {
     assert_eq!(pieces, [(5.0, 12.0), (13.5, 18.0)]);
 }
 
-/// Spec 34: "what's been rendered of a clip (its status, file, error, the
-/// revision it's of, and whether its file was dragged out) is kept apart
-/// from the clip" (db.rs:610, `MIGRATE_V23`), and reads the same: a clip's
-/// status, file, error and hand-out; an edit up to date if rendered at its
-/// revision.
+/// "What's been rendered of a clip (its status, file, error, the revision
+/// it's of, and whether its file was dragged out) is kept apart from the
+/// clip" (db.rs `MIGRATE_V23`), and reads the same: a clip's status, file,
+/// error and hand-out; an edit up to date if rendered at its revision.
 #[test]
 fn what_was_rendered_of_a_clip_is_kept_apart_and_reads_the_same() {
     let (_dir, path) = library("migrate-v23");
@@ -263,10 +261,10 @@ fn what_was_rendered_of_a_clip_is_kept_apart_and_reads_the_same() {
     assert_eq!(edits, [("Best of".into(), ClipStatus::Ready, 4, true), ("Older".into(), ClipStatus::Ready, 5, false)]);
 }
 
-/// Spec 35: "each VOD (a source) counts the pieces of clips that use it, its
-/// own clip's included … A source at zero is unused: no entry lists it and
-/// no clip holds any of it" (db.rs:848, `MIGRATE_V24`): counted as it
-/// upgrades, then kept as clips change.
+/// "Each VOD (a source) counts the pieces of clips that use it, its own
+/// clip's included … A source at zero is unused: no entry lists it and no
+/// clip holds any of it" (db.rs `MIGRATE_V24`): counted as it upgrades, then
+/// kept as clips change.
 #[test]
 fn a_vod_used_by_an_edit_counts_its_pieces_after_the_upgrade() {
     let (_dir, path) = library("migrate-v24");
@@ -299,10 +297,10 @@ fn a_vod_used_by_an_edit_counts_its_pieces_after_the_upgrade() {
     assert_eq!(db.unused_sources().unwrap(), [1, 2, 3]);
 }
 
-/// Spec 36: "a source can be gone (`gone`): its files, transcript and chat
-/// erased while clips still have pieces of it" (db.rs:631, `MIGRATE_V25`;
-/// 0.5.0: "Removing a VOD that an edit uses leaves the edit's pieces of it
-/// where they are"): none is, from before.
+/// "A source can be gone (`gone`): its files, transcript and chat erased
+/// while clips still have pieces of it" (db.rs `MIGRATE_V25`; 0.5.0:
+/// "Removing a VOD that an edit uses leaves the edit's pieces of it where
+/// they are"): none is, from before.
 #[test]
 fn no_source_from_before_is_gone() {
     let (_dir, path) = library("migrate-v25");
@@ -325,12 +323,11 @@ fn no_source_from_before_is_gone() {
     assert_eq!(db.edit_pieces(3).unwrap().iter().map(|p| p.vod_id).collect::<Vec<_>>(), [1, 2]);
 }
 
-/// Spec 37: V26 keeps "what a clip's rendered file was made of … so a change
-/// that leaves those as they were (a highlight, a cut) doesn't leave it out
-/// of date" (db.rs:635, `MIGRATE_V26`; 0.5.0: "A rendered edit has its
-/// chapters"). One rendered before has none kept: it reads as up to date
-/// till it's changed (decided 2026-11-11, plans/sections-074.md "Decided",
-/// unstated behaviour 1).
+/// V26 keeps "what a clip's rendered file was made of … so a change that
+/// leaves those as they were (a highlight, a cut) doesn't leave it out of
+/// date" (db.rs `MIGRATE_V26`; 0.5.0: "A rendered edit has its chapters").
+/// Decided for 0.7.4: one rendered before has none kept, and reads as up to
+/// date till it's changed.
 #[test]
 fn an_edit_rendered_before_made_of_was_kept_reads_as_up_to_date_till_changed() {
     let (_dir, path) = library("migrate-v26");
@@ -356,12 +353,12 @@ fn an_edit_rendered_before_made_of_was_kept_reads_as_up_to_date_till_changed() {
     assert!(!current(2), "changed");
 }
 
-/// Spec 38: "Each VOD's transcription so far becomes stretches: a finished
-/// one, done from 0 to the end; one under way, waiting, paused or failed, a
-/// request for all of it in that state (queued ones were added when adding
-/// meant transcribing); a stopped one, done as far as its lines go, or
-/// nothing" (db.rs:640, `MIGRATE_V27`; 0.6.0: "Adding a VOD doesn't
-/// transcribe it."; e2e upgrade-0.5.0.mjs header).
+/// "Each VOD's transcription so far becomes stretches: a finished one, done
+/// from 0 to the end; one under way, waiting, paused or failed, a request for
+/// all of it in that state (queued ones were added when adding meant
+/// transcribing); a stopped one, done as far as its lines go, or nothing"
+/// (db.rs `MIGRATE_V27`; 0.6.0: "Adding a VOD doesn't transcribe it."; e2e
+/// upgrade-0.5.0.mjs header).
 #[test]
 fn transcriptions_so_far_become_stretches() {
     let (_dir, path) = library("migrate-v27");
@@ -412,9 +409,9 @@ fn transcriptions_so_far_become_stretches() {
     assert_eq!((vod(4).status, vod(4).error), (Status::None, None));
 }
 
-/// Spec 39: chat from before is searchable by who wrote it: "Chat's authors
-/// indexed, any case, for `from:` and its suggestions" (db.rs:676,
-/// `MIGRATE_V28`; 0.6.0: "Search learns from, in, within, after, before.";
+/// Chat from before is searchable by who wrote it: "Chat's authors indexed,
+/// any case, for `from:` and its suggestions" (db.rs `MIGRATE_V28`; 0.6.0:
+/// "Search learns from, in, within, after, before.";
 /// tests/e2e/fixtures/upgrade-matrix.mjs header: "the author index of format
 /// 28 is filled from the old rows").
 #[test]
@@ -450,11 +447,10 @@ fn chat_from_before_is_searchable_by_who_wrote_it() {
     assert_eq!(said.len(), 2, "{said:?}");
 }
 
-/// Spec 40: V29 adds "annotations imported from a file … A highlight's end,
-/// its kind … and why it's one, on its mark; who says a line (`speaker`), on
-/// the line; a VOD's cast and what it does when" (db.rs:685, `MIGRATE_V29`;
-/// 0.7.0: "A VOD can come with annotations."): a library from before has
-/// none of them.
+/// V29 adds "annotations imported from a file … A highlight's end, its kind …
+/// and why it's one …, on its mark; who says a line (`speaker`), on the line;
+/// a VOD's cast and what it does when" (db.rs `MIGRATE_V29`; 0.7.0: "A VOD
+/// can come with annotations."): a library from before has none of them.
 #[test]
 fn a_library_from_before_annotations_has_none_imported() {
     let (_dir, path) = library("migrate-v29");
@@ -480,9 +476,9 @@ fn a_library_from_before_annotations_has_none_imported() {
     assert_eq!(lines, [("hello".into(), None)]);
 }
 
-/// Spec 41: a highlight from before casts names nobody; V30 adds "who is in
-/// an imported highlight (`people`: its cast's names, as a JSON array), on
-/// its mark" (db.rs:703, `MIGRATE_V30`).
+/// A highlight from before casts names nobody; V30 adds "who is in an
+/// imported highlight (`people`: its cast's names, as a JSON array), on its
+/// mark" (db.rs `MIGRATE_V30`).
 #[test]
 fn a_highlight_from_before_casts_names_nobody() {
     let (_dir, path) = library("migrate-v30");
@@ -504,9 +500,8 @@ fn a_highlight_from_before_casts_names_nobody() {
     assert_eq!(db.marks(vod).unwrap()[1].detail.cast, ["Marlowe", "Ada"]);
 }
 
-/// Spec 42: a chapter from before icons has none; V31 adds "what an imported
-/// chapter is about, as one emoji (`icon`), on its mark" (db.rs:708,
-/// `MIGRATE_V31`).
+/// A chapter from before icons has none; V31 adds "what an imported chapter
+/// is about, as one emoji (`icon`), on its mark" (db.rs `MIGRATE_V31`).
 #[test]
 fn a_chapter_from_before_icons_has_none() {
     let (_dir, path) = library("migrate-v31");
@@ -528,8 +523,8 @@ fn a_chapter_from_before_icons_has_none() {
     assert_eq!(db.marks(vod).unwrap()[1].detail.icon.as_deref(), Some("🎮"));
 }
 
-/// Spec 43: a VOD from before look-ups is unknown to the file host: whether
-/// annotations are published for it is "unknown until asked" (db.rs:712,
+/// A VOD from before look-ups is unknown to the file host: whether
+/// annotations are published for it is "unknown until asked" (db.rs
 /// `MIGRATE_V32`).
 #[test]
 fn a_vod_from_before_look_ups_is_unknown_to_the_file_host() {
@@ -546,9 +541,9 @@ fn a_vod_from_before_look_ups_is_unknown_to_the_file_host() {
     assert_eq!(listed[0].annotations, Availability::Unknown);
 }
 
-/// Spec 44: a VOD from before its start was kept has none till its chat
-/// says: "A chat always replaces the others ... Null when nothing says"
-/// (db.rs:721, `MIGRATE_V33`).
+/// A VOD from before its start was kept has none till its chat says: "A chat
+/// always replaces the others ... Null when nothing says" (db.rs
+/// `MIGRATE_V33`).
 #[test]
 fn a_vod_from_before_its_start_was_kept_has_none_till_its_chat_says() {
     let (_dir, path) = library("migrate-v33");
@@ -564,8 +559,8 @@ fn a_vod_from_before_its_start_was_kept_has_none_till_its_chat_says() {
     assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
 }
 
-/// Spec 45: an import from before points of view has none: "Null for an
-/// import from before: none known" (db.rs:733, `MIGRATE_V34`).
+/// An import from before points of view has none: "Null for an import from
+/// before: none known" (db.rs `MIGRATE_V34`).
 #[test]
 fn an_import_from_before_points_of_view_has_none() {
     let (_dir, path) = library("migrate-v34");
@@ -587,11 +582,11 @@ fn an_import_from_before_points_of_view_has_none() {
     assert!(kept.povs.is_empty() && kept.cast.is_empty());
 }
 
-/// Spec 47: "Where the VOD it was kept from is still in the library
-/// (keeping a later stretch failed, so the VOD stayed), those come back from
-/// its rows": who speaks each line, and what each chat message is, how much
-/// and when it happened (db.rs:746, `MIGRATE_V36`; 0.7.0 Fixes: "Kept
-/// stretches keep subs, gifts and tips.").
+/// "Where the VOD it was kept from is still in the library (keeping a later
+/// stretch failed, so the VOD stayed), those come back from its rows": who
+/// speaks each line, and what each chat message is, how much and when it
+/// happened (db.rs `MIGRATE_V36`; 0.7.0 Fixes: "Kept stretches keep subs,
+/// gifts and tips.").
 #[test]
 fn stretches_kept_while_their_vod_stays_get_back_their_speakers_and_chat_kinds() {
     let (_dir, path) = library("migrate-v36");
@@ -645,9 +640,9 @@ fn event(time: f64, text: &str, kind: Kind, amount: Option<f64>, event_time: Opt
     ChatMessage { kind, amount, event_time, color: None, author: "fan".into(), ..message(time, "fan", text) }
 }
 
-/// Spec 48: of the speakers and chat kinds a kept stretch was copied
-/// without, "where the VOD is gone, so are they" (db.rs:746,
-/// `MIGRATE_V36`): it keeps the lines and messages it has, as it has them.
+/// Of the speakers and chat kinds a kept stretch was copied without, "where
+/// the VOD is gone, so are they" (db.rs `MIGRATE_V36`): it keeps the lines
+/// and messages it has, as it has them.
 #[test]
 fn a_kept_stretch_whose_vod_is_gone_keeps_what_it_has() {
     let (_dir, path) = library("migrate-v36-gone");
@@ -682,9 +677,9 @@ fn a_kept_stretch_whose_vod_is_gone_keeps_what_it_has() {
     assert_eq!(after, chat);
 }
 
-/// Spec 49: a VOD from before channel logins has none: "Null for a VOD
-/// added before: unknown" (db.rs:779, `MIGRATE_V37`; 0.7.2 Fixes: "Every
-/// Twitch channel shows its picture.").
+/// A VOD from before channel logins has none: "Null for a VOD added before:
+/// unknown" (db.rs `MIGRATE_V37`; 0.7.2 Fixes: "Every Twitch channel shows
+/// its picture.").
 #[test]
 fn a_vod_from_before_channel_logins_has_none() {
     let (_dir, path) = library("migrate-v37");
@@ -717,9 +712,9 @@ fn a_vod_from_before_channel_logins_has_none() {
     assert_eq!(json["channel_login"], "marlowe");
 }
 
-/// Spec 50: V38 keeps "the contexts an import names … Null for an import
-/// from before: none known" (db.rs:785, which sits on `MIGRATE_V40`'s
-/// constant: disagreement D2).
+/// V38 keeps "the contexts an import names … Null for an import from before:
+/// none known" (db.rs, the doc of `MIGRATE_V38`, which sits on
+/// `MIGRATE_V40`'s constant).
 #[test]
 fn an_import_from_before_contexts_names_none() {
     let (_dir, path) = library("migrate-v38");
@@ -738,12 +733,12 @@ fn an_import_from_before_contexts_names_none() {
     assert_eq!((kept.contexts.len(), kept.cast.len()), (0, 1), "no contexts; the cast it had");
 }
 
-/// Spec 51, the first open: "The old columns still get the full path
-/// written beside the extension, for 0.7.1 … and `library::settle` moves
-/// what they record that isn't where it's built" (db.rs:834,
-/// `MIGRATE_BUILT_PATHS`; plans/0.7.2.md line 26): the upgrade moves no
-/// file, and settle then finds it where it was recorded. (A second open
-/// moving nothing is crates/core/tests/race_settle_mid_session.rs
+/// The first open: "The old columns still get the full path written beside
+/// the extension, for 0.7.1 … and `library::settle` moves what they record
+/// that isn't where it's built" (db.rs `MIGRATE_BUILT_PATHS`; decided for
+/// 0.7.2: the old columns stay filled for 0.7.1): the upgrade moves no file,
+/// and settle then finds it where it was recorded. (A second open moving
+/// nothing is crates/core/tests/race_settle_mid_session.rs
 /// `a_second_connection_moves_no_file_a_job_has`.)
 #[test]
 fn files_recorded_by_path_keep_their_paths_till_settle_moves_them() {
@@ -768,11 +763,11 @@ fn files_recorded_by_path_keep_their_paths_till_settle_moves_them() {
     assert_eq!(std::fs::read(&built).unwrap(), b"video");
 }
 
-/// Spec 52: V40 keeps the channel's page; "Null for a VOD added before,
-/// filled from its info where that is still kept (`pipeline::fill_channels`)"
-/// (db.rs:789, `MIGRATE_V40`; 0.7.2: "Names open a streamer card.", "The
-/// channel over the player links to its page on every site"): only the
-/// VOD's own info, only what's missing.
+/// V40 keeps the channel's page; "Null for a VOD added before, filled from
+/// its info where that is still kept (`pipeline::fill_channels`)" (db.rs
+/// `MIGRATE_V40`; 0.7.2: "Names open a streamer card.", "The channel over the
+/// player links to its page on every site"): only the VOD's own info, only
+/// what's missing.
 #[test]
 fn a_vod_from_before_channel_pages_has_its_page_filled_from_its_info_where_kept() {
     let (_dir, paths) = library_in("migrate-v40");
@@ -814,10 +809,10 @@ fn a_vod_from_before_channel_pages_has_its_page_filled_from_its_info_where_kept(
     assert_eq!(json["channel_url"], page);
 }
 
-/// Spec 53: V41 keeps the codec and quality a clip's (or edit's) file was
-/// made with; "Null for a file made before: known only by its extension"
-/// (db.rs:801, `MIGRATE_V41`; 0.7.2: "Clips come in more formats."): such a
-/// file reads as its format was made then (settings.rs:280, "the format's
+/// V41 keeps the codec and quality a clip's (or edit's) file was made with;
+/// "Null for a file made before: known only by its extension" (db.rs
+/// `MIGRATE_V41`; 0.7.2: "Clips come in more formats."): such a file reads as
+/// its format was made then (settings.rs `clip_encoding`, "the format's
 /// codec, H.264 at CRF 18 or DNxHR LB"), so it's made again only when the
 /// codec or quality chosen now isn't that.
 #[test]
@@ -856,13 +851,13 @@ fn a_clip_made_before_encodings_were_recorded_reads_as_its_format_was_made_then(
     assert!(!db.edit(edit, prores).unwrap().unwrap().current, "made again in another codec");
 }
 
-/// Spec 54: an upgraded library never gives a deleted clip's id again: "a
-/// deleted clip's id is never given to a new one, as a VOD's isn't (v14), so
-/// what still holds it (an undo step, the clipboard, the page, the clip's
-/// picture and files, all named by it) can't reach the new clip"
-/// (db.rs:808, `MIGRATE_V42`; 0.7.3 Fixes: "Undo no longer changes another
-/// clip."). Edits and pasted clips are clips too. A library from before
-/// upgrades with all it had, as it had it.
+/// An upgraded library never gives a deleted clip's id again: "a deleted
+/// clip's id is never given to a new one, as a VOD's isn't (v14), so what
+/// still holds it (an undo step, the clipboard, the page, the clip's picture
+/// and files, all named by it) can't reach the new clip" (db.rs
+/// `MIGRATE_V42`; 0.7.3 Fixes: "Undo no longer changes another clip."). Edits
+/// and pasted clips are clips too. A library from before upgrades with all it
+/// had, as it had it.
 #[test]
 fn an_upgraded_library_never_gives_a_deleted_clips_id_again() {
     use crate::clipboard::Paste;
@@ -915,10 +910,9 @@ fn an_upgraded_library_never_gives_a_deleted_clips_id_again() {
     assert!(db.add_clip(vod, 7.0, 8.0, "d", true).unwrap().id > older);
 }
 
-/// Spec 55: V43 records which make of a clip its file is; "Null for one made
-/// before, at the path its id alone builds, which it keeps; so nothing is
-/// moved" (db.rs:822, `MIGRATE_V43`; 0.7.3 Fixes: "A file another app took
-/// stays.").
+/// V43 records which make of a clip its file is; "Null for one made before,
+/// at the path its id alone builds, which it keeps; so nothing is moved"
+/// (db.rs `MIGRATE_V43`; 0.7.3 Fixes: "A file another app took stays.").
 #[test]
 fn a_clip_made_before_v43_keeps_its_file_where_it_is() {
     let (_dir, path) = library("migrate-v43");
@@ -944,10 +938,9 @@ fn a_clip_made_before_v43_keeps_its_file_where_it_is() {
 }
 
 /// V44: the stretches' `note` (v27), which nothing ever read or wrote, goes
-/// (`MIGRATE_V44`), and a library from before upgrades with every stretch
-/// as it was: done, asked for, paused partway, failed, with its audio
-/// (testing.md, "Order after the pilot" 1: old schema and rows in, the
-/// same data out).
+/// (`MIGRATE_V44`), and a library from before upgrades with every stretch as
+/// it was: done, asked for, paused partway, failed, with its audio (old
+/// schema and rows in, the same data out).
 #[test]
 fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
     let (_dir, path) = library("stretch-note");
@@ -981,12 +974,12 @@ fn the_stretches_unread_note_goes_and_every_stretch_stays_as_it_was() {
     assert!(!columns(&db.conn).contains(&"note".to_string()), "upgraded: {:?}", columns(&db.conn));
 }
 
-/// A library from before video heights were kept (`MIGRATE_V45`) has no
-/// video download for a start to carry on, "Null for a VOD from before:
-/// nothing was asked that a start could know of", and its VODs read as they
-/// were; one asked for after the upgrade is kept with its height (owner,
-/// 2026-11-11, plans/sections-074.md 2C: the migration for videos'
-/// downloads; testing.md, "Order after the pilot" 1).
+/// A library from before video heights were kept (`MIGRATE_V45`) has no video
+/// download for a start to carry on, "Null for a VOD from before: nothing was
+/// asked that a start could know of", and its VODs read as they were; one
+/// asked for after the upgrade is kept with its height. Decided for 0.7.4: a
+/// whole video's download waiting at a quit carries on at the next start;
+/// this is its migration (old schema and rows in, the same data out).
 #[test]
 fn a_library_from_before_video_heights_has_no_video_download_to_carry_on() {
     let (_dir, path) = library("video-height");
@@ -1130,8 +1123,8 @@ mod struck_stretches_become_splits {
 
     /// Several stretches struck, in any order and overlapping: a piece for
     /// each stretch left between them, a sliver between two left out, as it
-    /// played (plans/0.7.4.md: "the piece split at its ends, what's between
-    /// gone").
+    /// played (db.rs `struck_to_splits`: "the piece split at its ends, what's
+    /// between gone").
     #[test]
     fn several_struck_stretches_split_a_piece_at_each_one() {
         let strikes = [(25.0, 27.0), (5.0, 8.0), (26.0, 30.0), (10.0, 12.0), (12.02, 14.0)];
@@ -1233,14 +1226,15 @@ mod struck_stretches_become_splits {
             .collect()
     }
 
-    /// "a chapter whose moment was struck moves to the start of the part
-    /// after the stretch, where 0.7.3 showed it, so no made file goes out of
-    /// date" (owner, 2026-11-13, plans/0.7.4.md): where 0.7.3 showed it
-    /// (its piece playing again after the stretch), in each case the review
-    /// found (reports/master/074/review-struck-to-splits.md M1): an earlier
-    /// piece of the same VOD starting after the moment, and a later piece
-    /// playing the moment itself. The file 0.7.3 made of each, chapters and
-    /// all, stays made. A highlight there stays hidden, as 0.7.3 hid it.
+    /// Decided for 0.7.4: a chapter whose moment was struck moves to the
+    /// start of the part after the stretch, where 0.7.3 showed it, so no made
+    /// file goes out of date (db.rs `struck_to_splits`: "A chapter 0.7.3
+    /// showed where its piece played again after its struck moment moves
+    /// there"). It shows where 0.7.3 showed it (its piece playing again after
+    /// the stretch) in each case: an earlier piece of the same VOD starting
+    /// after the moment, and a later piece playing the moment itself. The
+    /// file 0.7.3 made of each, chapters and all, stays made. A highlight
+    /// there stays hidden, as 0.7.3 hid it.
     #[test]
     fn a_chapter_whose_moment_was_struck_shows_where_0_7_3_showed_it() {
         let (_dir, db, _vod, (simple, earlier, later)) = struck(
@@ -1352,10 +1346,12 @@ mod struck_stretches_become_splits {
         assert_eq!(db.piece_row(a).unwrap().unwrap().end, Some(Flicks::from_seconds(18.0)));
     }
 
-    /// "a clip on a clip bar struck all the way through is not deleted ...
-    /// its pieces are left unsplit, so it stays on the bar and plays its
-    /// whole stretch again" (owner, 2026-11-13, plans/0.7.4.md; review L1).
-    /// A piece struck whole inside an edit with others still goes
+    /// Decided for 0.7.4: a clip on a clip bar struck all the way through is
+    /// not deleted; its pieces are left unsplit, so it stays on the bar and
+    /// plays its whole stretch again (db.rs `struck_to_splits`: "left whole
+    /// instead, its struck stretches emptied: it stays on its bar and plays
+    /// its stretch again"). A piece struck whole inside an edit with others
+    /// still goes
     /// (`a_wholly_struck_piece_goes_with_a_group_it_leaves_empty`).
     #[test]
     fn a_clip_struck_all_the_way_through_stays_on_its_bar_whole() {
@@ -1431,14 +1427,14 @@ mod struck_stretches_become_splits {
     }
 }
 
-/// Spec 56: each library a release left (tests/e2e/fixtures, `Released`)
-/// opens in this version with every row it kept: "the library is at this
-/// version's format, a copy of the old one kept beside it …; the library
-/// lists every VOD, with its transcription …; a word from a transcript and a
-/// chat author (`from:`, in any case) are found by search …; clips, marks
-/// and the edits with their pieces (and group) are there"
-/// (tests/e2e/fixtures/upgrade-matrix.mjs header; e2e keeps only what a
-/// window shows, the edit open in the page). One test per release.
+/// Each library a release left (tests/e2e/fixtures, `Released`) opens in this
+/// version with every row it kept: "the library is at this version's format,
+/// a copy of the old one kept beside it …; the library lists every VOD, with
+/// its transcription …; a word from a transcript and a chat author (`from:`,
+/// in any case) are found by search …; clips, marks and the edits with their
+/// pieces (and group) are there" (tests/e2e/fixtures/upgrade-matrix.mjs
+/// header; e2e keeps only what a window shows, the edit open in the page).
+/// One test per release.
 mod each_released_library_opens_with_every_row_it_kept {
     use super::*;
 

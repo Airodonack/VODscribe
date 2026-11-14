@@ -21,7 +21,8 @@ export default {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(fixtures.landed);
     // Played from a search hit (undo there is what 8867f3d fixed), on the
-    // first word: one in the file's last second stalls WebKitGTK (TODO.md).
+    // first word: one in the file's last second stalls WebKitGTK (a known
+    // issue).
     await app.playFromSearch("Swift");
     await until(
       "it to play",

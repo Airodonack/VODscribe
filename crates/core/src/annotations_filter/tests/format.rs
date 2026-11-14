@@ -17,10 +17,10 @@ fn ruled(rule: &serde_json::Value, prefix: &str, count: &str) -> Vec<String> {
     (0..n).map(|i| format!("{prefix}{i}")).collect()
 }
 
-/// crates/core/tests/data/annotations-filter-vectors.json; annotations_filter.rs:1 ("`tests/data/annotations-filter-vectors.json`
-/// holds keys, their bits and whole files, for every implementation to check itself by"). Each key's bits are
-/// the vector's, each whole file reads and says yes to what it holds, and made here from the same keys it's
-/// the same file byte for byte.
+/// crates/core/tests/data/annotations-filter-vectors.json; `annotations_filter.rs`'s module doc
+/// ("`tests/data/annotations-filter-vectors.json` … holds keys, their bits and whole files, for every
+/// implementation to check itself by"). Each key's bits are the vector's, each whole file reads and says yes to
+/// what it holds, and made here from the same keys it's the same file byte for byte.
 #[test]
 fn the_vectors_are_the_producers_and_the_apps() {
     let v = vectors();
@@ -47,9 +47,9 @@ fn the_vectors_are_the_producers_and_the_apps() {
     }
 }
 
-/// annotations_filter.rs:27 (the file's table: `MAGIC` "VSAF", the version 1, m, k, n, then the m bits, bit j
-/// being bit `j % 8` of byte `j / 8`, the least significant first): a file written out by that table is
-/// read, and the set made here from its key is that file. n is "for the record; not read".
+/// `annotations_filter.rs`'s module doc (the file's table: `MAGIC` "VSAF", the version 1, m, k, n, then the m
+/// bits, bit j being bit `j % 8` of byte `j / 8`, the least significant first): a file written out by that
+/// table is read, and the set made here from its key is that file. n is "for the record; not read".
 #[test]
 fn the_filter_file_is_its_header_then_its_bits() {
     let key = "twitch:v2901646294";
@@ -82,8 +82,8 @@ fn the_filter_file_is_its_header_then_its_bits() {
     }
 }
 
-/// annotations_filter.rs:10 ("Each published VOD puts two keys in it, UTF-8, with nothing around them":
-/// `<platform>:<platform id>` and `<platform>:<platform id>:<version>`).
+/// `annotations_filter.rs`'s module doc ("Each published VOD puts two keys in it, UTF-8, with nothing around
+/// them": `<platform>:<platform id>` and `<platform>:<platform id>:<version>`).
 #[test]
 fn each_published_vod_puts_its_two_keys_in_the_set() {
     let md5 = "0123456789abcdef0123456789abcdef";
@@ -96,8 +96,8 @@ fn each_published_vod_puts_its_two_keys_in_the_set() {
     assert!(!set.contains("twitch:abcdefghijk"), "another site");
 }
 
-/// The vectors' large set (`large`): built here from its rule it's the file the producer made, and says
-/// yes to one key in a hundred that isn't in it (annotations_filter.rs:67: "a 1% false-positive rate").
+/// The vectors' large set (`large`): built here from its rule it's the file the producer made, and says yes to
+/// one key in a hundred that isn't in it (`annotations_filter.rs`'s module doc: "a 1% false-positive rate").
 #[test]
 fn the_large_set_is_the_same_everywhere_and_wrong_about_one_in_a_hundred() {
     let rule = &vectors()["large"];
@@ -176,8 +176,8 @@ fn a_file_that_is_not_a_filter_is_refused() {
     }
 }
 
-/// annotations_filter.rs:16 ("The version is the file's ETag on the file host stripped to its MD5"): quotes,
-/// `W/` and capitals go (`version_of_etag`).
+/// `annotations_filter.rs`'s module doc ("The version is the file's ETag on the file host stripped to its
+/// MD5"): quotes, `W/` and capitals go (`version_of_etag`).
 #[test]
 fn an_etag_is_the_files_md5() {
     assert_eq!(version_of_etag("\"3CD25F19\""), "3cd25f19");
@@ -185,8 +185,8 @@ fn an_etag_is_the_files_md5() {
     assert_eq!(version_key("twitch", "v1", &version_of_etag("W/\"ab\"")), "twitch:v1:ab");
 }
 
-/// annotations_filter.rs:16 and `md5_shaped`: only an MD5 is a version; any other ETag could be one the
-/// host made for this install, so the set is read and nothing is kept of it.
+/// `annotations_filter.rs`'s module doc and `md5_shaped`: only an MD5 is a version; any other ETag could be one
+/// the host made for this install, so the set is read and nothing is kept of it.
 #[test]
 fn an_etag_that_is_not_an_md5_is_not_kept() {
     // Any other ETag could be one the host made for this install, to know

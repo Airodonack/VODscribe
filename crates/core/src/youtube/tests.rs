@@ -140,7 +140,7 @@ impl Refreshing {
 /// Twitch and YouTube it takes under a second instead of several";
 /// youtube.rs module doc: "Refresh details, which wants only the channel, asks here
 /// first"). The fake yt-dlp knows nothing of the VOD, so its look-up would
-/// fail. [join: 2A1 refresh_details]
+/// fail.
 #[test]
 fn refresh_details_of_a_youtube_vod_takes_its_channel_from_oembed() {
     let net = Net::new();
@@ -152,7 +152,7 @@ fn refresh_details_of_a_youtube_vod_takes_its_channel_from_oembed() {
 
 /// A channel oEmbed names with no plain handle is asked of yt-dlp instead
 /// (pipeline.rs `channel_by_api`: "A channel with no plain handle fails, and yt-dlp is
-/// asked"). [join: 2A1 refresh_details]
+/// asked").
 #[test]
 fn a_youtube_channel_with_no_plain_handle_is_refreshed_through_yt_dlp() {
     let net = Net::new();

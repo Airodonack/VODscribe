@@ -31,7 +31,7 @@ fn library_of(folder: &Folder) -> Db {
 // What a start tidies.
 
 /// Edits' preview segments, "from before edits played in the app's own
-/// player (up to 2 GB): nothing reads them now", go at the start (lib.rs:233,
+/// player (up to 2 GB): nothing reads them now", go at the start (lib.rs
 /// `tidy_at_start`).
 #[test]
 fn at_start_edits_preview_segments_from_before_go() {
@@ -44,7 +44,8 @@ fn at_start_edits_preview_segments_from_before_go() {
 }
 
 /// What a site's player was fed (`Paths::temp_embed`, kept while its VOD
-/// plays in the app's player) goes at the start (lib.rs:236, `embed::clear`).
+/// plays in the app's player) goes at the start (lib.rs `tidy_at_start`,
+/// `embed::clear`).
 #[test]
 fn at_start_what_a_sites_player_was_fed_goes() {
     let folder = Folder::new();
@@ -56,7 +57,8 @@ fn at_start_what_a_sites_player_was_fed_goes() {
 }
 
 /// "Footage sections a quit (or a crash) left downloading or downloaded in
-/// the work folder" go at the start (lib.rs:237, `footage::tidy_work`).
+/// the work folder" go at the start (lib.rs `tidy_at_start`,
+/// `footage::tidy_work`).
 #[test]
 fn at_start_footage_a_quit_left_downloading_goes() {
     let app = TestApp::new();
@@ -77,7 +79,7 @@ fn at_start_footage_a_quit_left_downloading_goes() {
 /// manager saved into first, and a file received whole that can't be added
 /// (not a video VODscribe can read), as its drop's add would have. A VOD's
 /// own received file stays, in its place or still where it arrived, as a
-/// crash before the move leaves it (lib.rs:243; receive.rs `tidy`,
+/// crash before the move leaves it (lib.rs `tidy_at_start`; receive.rs `tidy`,
 /// `take_up`; core db.rs `add_received`: "till it's moved there it plays
 /// where it arrived"). The start's settle moves that one to its place
 /// first (`library::settle`). One received whole that can be added is
@@ -126,7 +128,7 @@ fn at_start_files_a_quit_left_being_received_go() {
 
 /// "Kept videos' leftovers from VODs no longer in the library" go at the
 /// start; those of VODs still there stay, "as a paused download carries on
-/// from its parts" (lib.rs:247; core pipeline.rs:253, `tidy_media`).
+/// from its parts" (lib.rs `tidy_at_start`; core pipeline.rs `tidy_media`).
 #[test]
 fn at_start_kept_videos_of_vods_no_longer_in_the_library_go() {
     let app = TestApp::new();
@@ -148,9 +150,9 @@ fn at_start_kept_videos_of_vods_no_longer_in_the_library_go() {
 /// VODs added before the library kept their channel's login and page get
 /// them at the start, "from their info where it's still kept": one added
 /// before either was kept gets both, and one added after the login was
-/// kept but before the page was gets its page (lib.rs:251; core db.rs:789,
-/// version 40: "Null for a VOD added before, filled from its info where
-/// that is still kept (`pipeline::fill_channels`)").
+/// kept but before the page was gets its page (lib.rs `tidy_at_start`; core
+/// db.rs `MIGRATE_V40`: "Null for a VOD added before, filled from its info
+/// where that is still kept (`pipeline::fill_channels`)").
 #[test]
 fn at_start_vods_added_before_channels_were_kept_get_them_from_their_info() {
     let app = TestApp::new();
@@ -185,8 +187,9 @@ fn at_start_vods_added_before_channels_were_kept_get_them_from_their_info() {
 }
 
 /// The loudness over time of VODs no longer in the library goes at the
-/// start; a VOD's still there stays (lib.rs:254, `peaks::tidy`; core
-/// peaks.rs:121: "Removes the files in `dir` of VODs not in `library`").
+/// start; a VOD's still there stays (lib.rs `tidy_at_start`, `peaks::tidy`;
+/// core peaks.rs `tidy`: "Removes the files in `dir` of VODs not in
+/// `library`").
 #[test]
 fn at_start_loudness_of_vods_no_longer_in_the_library_goes() {
     let app = TestApp::new();
@@ -202,13 +205,13 @@ fn at_start_loudness_of_vods_no_longer_in_the_library_goes() {
 
 // The queues at a start.
 
-/// The queues begin with what was left unfinished (lib.rs:218: "then the
-/// queues, which begin with what was left unfinished"): a clip being made
-/// when the app was killed is made (clips.rs `Cutter::run`), and a VOD
-/// removed but not yet erased when it ended is erased (vods.rs `Sweeper`:
-/// "at start whatever was left (stopped, or the app quit first)"; 0.7.1:
-/// "Removed VODs are erased at once ... Quit ... before it's done, and the
-/// rest is erased when VODscribe next starts").
+/// The queues begin with what was left unfinished (lib.rs `open_library`:
+/// "then the queues, which begin with what was left unfinished"): a clip
+/// being made when the app was killed is made (clips.rs `Cutter::run`), and
+/// a VOD removed but not yet erased when it ended is erased (vods.rs
+/// `Sweeper`: "at start whatever was left (stopped, or the app quit
+/// first)"; 0.7.1: "Removed VODs are erased at once ... Quit ... before it's
+/// done, and the rest is erased when VODscribe next starts").
 #[test]
 fn the_queues_begin_with_what_was_left_unfinished() {
     let app = TestApp::new();
@@ -229,11 +232,11 @@ fn the_queues_begin_with_what_was_left_unfinished() {
 }
 
 /// A video download a quit stopped carries on at the next start, from the
-/// part yt-dlp left, and so does one still waiting its turn (owner,
-/// 2026-11-11, plans/sections-074.md 2C spec 9: "Yes all should restart";
-/// core db.rs `MIGRATE_V45`: "A quit stops the library's writes first, so
-/// it stays, and the next start carries the download on at that height";
-/// videos.rs `download`: "resuming any part already there").
+/// part yt-dlp left, and so does one still waiting its turn (decided for
+/// 0.7.4: every job a quit stops carries on at the next start; core db.rs
+/// `MIGRATE_V45`: "A quit stops the library's writes first, so it stays,
+/// and the next start carries the download on at that height"; videos.rs
+/// `download`: "resuming any part already there").
 #[test]
 fn a_video_download_a_quit_stopped_carries_on_at_the_next_start() {
     let app = TestApp::new();
@@ -268,8 +271,8 @@ fn video_queue_took(app: &TestApp, id: i64) -> bool {
 
 /// A video download that failed isn't started again at the next start: it
 /// ends as it says, and only "Keep video" asks again (core db.rs
-/// `MIGRATE_V45`: "cleared when it's done, stopped or failed"; review of
-/// queues-resume, 2026-11-11, F2). yt-dlp leaves its part, as it does.
+/// `MIGRATE_V45`: "cleared when it's done, stopped or failed"). yt-dlp
+/// leaves its part, as it does.
 #[test]
 fn a_video_download_that_failed_is_not_started_again_at_the_next_start() {
     let app = TestApp::new();
@@ -286,10 +289,10 @@ fn a_video_download_that_failed_is_not_started_again_at_the_next_start() {
 /// A video asked to download whose VOD's whole transcription will download
 /// it into the same file, from a site without its own player, is left to
 /// that transcription at the next start (videos.rs `left_unfinished`: "Not
-/// one that transcribing all of it will download into the same file"; review
-/// of queues-resume, 2026-11-11, F1). The worker's start sets its request
-/// back to queued (`Db::requeue_interrupted`); held, it comes after the
-/// video queue's start, as on a busy start.
+/// one that transcribing all of it will download into the same file"). The
+/// worker's start sets its request back to queued
+/// (`Db::requeue_interrupted`); held, it comes after the video queue's
+/// start, as on a busy start.
 #[test]
 fn a_video_a_whole_transcription_downloads_is_left_to_it_at_the_next_start() {
     let app = TestApp::new();
@@ -313,8 +316,7 @@ fn a_video_a_whole_transcription_downloads_is_left_to_it_at_the_next_start() {
 /// A video asked to download beside a whole transcription that failed (its
 /// request stays, in error) is carried on at the next start: that
 /// transcription downloads nothing (videos.rs `transcribing_all`: "One
-/// failed or paused downloads nothing"; re-review of queues-resume,
-/// 2026-11-11, R1).
+/// failed or paused downloads nothing").
 #[test]
 fn a_video_asked_beside_a_failed_whole_transcription_is_carried_on_at_the_next_start() {
     let app = TestApp::new();
@@ -341,7 +343,7 @@ fn a_video_asked_beside_a_failed_whole_transcription_is_carried_on_at_the_next_s
 /// the app quits before the stopped download ends: the VOD, added again
 /// (kept for an edit's piece, its row listed again), doesn't download its
 /// video unasked at the next start (videos.rs `stop`: "No longer asked,
-/// waiting or under way"; re-review of queues-resume, 2026-11-11, R2).
+/// waiting or under way").
 #[test]
 fn a_video_download_stopped_by_removing_its_vod_is_not_asked_after_a_quit() {
     let app = TestApp::new();
@@ -384,8 +386,7 @@ fn a_video_download_stopped_by_delete_all_videos_is_not_asked_after_a_quit() {
 
 /// A removed VOD's video download isn't carried on at the next start: the
 /// start erases it (core db.rs `wanted_videos`: "only those in its list,
-/// and not gone"; vods.rs `Sweeper`; review of queues-resume, 2026-11-11,
-/// F3).
+/// and not gone"; vods.rs `Sweeper`).
 #[test]
 fn a_removed_vods_video_download_is_not_carried_on_at_the_next_start() {
     let app = TestApp::new();
@@ -446,10 +447,9 @@ fn a_clip_being_made_when_the_app_ended_is_made_once_at_the_next_start() {
     assert_eq!(app.made(clip.id).status, ClipStatus::Ready);
 }
 
-/// An edit a quit stopped rendering is rendered at the next start (owner,
-/// 2026-11-11, plans/sections-074.md: resuming edit renders a quit
-/// interrupted; core edits.rs `unfinished_renders`: "Edits left rendering
-/// ... rendered again at the start").
+/// An edit a quit stopped rendering is rendered at the next start (decided
+/// for 0.7.4; core edits.rs `unfinished_renders`: "Edits left rendering ...
+/// rendered again at the start").
 #[test]
 fn an_edit_a_quit_stopped_rendering_is_rendered_at_the_next_start() {
     let app = TestApp::new();
@@ -472,8 +472,8 @@ fn an_edit_a_quit_stopped_rendering_is_rendered_at_the_next_start() {
 /// The footage an edit's piece needs, a quit stopped downloading, is
 /// downloaded at the next start. A section can't be carried on (ffmpeg
 /// writes it): it's downloaded again, its files a quit left gone first
-/// (owner, 2026-11-11, plans/sections-074.md 2C spec 9; lib.rs, the
-/// comment at `footage::tidy_work`).
+/// (decided for 0.7.4; lib.rs, the comment at `footage::tidy_work` in
+/// `tidy_at_start`).
 #[test]
 fn footage_a_quit_stopped_downloading_is_downloaded_at_the_next_start() {
     let app = TestApp::new();
@@ -504,8 +504,8 @@ fn footage_a_quit_stopped_downloading_is_downloaded_at_the_next_start() {
 
 /// A file received whole from another app's drop, which a quit stopped
 /// before it was added, is added at the next start, as its drop would have
-/// (owner, 2026-11-11, plans/sections-074.md 2C spec 9; receive.rs: each is
-/// "renamed once whole and added as a file (`vods::add_received`), which
+/// (decided for 0.7.4; receive.rs's module doc: each is "renamed once
+/// whole and added as a file (`vods::add_received`), which
 /// moves it to `received/<its VOD's id>`"). One still being received can't
 /// be: what was dropping it is gone, so its part goes
 /// (`at_start_files_a_quit_left_being_received_go`).
@@ -550,10 +550,10 @@ fn vods_files(app: &TestApp) -> Vec<String> {
 /// elsewhere (a library folder restored, shared or moved), is not a file
 /// received there: the start leaves the user's file where it is, and no VOD
 /// takes it, so removing that VOD can't delete the user's only copy
-/// (receive.rs: each is "written into the kept videos' folder, under
-/// `received/incoming`", and "a file received whole but not yet added is
-/// added (`take_up`)"; vods.rs `add_local`: one received only "from where
-/// files are received").
+/// (receive.rs's module doc: each is "written into the kept videos' folder,
+/// under `received/incoming`", and "a file received whole but not yet added
+/// is added (`take_up`)"; vods.rs `add_local`: one received only "from
+/// where files are received").
 #[cfg(unix)]
 #[test]
 fn a_link_where_files_are_received_leaves_the_users_file_alone() {
@@ -606,10 +606,9 @@ fn a_linked_folder_where_files_are_received_or_kept_leaves_the_users_files_alone
 }
 
 /// A storyboard a quit stopped partway is made on at the next start, from
-/// what it had (owner, 2026-11-11, plans/sections-074.md 2C spec 9;
-/// storyboards.rs `sweep`: "asks for those missing, of files changed since,
-/// or unfinished"; crates/player storyboard.rs `make`: "Makes (or carries
-/// on making)").
+/// what it had (decided for 0.7.4; storyboards.rs `sweep`: "asks for those
+/// missing, of files changed since, or unfinished"; crates/player
+/// storyboard.rs `make`: "Makes (or carries on making)").
 #[test]
 fn a_storyboard_a_quit_stopped_partway_is_made_at_the_next_start() {
     use std::sync::atomic::AtomicBool;
@@ -667,10 +666,9 @@ fn a_library_that_cannot_be_read_is_no_reason_not_to_start() {
 
 /// A library a newer version changed, so that this one can't read what its
 /// clips left unmade, starts without making clips, and the page is told
-/// (owner, 2026-11-11, plans/sections-074.md item 9: "a library the start
-/// can open but not read must not stop VODscribe starting"; "I often get
-/// this from opening an old version"). What else the start does goes on:
-/// a VOD removed and left to erase is erased.
+/// (decided for 0.7.4: a library the start can open but not read doesn't
+/// stop VODscribe starting). What else the start does goes on: a VOD
+/// removed and left to erase is erased.
 #[test]
 fn a_library_whose_clips_cannot_be_read_starts_saying_so() {
     let app = TestApp::new();
@@ -688,8 +686,8 @@ fn a_library_whose_clips_cannot_be_read_starts_saying_so() {
 }
 
 /// A library a newer version changed, so that this one can't read what's
-/// left to erase, starts without erasing, and the page is told (owner,
-/// 2026-11-11, plans/sections-074.md item 9). Clips are made.
+/// left to erase, starts without erasing, and the page is told (decided
+/// for 0.7.4). Clips are made.
 #[test]
 fn a_library_whose_removed_vods_cannot_be_read_starts_saying_so() {
     let app = TestApp::new();
@@ -707,7 +705,7 @@ fn a_library_whose_removed_vods_cannot_be_read_starts_saying_so() {
 /// The jobs a quit stops record no failure, and carry on at the next start:
 /// "The library's writes stop first, so the jobs whose processes stop don't
 /// record that as a failure: they carry on at the next start as after any
-/// quit" (lib.rs:644, `quit`). A clip's cut is stopped halfway: its ffmpeg
+/// quit" (lib.rs `quit`). A clip's cut is stopped halfway: its ffmpeg
 /// ends with the app.
 #[test]
 fn jobs_stopped_by_a_quit_record_no_failure_and_carry_on_at_the_next_start() {
@@ -731,7 +729,7 @@ fn jobs_stopped_by_a_quit_record_no_failure_and_carry_on_at_the_next_start() {
 }
 
 /// A clip cut and not pasted goes as the app quits, its file with it: the
-/// library it quit with has neither (lib.rs:674, `quit_library`: "a cut not
+/// library it quit with has neither (lib.rs `quit_library`: "a cut not
 /// pasted goes with the copy"; 0.7.3: "Cut clips wait for a paste. Ctrl+X
 /// ... keeps the clip and its file until you paste it, copy or cut again,
 /// or quit").
@@ -751,7 +749,7 @@ fn a_cut_not_pasted_goes_as_the_app_quits() {
 }
 
 /// A file the app couldn't delete as it ran is tried again as it quits
-/// (lib.rs:670, `files::delete_leftovers`; 0.4.1 Fixes: "On Windows, a clip
+/// (lib.rs `quit`, `files::delete_leftovers`; 0.4.1 Fixes: "On Windows, a clip
 /// deleted while an edit was rendering from it kept its file"). A folder it
 /// can't write to holds the file here, as Windows holds one open; it's let
 /// go before the quit. The next start's try is the kit's own spec

@@ -184,8 +184,8 @@ fn an_upgrade_is_all_or_nothing() {
 
 /// A library a newer version made opens (db.rs `Db::open`: "A newer
 /// VODscribe made this library (the user went back a version) … carry on
-/// rather than refuse to start"). Going back before 0.5.0 isn't supported
-/// (sections-074.md "Decided", D4); this library is today's.
+/// rather than refuse to start"). Decided for 0.7.4: going back before 0.5.0
+/// isn't supported; this library is today's.
 #[test]
 fn a_library_from_a_newer_version_opens() {
     let dir = crate::TempDir::new("newer");

@@ -1,6 +1,6 @@
 //! The specs of the settings file, at its seam: `Settings::load` and
 //! `Settings::save` on a file in a folder of its own, and the JSON as written.
-//! A spec each, named as it is said (plans/sections-074.md, 1B).
+//! A spec each, named as it is said.
 
 use super::*;
 use serde_json::{Value, json};
@@ -168,9 +168,9 @@ fn emote_providers_keep_their_order_and_only_known_ones_once_with_new_ones_after
 }
 
 /// Unset, the tallest video downloaded is 1080p (settings.rs
-/// `DEFAULT_VIDEO_HEIGHT`: "1080p, the most offered"; plans/sections-074.md
-/// "Decided" 2026-11-11, D3: the default since f238005, "Downloaded video is
-/// 1080p unless chosen otherwise, clips included", v0.4.0). The page's
+/// `DEFAULT_VIDEO_HEIGHT`: "1080p, the most offered"). Decided for 0.7.4: it
+/// is the default on purpose, as since f238005 ("Downloaded video is 1080p
+/// unless chosen otherwise, clips included", v0.4.0). The page's
 /// DEFAULT_HEIGHT agrees: core pipeline.rs checks it.
 #[test]
 fn an_unset_video_height_is_1080() {
@@ -181,8 +181,7 @@ fn an_unset_video_height_is_1080() {
 
 /// A file from before codecs were a choice makes clips as they were made
 /// then: the format's codec, H.264 at CRF 18 (standard) or DNxHR LB (proxy)
-/// (settings.rs `clip_encoding`: "Unset, as before they were a choice";
-/// plans/clip-encodings.md "Cautions"; clips pilot C12).
+/// (settings.rs `clip_encoding`: "Unset, as before they were a choice").
 #[test]
 fn a_file_from_before_codecs_makes_clips_as_they_were_made_then() {
     // A settings.json as 0.7.1 wrote it: a format, no codec or quality.
@@ -362,10 +361,9 @@ fn beside(dir: &Path) -> Vec<(String, String)> {
 }
 
 /// A settings file that can't be read is set aside, as a library that won't
-/// open is, so the next change doesn't save the defaults over it (plans/
-/// sections-074.md "Decided", unstated behaviour 3, owner 2026-11-11: "an
-/// unreadable settings file is set aside like an unreadable library and the
-/// user told").
+/// open is, so the next change doesn't save the defaults over it. Decided for
+/// 0.7.4: an unreadable settings file is set aside like an unreadable library,
+/// and the user told.
 #[test]
 fn an_unreadable_settings_file_is_set_aside_not_saved_over() {
     let dir = crate::TempDir::new("settings-unreadable");

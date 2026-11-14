@@ -128,14 +128,14 @@ test("things being added are called by their link or file name", () => {
 const vodOf = (platform, platform_id, url) => ({ platform, platform_id, url });
 
 test("a Kick VOD's link says no time", () => {
-  // platform.ts:117 "not Kick's (none is documented; it ignores one)"; 0.7.0 Fixes: "Kick links copy without a time."
+  // platform.ts `linksHaveTime`: "not Kick's (none is documented; it ignores one)"; 0.7.0 Fixes: "Kick links copy without a time."
   const kick = vodOf("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
   assert.equal(linksHaveTime("kick"), false);
   assert.equal(watchUrl(kick, 75), "https://kick.com/airodonack/videos/01a169a1");
 });
 
 test("a Twitch moment link always says its hours", () => {
-  // platform.ts:121: Twitch reads "?t=0h1m5s", so the hours are said even when there are none.
+  // platform.ts `twitchTime`: "the format Twitch uses in URLs and its player, its hours always given".
   const twitch = vodOf("twitch", "v2901646294", "https://www.twitch.tv/videos/2901646294");
   assert.equal(linksHaveTime("twitch"), true);
   assert.equal(twitchTime(3723), "1h2m3s");
@@ -147,20 +147,20 @@ test("a Twitch moment link always says its hours", () => {
 });
 
 test("a YouTube moment link says its second", () => {
-  // platform.ts:126: "&t=<seconds>s".
+  // platform.ts `watchUrl`: YouTube's "&t=<seconds>s".
   const youtube = vodOf("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
   assert.equal(linksHaveTime("youtube"), true);
   assert.equal(watchUrl(youtube, 75.2), "https://www.youtube.com/watch?v=noa29qsTc4g&t=75s");
 });
 
 test("a Twitch clip's link is its page with no time", () => {
-  // The comment at platform.ts:129: "A clip's page has no time to start from."
+  // The comment in platform.ts `watchUrl`: "A clip's page has no time to start from."
   const clip = vodOf("twitch", "FunnyClipName-AbCd123", "https://clips.twitch.tv/FunnyClipName-AbCd123");
   assert.equal(watchUrl(clip, 75), "https://clips.twitch.tv/FunnyClipName-AbCd123");
 });
 
 test("another site's link says its time as t", () => {
-  // platform.ts:121: "where its links can say one"; the VOD's own link with ?t=<seconds>.
+  // platform.ts `watchUrl`: "where its links can say one"; the VOD's own link with ?t=<seconds>.
   const other = vodOf("rumble", "x", "https://rumble.com/v1-x.html");
   assert.equal(linksHaveTime("rumble"), true);
   assert.equal(watchUrl(other, 75), "https://rumble.com/v1-x.html?t=75");
@@ -169,7 +169,7 @@ test("another site's link says its time as t", () => {
 });
 
 test("a moment link floors its time to the second and never goes below 0", () => {
-  // plans/sections-074.md "Decided" 2026-11-11, unstated 5 ("a moment link floors to the second: spec as is"); platform.ts:124.
+  // Decided for 0.7.4: a moment link floors its time to the second (platform.ts `watchUrl`).
   const youtube = vodOf("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
   assert.equal(watchUrl(youtube, 75.99), "https://www.youtube.com/watch?v=noa29qsTc4g&t=75s");
   assert.equal(watchUrl(youtube, -5), "https://www.youtube.com/watch?v=noa29qsTc4g&t=0s");
@@ -181,7 +181,7 @@ test("a moment link floors its time to the second and never goes below 0", () =>
 });
 
 test("the stamp's tooltip says when a site's links can't say a time", () => {
-  // platform.ts:142: "a link to the moment, or on a site whose links can't say one, the VOD's"; 0.7.0 Fixes: "Kick links copy without a time." (pointing at it says so).
+  // platform.ts `copyLinkTitle`: "a link to the moment, or on a site whose links can't say one, the VOD's"; 0.7.0 Fixes: "Kick links copy without a time." (pointing at it says so).
   const kick = vodOf("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
   assert.equal(copyLinkTitle(kick), "Copy a link to this VOD (Kick's links can't say a time)");
   const youtube = vodOf("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");

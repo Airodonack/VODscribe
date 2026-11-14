@@ -1,6 +1,6 @@
 // The time by frame under a site's VOD played in its own player (a release:
 // no embed-takeover), from their player's reports (embed.ts, playerClock.ts):
-// the owner's test VOD on Twitch (or YouTube, with E2E_SITE=youtube). While
+// our test VOD on Twitch (or YouTube, with E2E_SITE=youtube). While
 // it plays, the frame number only goes up, a frame or two at a time: Twitch's
 // reports, a quarter second off now and then, made it leap 9 frames on and 7
 // back (the clock's own test replays them: playerClock.test.mjs). Samples the

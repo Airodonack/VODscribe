@@ -76,7 +76,7 @@ fn footage_still_coming_plays_on_without_a_break() {
     }));
     player.play();
     // Measured once the time runs: the first play after opening can stand a
-    // while (TODO.md), which isn't what's tested here.
+    // while (a known issue), which isn't what's tested here.
     let replan = |player: &Player| player.set_timeline(plan(&file));
     while !(player.running() && player.time() > 0.2) {
         std::thread::sleep(Duration::from_millis(50));

@@ -68,7 +68,7 @@ function refused(value) {
 }
 
 /**
- * annotations.rs:325 ("the error's message is for the user (as `parseAnnotations` in the page words it)"):
+ * annotations.rs `parse` ("the error's message is for the user (as `parseAnnotations` in the page words it)"):
  * a file of another format or version is refused in the words the app uses.
  */
 test("the page refuses a file of another format or version in the apps words", () => {
@@ -87,8 +87,8 @@ test("the page refuses a file of another format or version in the apps words", (
 });
 
 /**
- * plans/sections-074.md, "Decided 2026-11-11": a VODscription file with no format or version "is said plainly
- * by app and page alike (\"it has no format\", \"it has no version\")", as annotations.rs `from_value` says it.
+ * Decided for 0.7.4: a VODscription file with no format or version is said plainly by app and page alike ("it
+ * has no format", "it has no version"), as annotations.rs `from_value` says it.
  */
 test("the page words a file with no format or no version as the app does", () => {
   assert.equal(refused({ version: 1 }), "This isn't a VODscribe annotations file: it has no format.");
@@ -96,7 +96,7 @@ test("the page words a file with no format or no version as the app does", () =>
 });
 
 /**
- * annotations.rs:383 ("The page's `withinLimits` (annotations.ts) is the same rule"): the limits are the app's,
+ * annotations.rs `within_limits` ("The page's `withinLimits` (annotations.ts) is the same rule"): the limits are the app's,
  * each list and text one past its limit is refused in the app's words, at its limit it is read.
  */
 test("the page refuses what the app refuses by its limits", () => {
@@ -168,7 +168,7 @@ test("the page refuses what the app refuses by its limits", () => {
   assert.equal(hasLongText(["a", { b: "😂".repeat(LIMITS.text + 1) }]), true);
 });
 
-/** annotations.rs:178 ("The page's `cardId` (streamers.ts) is the same rule"). */
+/** annotations.rs `card_id` ("The page's `cardId` (streamers.ts) is the same rule"). */
 test("the pages card id is the apps", () => {
   for (const good of ["marlowe", "s-0001", "a_b", "7", "0-", "z_", "a".repeat(64)]) assert.equal(cardId(good), good);
   assert.equal(cardId("  marlowe "), "marlowe");
@@ -190,7 +190,7 @@ test("the pages card id is the apps", () => {
   assert.deepEqual(parseAnnotations(fileWith(["contexts"], "nopixel")).contexts, []);
 });
 
-/** annotations.rs:218 ("The page's `readAccount` (annotations.ts) is the same rule"). */
+/** annotations.rs `Account::read` ("The page's `readAccount` (annotations.ts) is the same rule"). */
 test("the pages account is the apps", () => {
   const read = (/** @type {string} */ platform, /** @type {string} */ login) => readAccount({ platform, login });
   const account = (/** @type {string} */ platform, /** @type {string} */ login) => ({ platform, login });
@@ -234,7 +234,7 @@ test("the pages account is the apps", () => {
   assert.deepEqual([read2[0].account, read2[1].account?.login], [undefined, "b"]);
 });
 
-/** annotations.rs:268 ("The page's `readPov` (annotations.ts) is the same rule"). */
+/** annotations.rs `Pov::read` ("The page's `readPov` (annotations.ts) is the same rule"). */
 test("the pages point of view is the apps", () => {
   const start = "2026-10-01T17:30:00Z";
   const pov = (
@@ -288,7 +288,7 @@ test("the pages point of view is the apps", () => {
 });
 
 /**
- * annotations.ts:44 ("a file may carry a kind not listed here: it shows as `UNKNOWN_GLYPH` and keeps its
+ * annotations.ts `HIGHLIGHT_GLYPHS` ("a file may carry a kind not listed here: it shows as `UNKNOWN_GLYPH` and keeps its
  * word"); 0.7.0: "Highlights show on the timeline." (a star for a kind the app doesn't know).
  */
 test("a highlight of a kind the app does not know shows a star and keeps its word", () => {
@@ -306,7 +306,7 @@ test("a highlight of a kind the app does not know shows a star and keeps its wor
   assert.equal(highlightGlyph(read.highlights[0].kind), UNKNOWN_GLYPH);
 });
 
-/** streamers.ts:16 (`STREAMER_FORMAT`, `INDEX_FORMAT`, versions 1): a card or an index of another shape is not read. */
+/** streamers.ts (`STREAMER_FORMAT`, `INDEX_FORMAT`, versions 1): a card or an index of another shape is not read. */
 test("a streamer card of another format or version is not read", () => {
   assert.deepEqual(
     [STREAMER_FORMAT, STREAMER_VERSION, INDEX_FORMAT, INDEX_VERSION],

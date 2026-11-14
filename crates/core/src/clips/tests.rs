@@ -1,11 +1,12 @@
 //! The specs of clips' titles, names, encodings and cuts: the public
 //! functions of `clips.rs`, with the kit's fake ffmpeg. The tests that run
-//! the real ffmpeg are the fake's check against it (testing.md, "Fakes, not
-//! mocks"); they skip where ffmpeg isn't installed.
+//! the real ffmpeg are the fake's check against it; they skip where ffmpeg
+//! isn't installed.
 //!
-//! "A span of any length is a clip" (core clips.rs:42; CHANGELOG.md 0.7.0,
-//! "Clips can be any length.") is `every_span_is_checked_the_same_way` in
-//! edits.rs, which checks a four-hour span, so it isn't said again here.
+//! A span "of any length" is a clip (core clips.rs, `check_span`; CHANGELOG.md
+//! 0.7.0, "Clips can be any length."): that is
+//! `every_span_is_checked_the_same_way` in edits.rs, which checks a four-hour
+//! span, so it isn't said again here.
 
 use super::*;
 use crate::testkit::media::Video;
@@ -23,7 +24,8 @@ fn numbered(count: usize) -> Vec<Word> {
 }
 
 /// A clip's title is "the first words said in it", at most `TITLE_WORDS`
-/// (eight), "or failing that where it starts" (core clips.rs:18 and :21).
+/// (eight), "or failing that where it starts" (core clips.rs, `TITLE_WORDS`
+/// and `title`).
 #[test]
 fn a_clip_is_titled_with_its_first_eight_words_and_an_ellipsis_past_them() {
     assert_eq!(title(&said(&["The", "Eagle", "has", "landed."]), 0.0), "The Eagle has landed.");
@@ -32,7 +34,7 @@ fn a_clip_is_titled_with_its_first_eight_words_and_an_ellipsis_past_them() {
     assert_eq!(title(&numbered(10), 0.0), "1 2 3 4 5 6 7 8…");
 }
 
-/// "or failing that where it starts" (core clips.rs:21), as 1:02:03.
+/// "or failing that where it starts" (core clips.rs, `title`), as 1:02:03.
 #[test]
 fn a_clip_with_nothing_said_is_titled_clip_at_where_it_starts() {
     assert_eq!(title(&[], 3723.4), "Clip at 1:02:03");
@@ -40,8 +42,8 @@ fn a_clip_with_nothing_said_is_titled_clip_at_where_it_starts() {
     assert_eq!(title(&[], 0.0), "Clip at 0:00");
 }
 
-/// "A span ... two real times from 0 on, the end after the start" (core
-/// clips.rs:34 and :39).
+/// A span is "two real times from 0 on, the end after the start" (core
+/// clips.rs, `check_span` and `ENDS_BEFORE_START`).
 #[test]
 fn a_span_must_end_after_it_starts_from_zero_on() {
     assert_eq!(check_span(0.0, 0.001, None), Ok(()), "from 0 on");
@@ -61,8 +63,9 @@ fn a_span_must_end_after_it_starts_from_zero_on() {
     }
 }
 
-/// "starting before the video ends" (core clips.rs:36 and :39); "an end past
-/// the video's is cut there by whoever keeps the span".
+/// "starting before the video ends" (core clips.rs, `check_span` and
+/// `PAST_THE_END`); "an end past the video's is cut there by whoever keeps the
+/// span".
 #[test]
 fn a_span_starting_at_or_past_the_video_s_end_is_refused() {
     assert_eq!(check_span(10.0, 12.0, Some(10.0)), Err(PAST_THE_END));
@@ -71,7 +74,7 @@ fn a_span_starting_at_or_past_the_video_s_end_is_refused() {
     assert_eq!(check_span(11.0, 12.0, None), Ok(()), "no length known, none to be past");
 }
 
-/// "trimmed, at most 200 characters" (core clips.rs:55).
+/// "trimmed, at most 200 characters" (core clips.rs, `written_title`).
 #[test]
 fn a_written_title_is_trimmed_and_cut_at_200_characters() {
     assert_eq!(written_title("  The landing \n").as_deref(), Some("The landing"));
@@ -79,7 +82,7 @@ fn a_written_title_is_trimmed_and_cut_at_200_characters() {
     assert_eq!(written_title(&"x".repeat(200)).map(|t| t.len()), Some(200));
 }
 
-/// "None if nothing's left" (core clips.rs:56).
+/// "None if nothing's left" (core clips.rs, `written_title`).
 #[test]
 fn a_written_title_of_only_spaces_is_none() {
     assert_eq!(written_title(" \t \n"), None);
@@ -118,7 +121,8 @@ fn a_date_not_written_as_iso_8601_is_left_out_of_the_name() {
     }
 }
 
-/// "the hours padded so a VOD's clips sort in order" (core clips.rs:68).
+/// "the hours padded so a VOD's clips sort in order" (core clips.rs,
+/// `file_stamp`).
 #[test]
 fn a_vod_s_clips_sort_in_time_order_by_name() {
     let starts = [0.0, 0.5, 9.0, 9.5, 10.0, 59.999, 60.0, 600.0, 3599.0, 3600.0, 36_000.0, 86_399.0];
@@ -128,7 +132,8 @@ fn a_vod_s_clips_sort_in_time_order_by_name() {
     assert_eq!(names, sorted);
 }
 
-/// "to the millisecond (frames apart up to 1000 fps)" (core clips.rs:68).
+/// "to the millisecond (frames apart up to 1000 fps)" (core clips.rs,
+/// `file_stamp`).
 #[test]
 fn clips_a_frame_apart_at_480_fps_have_different_names() {
     for fps in [24.0, 30.0, 60.0, 120.0, 240.0, 480.0, 1000.0] {
@@ -141,8 +146,9 @@ fn clips_a_frame_apart_at_480_fps_have_different_names() {
 }
 
 /// "made safe for every system's file names (Windows' being the strictest)"
-/// (core clips.rs:191), and "Windows refuses names ending in a dot or space,
-/// and device names, with any extension" (the comment at :212).
+/// (core clips.rs, `safe_name`), and "Windows refuses names ending in a dot
+/// or space, and device names, with any extension" (the comment in
+/// `safe_name`).
 #[test]
 fn a_name_is_safe_on_every_system() {
     assert_eq!(safe_name("Day 3: the \"big\" raid?"), "Day 3 the big raid");
@@ -154,7 +160,7 @@ fn a_name_is_safe_on_every_system() {
     assert_eq!(safe_name("Raid.x"), "Raid.x", "a dot inside stays");
 }
 
-/// "(no `%`)" for "yt-dlp's output templates" (core clips.rs:191).
+/// "(no `%`)" for "yt-dlp's output templates" (core clips.rs, `safe_name`).
 #[test]
 fn a_name_has_no_percent_sign_for_yt_dlp_s_templates() {
     assert_eq!(safe_name("100% hype"), "100 hype");
@@ -163,7 +169,7 @@ fn a_name_has_no_percent_sign_for_yt_dlp_s_templates() {
 }
 
 /// "Square brackets become round ones: a kept video's name ends with its
-/// VOD's id in square brackets" (core clips.rs:193).
+/// VOD's id in square brackets" (core clips.rs, `safe_name`).
 #[test]
 fn square_brackets_in_a_title_become_round_ones() {
     assert_eq!(safe_name("Day [3]"), "Day (3)");
@@ -171,7 +177,7 @@ fn square_brackets_in_a_title_become_round_ones() {
 }
 
 /// "shortened" to `MAX_NAME`, 100 bytes, "a character can take four"
-/// (core clips.rs:188 and :206).
+/// (core clips.rs, `MAX_NAME` and the comment in `safe_name`).
 #[test]
 fn a_long_title_is_cut_to_100_bytes_on_a_character_s_edge() {
     assert_eq!(safe_name(&"x".repeat(200)), "x".repeat(100));
@@ -181,8 +187,8 @@ fn a_long_title_is_cut_to_100_bytes_on_a_character_s_edge() {
     assert_eq!(name.len(), 100 + " 00h00m00.000s-00h00m01.000s.mp4".len(), "the range keeps its room");
 }
 
-/// "Windows refuses ... device names, with any extension" (core
-/// clips.rs:212); a title with nothing safe left is "Clip".
+/// "Windows refuses ... device names, with any extension" (the comment in
+/// core clips.rs `safe_name`); a title with nothing safe left is "Clip".
 #[test]
 fn a_title_with_nothing_safe_left_or_a_device_name_is_named_clip() {
     for nothing in ["", "   ", "...", "???", "<>:\"/\\|?*%", ". ."] {
@@ -198,8 +204,8 @@ fn a_title_with_nothing_safe_left_or_a_device_name_is_named_clip() {
 }
 
 /// "The file extension of a clip (or rendered edit) in `format`: sound alone
-/// is M4A (AAC) or WAV (PCM)" (core clips.rs:107); CHANGELOG.md 0.4.0, "Clips
-/// and edits can be made as MOV".
+/// is M4A (AAC) or WAV (PCM)" (core clips.rs, `extension`); CHANGELOG.md
+/// 0.4.0, "Clips and edits can be made as MOV".
 #[test]
 fn a_clip_with_a_picture_is_mp4_or_mov_and_sound_alone_m4a_or_wav() {
     assert_eq!(extension(false, ClipFormat::Mp4), "mp4");
@@ -217,7 +223,7 @@ fn a_clip_with_a_picture_is_mp4_or_mov_and_sound_alone_m4a_or_wav() {
 }
 
 /// "`name` in `dir`, or with " (2)", " (3)"… before its extension if taken"
-/// (core clips.rs:224).
+/// (core clips.rs, `unique_path`).
 #[test]
 fn a_name_taken_gets_the_next_free_number() {
     let dir = crate::TempDir::new("clip-names");
@@ -234,12 +240,13 @@ fn encoding(codec: ClipCodec, quality: ClipQuality) -> ClipEncoding {
     ClipEncoding { codec, quality }
 }
 
-/// "A codec or quality changed in Settings makes a file made otherwise out
-/// of date, as a change of format does" (core clips.rs:118, `made_as`).
-/// The 0.7.2 bug, "changing the encoding and remaking a clip from the same
-/// slice does nothing" (0.7.2.md, "The owner's walkthrough", Fix before the
-/// tag, walk-clips), was fixed in 8896230 ("A clip is made again after a
-/// change of codec or quality"); this is its core half.
+/// A file is as wanted when it "was made as clips are made now (`now`): in
+/// its format and, with a picture, its codec and quality" (core clips.rs,
+/// `made_as`), so a codec or quality changed in Settings makes a file made
+/// otherwise out of date, as a change of format does. In 0.7.2, changing the
+/// encoding and remaking a clip from the same slice did nothing; 8896230 ("A
+/// clip is made again after a change of codec or quality") fixed it, and this
+/// is its core half.
 #[test]
 fn a_file_is_as_wanted_only_in_its_format_codec_and_quality() {
     use ClipCodec::*;
@@ -259,8 +266,8 @@ fn a_file_is_as_wanted_only_in_its_format_codec_and_quality() {
 }
 
 /// "else as a file of its format was made before that was (`Settings::
-/// clip_encoding`)" (core clips.rs:118): an MP4 as H.264 Standard, a MOV as
-/// DNxHR Proxy.
+/// clip_encoding`)" (core clips.rs, `made_as`): an MP4 as H.264 Standard, a
+/// MOV as DNxHR Proxy.
 #[test]
 fn a_file_from_before_codecs_were_recorded_reads_as_its_format_was_made_then() {
     use ClipCodec::*;
@@ -275,8 +282,8 @@ fn a_file_from_before_codecs_were_recorded_reads_as_its_format_was_made_then() {
     assert!(!made_as(mp4, None, encoding(Dnxhr, Proxy)), "a MOV is wanted");
 }
 
-/// "Sound alone is the same in every codec of its format" (core
-/// clips.rs:121).
+/// "Sound alone is the same in every codec of its format" (core clips.rs,
+/// `made_as`).
 #[test]
 fn sound_alone_is_as_wanted_in_any_codec_of_its_format() {
     use ClipCodec::*;
@@ -299,11 +306,11 @@ fn sound_alone_is_as_wanted_in_any_codec_of_its_format() {
     assert!(!made_as(wav, None, encoding(H264, Standard)), "sound alone of the other format is not as wanted");
 }
 
-/// What each codec and quality asks ffmpeg for: "the encoder and the one
-/// setting that makes the step, and the container and sound" (core
-/// clips.rs:136; plans/clip-encodings.md, "The plan": CRF 23/18/14 for H.264,
-/// 26/22/18 for H.265, the DNxHR and ProRes profiles; CHANGELOG.md 0.7.2,
-/// "Clips come in more formats.").
+/// What each codec and quality asks ffmpeg for: the encoder and the one
+/// setting that makes the step, and the container and sound (core clips.rs,
+/// `output_args`). Decided: CRF 23/18/14 for H.264, 26/22/18 for H.265, and
+/// the DNxHR and ProRes profiles (CHANGELOG.md 0.7.2, "Clips come in more
+/// formats.").
 #[test]
 fn each_codec_and_quality_asks_ffmpeg_for_its_encoder_and_step() {
     use ClipCodec::*;
@@ -338,8 +345,8 @@ fn each_codec_and_quality_asks_ffmpeg_for_its_encoder_and_step() {
     assert_eq!(args(Prores, Proxy, false), "-map_metadata -1 -map_chapters -1 -c:a pcm_s16le -f wav");
 }
 
-/// "hvc1: QuickTime and Final Cut refuse H.265 tagged otherwise" (core
-/// clips.rs:161; plans/clip-encodings.md, "The plan").
+/// "hvc1: QuickTime and Final Cut refuse H.265 tagged otherwise" (the comment
+/// in core clips.rs `output_args`).
 #[test]
 fn h265_is_tagged_hvc1_for_apple_s_players() {
     use ClipCodec::*;
@@ -412,8 +419,8 @@ impl Real {
 }
 
 /// "H.264 and H.265 have a keyframe a second, so editors seek them quickly"
-/// (core clips.rs:4 and :138). Asked of ffmpeg for each, and read back from
-/// the real one's file.
+/// (core `clips.rs`'s module doc and `output_args`). Asked of ffmpeg for
+/// each, and read back from the real one's file.
 #[test]
 fn h264_and_h265_have_a_keyframe_every_second() {
     use ClipCodec::*;
@@ -444,7 +451,8 @@ fn h264_and_h265_have_a_keyframe_every_second() {
 }
 
 /// "None of the source's tags or chapters: a phone's recording carries where
-/// it was shot, a recorder's the account's name" (core clips.rs:143).
+/// it was shot, a recorder's the account's name" (the comment in core
+/// clips.rs `output_args`).
 #[test]
 fn a_clip_keeps_none_of_its_source_s_tags_or_chapters() {
     let start = "-map_metadata -1 -map_chapters -1 ";
@@ -467,7 +475,7 @@ fn a_clip_keeps_none_of_its_source_s_tags_or_chapters() {
 }
 
 /// "video at most `height` tall, the best there is; else the smallest taller
-/// one ...; only then audio alone" (core clips.rs:234).
+/// one ...; only then audio alone" (core clips.rs, `selector`).
 #[test]
 fn a_section_is_video_at_most_the_height_asked_else_the_smallest_taller_then_sound() {
     let s = selector(720);
@@ -530,8 +538,8 @@ impl Cuts {
     }
 }
 
-/// "they start and end on the exact frame asked for" (core clips.rs:1), cut
-/// from `source` (core clips.rs:251).
+/// "they start and end on the exact frame asked for" (core `clips.rs`'s
+/// module doc), cut from `source` (core clips.rs, `cut`).
 #[test]
 fn a_cut_is_exactly_its_stretch_of_the_source() {
     let cuts = Cuts::new("cut-exact");
@@ -547,7 +555,7 @@ fn a_cut_is_exactly_its_stretch_of_the_source() {
 
 /// "Cuts are at frames' times: half a millisecond early, so neither rounding
 /// nor a container's time base puts the first frame before the seek point
-/// (and drops it)" (the comment at core clips.rs:269).
+/// (and drops it)" (the comment in core clips.rs `cut`).
 #[test]
 fn a_cut_seeks_half_a_millisecond_early_so_its_first_frame_is_kept() {
     let cuts = Cuts::new("cut-early");
@@ -560,7 +568,7 @@ fn a_cut_seeks_half_a_millisecond_early_so_its_first_frame_is_kept() {
     assert_eq!(Media::read(&out).unwrap().cut_from.unwrap().1, 0.0, "never before the start of the source");
 }
 
-/// "replacing it, only once the new one is whole" (core clips.rs:251).
+/// "replacing it, only once the new one is whole" (core clips.rs, `cut`).
 #[test]
 fn a_cut_replaces_its_file_only_once_the_new_one_is_whole() {
     let cuts = Cuts::new("cut-replaces");
@@ -576,7 +584,7 @@ fn a_cut_replaces_its_file_only_once_the_new_one_is_whole() {
 }
 
 /// A cut that fails says "ffmpeg couldn't make the clip: " and ffmpeg's last
-/// lines (core clips.rs:251, `tools::encode`), and leaves no part file.
+/// lines (core clips.rs, `cut`; `tools::encode`), and leaves no part file.
 #[test]
 fn a_cut_that_fails_leaves_no_part_file_and_says_ffmpeg_s_reason() {
     let cuts = Cuts::new("cut-fails");
@@ -594,8 +602,8 @@ fn a_cut_that_fails_leaves_no_part_file_and_says_ffmpeg_s_reason() {
     assert!(cuts.left_in_clips().is_empty());
 }
 
-/// A stop partway "leaves nothing behind" (core clips.rs:251; `crate::
-/// is_canceled`). Stopped while ffmpeg is held halfway.
+/// A stop partway leaves nothing behind (core clips.rs, `cut`;
+/// `crate::is_canceled`). Stopped while ffmpeg is held halfway.
 #[test]
 fn a_cut_stopped_partway_leaves_nothing_behind() {
     let cuts = Cuts::new("cut-stopped");
@@ -615,7 +623,7 @@ fn a_cut_stopped_partway_leaves_nothing_behind() {
     assert!(cuts.left_in_clips().is_empty(), "{:?}", cuts.left_in_clips());
 }
 
-/// "reporting progress from 0 to 1" (core clips.rs:251).
+/// "reporting progress from 0 to 1" (core clips.rs, `cut`).
 #[test]
 fn a_cut_reports_progress_from_0_to_1() {
     let cuts = Cuts::new("cut-progress");
@@ -629,7 +637,7 @@ fn a_cut_reports_progress_from_0_to_1() {
 }
 
 /// "Sound alone (`audio_only`, and cover art is left out) makes an M4A or a
-/// WAV" (core clips.rs:251).
+/// WAV" (core clips.rs, `cut`).
 #[test]
 fn a_cut_of_sound_alone_has_no_picture_and_no_cover_art() {
     let cuts = Cuts::new("cut-sound");
@@ -648,7 +656,7 @@ fn a_cut_of_sound_alone_has_no_picture_and_no_cover_art() {
 }
 
 /// "Every picture's sides must be even (4:2:0 and 4:2:2 halve them): `cut`
-/// ... make them so" (core clips.rs:136). The real ffmpeg's is
+/// ... make them so" (core clips.rs, `output_args`). The real ffmpeg's is
 /// `each_codec_is_read_back_by_ffprobe_as_it_was_asked`.
 #[test]
 fn a_picture_s_odd_sides_are_made_even() {
@@ -661,8 +669,8 @@ fn a_picture_s_odd_sides_are_made_even() {
     assert_eq!((video.width, video.height), (320, 180));
 }
 
-/// "A clip has to end after it starts" (core clips.rs:251 and :34): nothing
-/// is made.
+/// "A clip has to end after it starts" (core clips.rs, `cut` and
+/// `ENDS_BEFORE_START`): nothing is made.
 #[test]
 fn a_cut_that_ends_before_it_starts_is_refused() {
     let cuts = Cuts::new("cut-refused");
@@ -675,8 +683,9 @@ fn a_cut_that_ends_before_it_starts_is_refused() {
 }
 
 /// "Copies `source`'s picture and sound ... into an MP4 at `out` as they are
-/// (nothing encoded again ...)" (core clips.rs:295). It is the kept video's
-/// (desktop videos.rs): see the pilot plan's unstated item 9.
+/// (nothing encoded again ...)" (core clips.rs, `remux`). It is the kept
+/// video's (desktop videos.rs), not a clip's, so it may belong with the
+/// videos' tests.
 #[test]
 fn a_remux_copies_picture_and_sound_into_an_mp4_as_they_are() {
     let cuts = Cuts::new("remux");
@@ -704,7 +713,7 @@ fn a_remux_copies_picture_and_sound_into_an_mp4_as_they_are() {
 }
 
 /// "A small picture of `clip`'s first frame, as a PNG at `out`" (core
-/// clips.rs:323).
+/// clips.rs, `thumbnail`).
 #[test]
 fn a_thumbnail_is_a_png_of_the_clip_s_first_frame() {
     let cuts = Cuts::new("thumbnail");
@@ -723,9 +732,9 @@ fn a_thumbnail_is_a_png_of_the_clip_s_first_frame() {
     assert!(fs::read(&real_png).unwrap().starts_with(b"\x89PNG"));
 }
 
-/// The fake against the real ffmpeg (testing.md, "Fakes, not mocks"): a cut
-/// is as long as asked, H.264 and AAC, whole, with its progress to 1; sound
-/// alone is sound alone; a stop leaves nothing behind; MOV is DNxHR and PCM.
+/// The fake against the real ffmpeg: a cut is as long as asked, H.264 and
+/// AAC, whole, with its progress to 1; sound alone is sound alone; a stop
+/// leaves nothing behind; MOV is DNxHR and PCM.
 #[test]
 fn a_real_ffmpeg_cuts_as_the_fake_does() {
     let Some(real) = Real::find() else { return };

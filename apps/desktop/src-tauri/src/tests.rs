@@ -16,7 +16,7 @@ fn webview_args_keep_wrys_and_add_the_drivers() {
 
 /// The policy built in lets pictures come from no server on this
 /// computer; the image server the tests name, and only it, is let in
-/// (lib.rs:171, `context`: "the page's policy also letting pictures come
+/// (lib.rs `context`: "the page's policy also letting pictures come
 /// from the image server the end-to-end tests name, on this computer").
 #[test]
 fn pictures_come_from_this_computer_only_from_the_tests_image_server() {

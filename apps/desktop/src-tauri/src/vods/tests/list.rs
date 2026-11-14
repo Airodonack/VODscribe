@@ -46,7 +46,7 @@ fn ask(app: &TestApp, id: i64, start: f64, end: Option<f64>) -> Value {
 }
 
 /// The library's list, VODs and edits, in its order
-/// (vods.rs:338, `library_order`'s doc comment).
+/// (vods.rs `library_order`'s doc comment).
 #[test]
 fn the_library_lists_vods_and_edits_in_its_order() {
     let app = TestApp::new();
@@ -59,8 +59,9 @@ fn the_library_lists_vods_and_edits_in_its_order() {
 }
 
 /// The order the library is put in is the order it is kept in
-/// (vods.rs:344, "Puts the library's list, VODs and edits, in the order of
-/// `items`"; db.rs:349, V5: "the library's order, which the user can rearrange").
+/// (vods.rs `reorder_library`: "Puts the library's list, VODs and edits, in
+/// the order of `items`"; db.rs `MIGRATE_V5`: "the library's order, which
+/// the user can rearrange").
 #[test]
 fn the_order_put_is_the_order_kept() {
     let app = TestApp::new();
@@ -78,7 +79,8 @@ fn the_order_put_is_the_order_kept() {
 }
 
 /// The order the library is put in lasts after a restart
-/// (vods.rs:344; db.rs:349, V5: "the library's order, which the user can rearrange").
+/// (vods.rs `reorder_library`; db.rs `MIGRATE_V5`: "the library's order,
+/// which the user can rearrange").
 #[test]
 fn the_order_lasts_after_a_restart() {
     let app = TestApp::new();
@@ -93,7 +95,7 @@ fn the_order_lasts_after_a_restart() {
 }
 
 /// A VOD taken out of the list but used by an edit isn't listed, and the edit
-/// keeps its piece (vods.rs:375: "Takes VOD `id` out of the library's list …
+/// keeps its piece (vods.rs `delete_vod`: "Takes VOD `id` out of the library's list …
 /// What other clips use of it stays, a source only"; CHANGELOG.md 0.5.0:
 /// "Removing a VOD that an edit uses leaves the edit's pieces of it where they are").
 #[test]
@@ -165,8 +167,8 @@ fn a_vod_s_row_says_how_much_is_transcribed() {
 /// Requests the app was in the middle of when it quit are waiting again after
 /// a restart, and taken up: a download that was under way is made again, and a
 /// transcription that was under way waits for the worker as one asked for
-/// (db.rs `requeue_interrupted`; its doc: "A quit mid-stage: each VOD goes back
-/// to wait for the stage it was in").
+/// (core stretches.rs `Db::requeue_interrupted`: "Returns requests left
+/// mid-stage by a crash or quit to that stage's queue").
 #[test]
 fn interrupted_requests_are_waiting_again_after_a_restart() {
     let app = TestApp::new();
@@ -194,7 +196,7 @@ fn interrupted_requests_are_waiting_again_after_a_restart() {
 /// downloader, which a link's download needs, a link asked for first waits,
 /// and a file asked for after it is taken first (worker.rs `next_job`:
 /// "Without the video downloader, only local files can be fetched; online
-/// VODs wait"; db.rs `next_stretch`, its `local_only`; core's
+/// VODs wait"; core stretches.rs `Db::next_stretch`, its `local_only`; core's
 /// `local_files_queue_separately`, moved up here).
 #[test]
 fn a_file_vod_waits_in_its_own_queue() {

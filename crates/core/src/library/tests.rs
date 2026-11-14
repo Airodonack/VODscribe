@@ -80,7 +80,8 @@ fn vod_in(db: &Db, name: &str) -> i64 {
 
 /// A kept video recorded where 0.7.1 put it, in the library's folder for
 /// them: renamed to where it's built, whatever case the path was written in.
-/// (0.7.2 Fixes: "A moved library finds its files.", library.rs:1.)
+/// (0.7.2 Fixes: "A moved library finds its files."; `library.rs`'s module
+/// doc.)
 #[test]
 fn a_kept_video_recorded_before_072_goes_where_it_is_built() {
     let (_root, paths) = new_library("settle-video");
@@ -99,7 +100,7 @@ fn a_kept_video_recorded_before_072_goes_where_it_is_built() {
 
 /// A VOD's downloaded audio recorded where 0.7.1 put it: its extension
 /// recorded, its path the one it's built at (0.7.2 Fixes: "A moved library
-/// finds its files.", library.rs:5).
+/// finds its files."; `library.rs`'s module doc).
 #[test]
 fn a_vods_audio_recorded_before_072_goes_where_it_is_built() {
     let (_root, paths) = new_library("settle-audio");
@@ -114,9 +115,9 @@ fn a_vods_audio_recorded_before_072_goes_where_it_is_built() {
 }
 
 /// A file received from another app's drop, recorded where 0.7.1 put it
-/// (0.7.2 Fixes: "A moved library finds its files.", library.rs:5): it's
-/// the library's own, so it moves to where it's built, and stays the VOD's
-/// received file and its audio.
+/// (0.7.2 Fixes: "A moved library finds its files."; `library.rs`'s module
+/// doc): it's the library's own, so it moves to where it's built, and stays
+/// the VOD's received file and its audio.
 #[test]
 fn a_received_file_recorded_before_072_goes_where_it_is_built() {
     let (_root, paths) = new_library("settle-received");
@@ -138,7 +139,7 @@ fn a_received_file_recorded_before_072_goes_where_it_is_built() {
 
 /// A section of a VOD (a transcribed stretch's audio) recorded where 0.7.1
 /// put it, in the work folder (0.7.2 Fixes: "A moved library finds its
-/// files.", library.rs:5).
+/// files."; `library.rs`'s module doc).
 #[test]
 fn a_section_recorded_before_072_goes_where_it_is_built() {
     let (_root, paths) = new_library("settle-section");
@@ -159,7 +160,7 @@ fn a_section_recorded_before_072_goes_where_it_is_built() {
 /// A clip's and an edit's file, as 0.7.1 made them in the Videos folder,
 /// named for their titles: each is its file at the id's name in the
 /// library, and still ready (0.7.2 Fixes: "A moved library finds its
-/// files.", library.rs:6).
+/// files."; `library.rs`'s module doc).
 #[test]
 fn a_clips_or_edits_file_recorded_before_072_goes_where_it_is_built() {
     let (root, paths) = new_library("settle-clip-edit");
@@ -190,7 +191,7 @@ fn a_clips_or_edits_file_recorded_before_072_goes_where_it_is_built() {
 }
 
 /// The old columns keep the full path of each file where it's built, so
-/// 0.7.1, opened on this library, finds it (library.rs:12).
+/// 0.7.1, opened on this library, finds it (`library.rs`'s module doc).
 #[test]
 fn a_settled_rows_old_column_names_its_new_place_for_071() {
     let (root, paths) = new_library("settle-old-columns");
@@ -220,7 +221,7 @@ fn a_settled_rows_old_column_names_its_new_place_for_071() {
 /// What 0.7.1 records or forgets after it's gone back to is taken in at the
 /// next start: a kept video it recorded under its own name is moved again,
 /// recorded where it went, and a clip file it deleted is forgotten; a row
-/// done before stays as it is (library.rs:16).
+/// done before stays as it is (`library.rs`'s module doc).
 #[test]
 fn a_file_071_recorded_after_going_back_is_moved_again() {
     let (_root, paths) = new_library("settle-back");
@@ -256,7 +257,8 @@ fn a_file_071_recorded_after_going_back_is_moved_again() {
 }
 
 /// A crash between a file's move and its row's change leaves the file
-/// moved and the row as it was: the next start finishes it (library.rs:18).
+/// moved and the row as it was: the next start finishes it (`library.rs`'s
+/// module doc).
 #[test]
 fn a_move_cut_short_is_finished_at_the_next_start() {
     let (_root, paths) = new_library("settle-crash");
@@ -277,7 +279,7 @@ fn a_move_cut_short_is_finished_at_the_next_start() {
 }
 
 /// A link a crash cut short (`<id>.settling`) goes at the next start
-/// (library.rs:226).
+/// (library.rs, `remove_leftovers`).
 #[test]
 fn a_link_a_crash_cut_short_goes_at_the_next_start() {
     let (_root, paths) = new_library("settling");
@@ -292,7 +294,7 @@ fn a_link_a_crash_cut_short_goes_at_the_next_start() {
 }
 
 /// A file in the library's own folders is renamed to where it goes (the
-/// same disk): moved, not copied (library.rs:25).
+/// same disk): moved, not copied (`library.rs`'s module doc).
 #[test]
 fn a_file_inside_the_library_is_renamed() {
     let (_root, paths) = new_library("settle-rename");
@@ -313,7 +315,7 @@ fn a_file_inside_the_library_is_renamed() {
 
 /// A clip 0.7.1 made in its folder (the Videos folder) is linked, the same
 /// file under a second name, and the original stays for whoever uses it, an
-/// editor's project (library.rs:26).
+/// editor's project (`library.rs`'s module doc).
 #[test]
 fn a_clip_in_071s_folder_is_linked_and_the_original_stays_for_its_editor() {
     let (root, paths) = new_library("settle-link");
@@ -337,7 +339,8 @@ fn a_clip_in_071s_folder_is_linked_and_the_original_stays_for_its_editor() {
 /// A clip 0.7.1 made in the Videos folder on another disk can't be
 /// linked in: copying them all would hold up the first start, so the
 /// row stays as 0.7.1 wrote it and the clip is read from there; the
-/// file stays when the clip goes (`own_file` in the app) (library.rs:29).
+/// file stays when the clip goes (`own_file` in the app) (`library.rs`'s
+/// module doc).
 #[test]
 fn a_clip_on_another_disk_is_read_where_071_made_it() {
     let (root, paths) = new_library("settle-other-disk");
@@ -365,7 +368,8 @@ fn a_clip_on_another_disk_is_read_where_071_made_it() {
 
 /// 0.7.1, gone back to, makes a clip that was handed out again: its new
 /// file in the Videos folder, the old one left at clips/<id>.mp4 for the
-/// app that took it. Forward again, the clip is its new file (library.rs:16).
+/// app that took it. Forward again, the clip is its new file (`library.rs`'s
+/// module doc).
 #[test]
 fn a_clip_made_again_by_071_is_its_new_file() {
     let (root, paths) = new_library("settle-stale");
@@ -400,7 +404,7 @@ fn a_clip_made_again_by_071_is_its_new_file() {
 /// The point of it all: a library copied to another folder (another
 /// computer's, a renamed home folder) finds every file of its own, those
 /// recorded by 0.7.1 too, though the folder they were in is gone
-/// (library.rs:32).
+/// (`library.rs`'s module doc).
 #[test]
 fn a_library_copied_elsewhere_finds_its_files_in_its_own_folders() {
     let root = crate::TempDir::new("moved");
@@ -448,7 +452,7 @@ fn a_library_copied_elsewhere_finds_its_files_in_its_own_folders() {
 
 /// A 0.7.1 library copied, the original kept: its kept video is the
 /// copy's own file, not a link to the original's beside its own
-/// (library.rs:34).
+/// (`library.rs`'s module doc).
 #[test]
 fn a_copied_library_takes_its_own_copy_over_the_others() {
     let root = crate::TempDir::new("settle-copied");
@@ -470,7 +474,8 @@ fn a_copied_library_takes_its_own_copy_over_the_others() {
 
 /// A clip whose file was deleted outside the app before the upgrade reads
 /// as gone, not as Ready with no file: the clip bar lets it go, as before
-/// (`forget_gone_clips`); a file found nowhere is forgotten (library.rs:36).
+/// (`forget_gone_clips`); a file found nowhere is forgotten (`library.rs`'s
+/// module doc).
 #[test]
 fn a_file_found_nowhere_is_forgotten_and_a_clip_is_left_to_be_seen_gone() {
     let (root, paths) = new_library("settle-gone");
@@ -502,7 +507,8 @@ fn a_file_found_nowhere_is_forgotten_and_a_clip_is_left_to_be_seen_gone() {
 /// A library reached through a link (macOS's temporary folder is under
 /// /var, a link to /private/var; a home folder moved and linked back) is
 /// still the library's folder for a file that isn't there: found nowhere,
-/// it's forgotten in 0.7.1's column too, as in any library (library.rs:36).
+/// it's forgotten in 0.7.1's column too, as in any library (`library.rs`'s
+/// module doc).
 #[cfg(unix)]
 #[test]
 fn a_file_found_nowhere_in_a_library_under_a_link_is_forgotten_in_both_columns() {
@@ -523,7 +529,8 @@ fn a_file_found_nowhere_in_a_library_under_a_link_is_forgotten_in_both_columns()
 /// settle takes files only from the library's own folders and 0.7.1's
 /// clip folder: a row naming another file of the user's, or a network
 /// path (never looked at), is left as it was, the file where it is
-/// ("nothing of the user's is brought into the library", library.rs:40).
+/// ("nothing of the user's is brought into the library", `library.rs`'s
+/// module doc).
 #[test]
 fn a_row_naming_another_folder_is_left_its_path_never_looked_at() {
     let (root, paths) = new_library("settle-elsewhere");
@@ -559,7 +566,7 @@ fn a_row_naming_another_folder_is_left_its_path_never_looked_at() {
 /// a file outside it (`clips/<id>./../../../victim.txt`): read as no file,
 /// or as one where the library builds it, so deleting the clip or the
 /// VOD's files deletes nothing of the user's ("nothing of the user's is
-/// brought into the library", library.rs:40).
+/// brought into the library", `library.rs`'s module doc).
 #[test]
 fn a_crafted_extension_never_names_a_file_outside_the_library() {
     let (root, paths) = new_library("crafted-ext");
@@ -610,7 +617,7 @@ fn a_crafted_extension_never_names_a_file_outside_the_library() {
 }
 
 /// A VOD's file on this computer outside the library stays where it is,
-/// its path kept: the user's own (library.rs:45).
+/// its path kept: the user's own (`library.rs`'s module doc).
 #[test]
 fn a_vods_own_file_outside_the_library_stays_where_it_is() {
     let (root, paths) = new_library("settle-own");
@@ -629,7 +636,7 @@ fn a_vods_own_file_outside_the_library_stays_where_it_is() {
 /// 0.7.1 recorded a VOD's own file, or its kept video, as its audio too.
 /// Such an audio isn't a file of its own to move: the row forgets it (the
 /// audio is known from the file) and the file is left where it is
-/// (library.rs:157).
+/// (library.rs, `own_files` and `step`).
 #[test]
 fn a_vods_audio_that_is_its_own_file_or_kept_video_is_left() {
     let (root, paths) = new_library("settle-audio-own");
@@ -659,7 +666,7 @@ fn a_vods_audio_that_is_its_own_file_or_kept_video_is_left() {
 /// A file received from a drop in a library that has moved: its row names
 /// the folder it was in, which isn't here, and the file is known by the
 /// name of that folder (`media/received`) and its name, found in this
-/// library's own (library.rs:390).
+/// library's own (library.rs, `received`).
 #[test]
 fn a_received_file_of_a_moved_library_is_known_by_its_folders_name() {
     let (root, paths) = new_library("settle-received-moved");
@@ -677,7 +684,7 @@ fn a_received_file_of_a_moved_library_is_known_by_its_folders_name() {
 
 /// A row whose file can't be moved (a disk full) is left to the next start,
 /// and said: `settle` fails saying how many, the other rows are still
-/// done, and the next start moves it (library.rs:167). A folder that
+/// done, and the next start moves it (library.rs, `settle`). A folder that
 /// refuses new names is the disk that refuses.
 #[cfg(unix)]
 #[test]
@@ -721,7 +728,7 @@ fn a_file_that_cannot_be_moved_is_left_to_the_next_start_and_said() {
 /// Paths are inside a folder by whole names, as the filesystem compares
 /// them: not by their start, not in any case on Windows and macOS, and a
 /// network path (`\\server\share`, `//server/share`) is in no local folder
-/// (library.rs:358 and :379).
+/// (library.rs, `named_inside` and `inside`).
 #[test]
 fn inside_is_by_whole_names_and_without_case_on_windows_and_macos_and_a_network_path_is_in_no_folder() {
     let root = crate::TempDir::new("inside");
@@ -749,7 +756,7 @@ fn inside_is_by_whole_names_and_without_case_on_windows_and_macos_and_a_network_
 
 /// The rule of what the app may take or delete is looked at on disk too:
 /// a link inside the folder to a file elsewhere isn't the app's to take
-/// (the doc comment of `may_take`, library.rs:350).
+/// (the doc comment of `may_take` in library.rs).
 #[cfg(unix)]
 #[test]
 fn a_link_inside_the_folder_to_a_file_elsewhere_is_not_the_apps_to_take() {
@@ -764,7 +771,7 @@ fn a_link_inside_the_folder_to_a_file_elsewhere_is_not_the_apps_to_take() {
 
 /// A path with `.` or `..` in it isn't taken, though it would come to a
 /// file inside the folder: it's written as inside only by whole names
-/// (the doc comment of `named_inside`, library.rs:358).
+/// (the doc comment of `named_inside` in library.rs).
 #[test]
 fn a_path_with_dots_in_it_is_not_the_apps_to_take() {
     let root = crate::TempDir::new("may-take-dots");
@@ -775,7 +782,7 @@ fn a_path_with_dots_in_it_is_not_the_apps_to_take() {
 
 /// A row done already (its old column is the path its extension builds) is
 /// left as it is, though its file has since gone: settle forgets only what
-/// 0.7.1 recorded and couldn't find (the module's doc, library.rs:11).
+/// 0.7.1 recorded and couldn't find (`library.rs`'s module doc).
 #[test]
 fn a_row_already_done_is_left_as_it_is_when_its_file_has_gone() {
     let (_root, paths) = new_library("settle-done");
@@ -796,7 +803,7 @@ fn a_row_already_done_is_left_as_it_is_when_its_file_has_gone() {
 
 /// A link in the library's folder to a file elsewhere is never taken into
 /// the library, even when a row names a file of that name: "nothing of the
-/// user's is brought into the library" (library.rs:40).
+/// user's is brought into the library" (`library.rs`'s module doc).
 #[cfg(unix)]
 #[test]
 fn a_link_in_the_library_to_the_users_file_is_not_taken_in() {
@@ -823,7 +830,7 @@ fn a_link_in_the_library_to_the_users_file_is_not_taken_in() {
 /// A file of the user's own that only looks like a moved library's received
 /// one stays where it is, its path kept: it isn't in a `media/received`
 /// folder, or is still there, though the library has a received file of
-/// the same name (library.rs:45 and :390).
+/// the same name (`library.rs`'s module doc and `received`).
 #[test]
 fn a_file_outside_the_library_named_like_a_received_one_stays_where_it_is() {
     let (root, paths) = new_library("settle-not-received");

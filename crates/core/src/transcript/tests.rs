@@ -133,7 +133,7 @@ fn the_words_held_back_start_where_pending_start_says() {
 
 /// The cases the website's demo search is tested against too
 /// (apps/site/src/lib/tauri/search.test.mjs), so the two stay the same
-/// (crates/core/tests/phrase-search.json; its specs are 3A2's).
+/// (crates/core/tests/phrase-search.json).
 #[test]
 fn shared_phrase_search_cases() {
     #[derive(serde::Deserialize)]

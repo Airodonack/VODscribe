@@ -24,7 +24,7 @@ Test a spec: something the app promises its user. Find it in the changelog, an e
 fn a_clip_canceled_while_it_is_made_says_so() {
 ```
 
-The doc comment cites where the spec is said. When the code does something else, the test still states the spec and fails; report it. Behaviour that no spec states isn't tested: ask the owner about it.
+The doc comment cites where the spec is said: a changelog line, an e2e scenario, or a file and its symbol (clips.rs, `cut`); never a line number or a private plan. A decision is stated in plain words. When the code does something else, the test still states the spec and fails; report it. Behaviour that no spec states isn't tested: raise it.
 
 Tests go in a file of their own beside the module, never in a `mod tests { … }` inside it. For `clips.rs`, the module ends with
 

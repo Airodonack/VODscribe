@@ -146,10 +146,9 @@ fn the_library_and_settings_are_in_root_and_what_downloads_again_in_local() {
 
 /// Each kind of file is where its kind and its row's id build it: nothing
 /// stores a path, so a library copied to another folder finds them all
-/// (db.rs's "each is built from its kind and its row's id (`Paths`)";
-/// plans/0.7.2.md item 14, owner, 2026-11-05: "paths are not even stored
-/// but constructed in code"). A place that changes is a migration, so the
-/// places are pinned here.
+/// (db.rs `MIGRATE_BUILT_PATHS`: "each is built from its kind and its row's
+/// id (`Paths`)"). Decided for 0.7.2: paths aren't stored but built in code.
+/// A place that changes is a migration, so the places are pinned here.
 #[test]
 fn each_kind_of_file_has_its_place_built_from_its_rows_id() {
     let p = split();
@@ -190,7 +189,7 @@ fn each_kind_of_file_has_its_place_built_from_its_rows_id() {
 /// Every make of a clip writes a file of its own, so none rewrites the one
 /// another app may have been given; make 0 is the one file a clip had
 /// before (lib.rs, `clip_make`: "Make 0 is the one file a clip had
-/// before"; plans/clips-pilot.md "Decided" 4b).
+/// before").
 #[test]
 fn every_make_of_a_clip_writes_a_file_of_its_own_and_make_0_is_the_one_from_before() {
     let p = split();
@@ -245,11 +244,11 @@ fn a_files_storyboard_name_is_the_same_in_every_version_and_on_every_system() {
 }
 
 /// Each writer that records a file puts its full path beside the
-/// extension, in the column 0.7.1 reads (db.rs's migration 39: "The old
-/// columns still get the full path written beside the extension, for 0.7.1
-/// opened on this library"; library.rs: "the app's writers keep both columns
-/// the same way"; plans/0.7.2.md line 51: "the agent's alternative keeps
-/// old columns filled with the new full path").
+/// extension, in the column 0.7.1 reads (db.rs `MIGRATE_BUILT_PATHS`, version
+/// 39: "The old columns still get the full path written beside the
+/// extension, for 0.7.1 opened on this library"; `library.rs`'s module doc:
+/// "The app's writers keep both columns the same way"). Decided for 0.7.2:
+/// the old columns stay filled with the new full path.
 #[test]
 fn the_old_columns_get_the_full_path_beside_the_extension_for_071() {
     let lib = Library::new();

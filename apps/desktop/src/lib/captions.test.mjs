@@ -75,7 +75,7 @@ const { captions } = await import("./captions.svelte.ts");
  * A file opened before its transcript exists shows its captions once a part
  * is transcribed, without opening it again (CHANGELOG.md, 0.6.0: "a video
  * file's captions come as soon as a part of it is transcribed, without
- * opening it again"; plans/0.7.4.md, the caption bug).
+ * opening it again").
  */
 test("a VOD opened before it's transcribed gets its captions once it is", async () => {
   const done = captions.watch(1);

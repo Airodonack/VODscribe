@@ -98,11 +98,11 @@ fn file_of(clip: &Clip) -> PathBuf {
 
 // Deleting a clip.
 
-/// A deleted clip's file and picture go (apps/desktop/src-tauri/src/clips.rs:744,
-/// `delete_clip`: "Deletes clip `id`, and its file unless that was dragged
-/// out of the app"; :919, `after_delete`: "its files (`let_go_files`) and
-/// its thumbnail deleted"; CHANGELOG.md, 0.4.0: "Files you made and no
-/// longer use don't pile up").
+/// A deleted clip's file and picture go (apps/desktop/src-tauri/src/clips.rs
+/// `delete_clip`: "Deletes clip `id`, and its file unless that was dragged out
+/// of the app"; `after_delete`: "its files (`let_go_files`) and its thumbnail
+/// deleted"; CHANGELOG.md, 0.4.0: "Files you made and no longer use don't pile
+/// up").
 #[test]
 fn a_deleted_clip_s_file_and_picture_go() {
     let app = TestApp::new();
@@ -116,8 +116,8 @@ fn a_deleted_clip_s_file_and_picture_go() {
     assert!(!picture.exists(), "its picture left");
 }
 
-/// The page hears a deleted clip has gone (clips.rs:919, `after_delete`:
-/// "and the page told").
+/// The page hears a deleted clip has gone (clips.rs `after_delete`: "and the
+/// page told").
 #[test]
 fn the_page_hears_a_deleted_clip_has_gone() {
     let app = TestApp::new();
@@ -145,12 +145,11 @@ fn a_clip_deleted_and_undone_comes_back_as_it_was_and_is_made_again() {
     assert_eq!(app.clip_media(back), media, "not made again as it was");
 }
 
-/// A clip deleted and undone comes back under its own id, so what still
-/// holds that id finds it: the page's selection and Back, which copy, rename
-/// or open the clip by it, and the clip's own history in the editor
-/// (owner, 2026-11-11, plans/clips-pilot.md "Main red after cc7506f":
-/// "undo of a delete brings the clip back under its own old id ... That
-/// keeps every holder's id valid (the page, Back)").
+/// A clip deleted and undone comes back under its own id, so what still holds
+/// that id finds it: the page's selection and Back, which copy, rename or open
+/// the clip by it, and the clip's own history in the editor. Decided: undo of a
+/// delete brings the clip back under its own old id, which keeps every holder's
+/// id valid.
 #[test]
 fn a_clip_deleted_and_undone_comes_back_under_its_own_id() {
     let app = TestApp::new();
@@ -196,12 +195,11 @@ fn a_clip_deleted_undone_redone_and_undone_again_keeps_its_id() {
     all_made(&app, vod.id);
 }
 
-/// A clip whose file was deleted outside the app, deleted and undone while
-/// the window looks for gone files, is made again at a path of its own, so
-/// the look's take, which goes by the path it saw missing, leaves it
-/// (`forget_gone_clips`: "Only those as they were when looked at (not made
-/// again meanwhile)"; plans/clips-pilot.md "Decided" 4b: each make a new
-/// file of its own; review-undo-old-id F1).
+/// A clip whose file was deleted outside the app, deleted and undone while the
+/// window looks for gone files, is made again at a path of its own, so the
+/// look's take, which goes by the path it saw missing, leaves it (the comment
+/// in `forget_gone_clips`: "Only those as they were when looked at (not made
+/// again meanwhile)"). Decided: each make is a new file of its own.
 #[test]
 fn a_clip_brought_back_and_made_again_while_gone_files_are_looked_for_stays() {
     let app = TestApp::new();
@@ -229,10 +227,8 @@ fn a_clip_brought_back_and_made_again_while_gone_files_are_looked_for_stays() {
 }
 
 /// A clip cut from the middle of the clip bar and undone comes back in the
-/// middle, not last (the 0.7.2 bug: CHANGELOG.md, 0.7.2 Fixes: "Undo keeps
-/// the clip bar's order." "… and so did one deleted from there when
-/// undone"; plans/walkthrough-0.7.2.md step 20: "Pick the middle pill,
-/// Ctrl+X (⌘X), Ctrl+Z (⌘Z): it comes back in the middle, not last").
+/// middle, not last (the 0.7.2 bug: CHANGELOG.md, 0.7.2 Fixes: "Undo keeps the
+/// clip bar's order." "… and so did one deleted from there when undone").
 #[test]
 fn a_clip_cut_from_the_middle_of_the_bar_and_undone_comes_back_in_the_middle() {
     let app = TestApp::new();
@@ -247,10 +243,9 @@ fn a_clip_cut_from_the_middle_of_the_bar_and_undone_comes_back_in_the_middle() {
     assert_eq!(bar(&app, vod.id), [(10.0, 20.0), (30.0, 40.0), (50.0, 55.0)]);
 }
 
-/// A clip deleted from the middle of the clip bar stays in the middle
-/// through undo, redo and undo again (CHANGELOG.md, 0.7.2 Fixes: "Undo keeps
-/// the clip bar's order."; plans/walkthrough-0.7.2.md step 20: "it comes back
-/// in the middle, not last").
+/// A clip deleted from the middle of the clip bar stays in the middle through
+/// undo, redo and undo again (CHANGELOG.md, 0.7.2 Fixes: "Undo keeps the clip
+/// bar's order.").
 #[test]
 fn a_clip_deleted_from_the_middle_and_undone_then_redone_and_undone_stays_in_the_middle() {
     let app = TestApp::new();
@@ -269,11 +264,11 @@ fn a_clip_deleted_from_the_middle_and_undone_then_redone_and_undone_stays_in_the
     all_made(&app, vod.id);
 }
 
-/// Several clips deleted at once are one step, which undo brings back
-/// whole, in their places (clips.rs:754, `delete_clips`: "as one change in
-/// each clip bar's history: undone, they all come back"; CHANGELOG.md,
-/// 0.6.0: "Clip and delete several at once."; tests/e2e/scenarios/multi-select.mjs:
-/// "Delete takes both off the clip bar, and one undo brings both back").
+/// Several clips deleted at once are one step, which undo brings back whole, in
+/// their places (clips.rs `delete_clips`: "as one change in each clip bar's
+/// history: undone, they all come back"; CHANGELOG.md, 0.6.0: "Clip and delete
+/// several at once."; tests/e2e/scenarios/multi-select.mjs: "Delete takes both
+/// off the clip bar, and one undo brings both back").
 #[test]
 fn several_clips_deleted_at_once_are_one_step_that_undo_brings_back_whole() {
     let app = TestApp::new();
@@ -291,11 +286,9 @@ fn several_clips_deleted_at_once_are_one_step_that_undo_brings_back_whole() {
     assert!(all_made(&app, vod.id).iter().all(has_file), "not made again");
 }
 
-/// Several clips deleted at once and undone come back in their places on
-/// the clip bar, not after the one left (CHANGELOG.md, 0.7.2 Fixes: "Undo
-/// keeps the clip bar's order." "… and so did one deleted from there when
-/// undone"; plans/walkthrough-0.7.2.md step 20: "it comes back in the
-/// middle, not last").
+/// Several clips deleted at once and undone come back in their places on the
+/// clip bar, not after the one left (CHANGELOG.md, 0.7.2 Fixes: "Undo keeps the
+/// clip bar's order." "… and so did one deleted from there when undone").
 #[test]
 fn several_clips_deleted_at_once_and_undone_come_back_in_their_places() {
     let app = TestApp::new();
@@ -310,9 +303,9 @@ fn several_clips_deleted_at_once_and_undone_come_back_in_their_places() {
     all_made(&app, vod.id);
 }
 
-/// Several clips deleted at once go all or none: one that can't go leaves
-/// every one as it was, made or being made, with no step to undo
-/// (clips.rs:754, `delete_clips`: "All of them go, or none do").
+/// Several clips deleted at once go all or none: one that can't go leaves every
+/// one as it was, made or being made, with no step to undo (clips.rs
+/// `delete_clips`: "All of them go, or none do").
 #[test]
 fn several_clips_deleted_at_once_go_all_or_none() {
     let app = TestApp::new();
@@ -331,10 +324,9 @@ fn several_clips_deleted_at_once_go_all_or_none() {
     assert_eq!(undo(&app, vod.id)["label"], "Clip added", "a step recorded");
 }
 
-/// A clip only dragged out (made for a drag, never on the clip bar) leaves
-/// no step to undo when it's deleted (clips.rs:744, `delete_clip`: "One only
-/// dragged out, not in the clip bar, leaves no step to undo: the bar is as
-/// it was").
+/// A clip only dragged out (made for a drag, never on the clip bar) leaves no
+/// step to undo when it's deleted (clips.rs `delete_clip`: "One only dragged
+/// out, not in the clip bar, leaves no step to undo: the bar is as it was").
 #[test]
 fn a_clip_only_dragged_out_deleted_leaves_no_step_to_undo() {
     let app = TestApp::new();
@@ -347,9 +339,9 @@ fn a_clip_only_dragged_out_deleted_leaves_no_step_to_undo() {
 
 // Deleting a clip still to be made.
 
-/// A clip deleted while its file is being made leaves no file (clips.rs:906,
-/// `remove`: "taking it out of the queue, or stopping its cut"; :530, in
-/// `cut`: "Deleted while it was being cut."; CHANGELOG.md, 0.5.0 Fixes: "A
+/// A clip deleted while its file is being made leaves no file (clips.rs
+/// `remove`: "taking it out of the queue, or stopping its cut"; the comment in
+/// `cut`: "Deleted while it was being cut"; CHANGELOG.md, 0.5.0 Fixes: "A
 /// stretch pulled out of the window with Clip and let go the moment it left
 /// could stay as a clip, with its file").
 #[test]
@@ -368,8 +360,8 @@ fn a_clip_deleted_while_it_is_made_leaves_no_file() {
     assert!(!app.paths().clip_thumb(clip.id).exists(), "its picture left");
 }
 
-/// A clip deleted while it waits its turn is never made (clips.rs:906,
-/// `remove`: "taking it out of the queue").
+/// A clip deleted while it waits its turn is never made (clips.rs `remove`:
+/// "taking it out of the queue").
 #[test]
 fn a_waiting_clip_deleted_is_never_made() {
     let app = TestApp::new();
@@ -388,12 +380,12 @@ fn a_waiting_clip_deleted_is_never_made() {
     assert!(!app.heard("clip").iter().any(cut), "the deleted clip was cut");
 }
 
-/// Several waiting clips deleted at once leave the queue, as one deleted
-/// alone does: what waits its turn after is only the clips there are
-/// (clips.rs:906, `remove`: "taking it out of the queue"; :761, in
-/// `delete_clips`: "as `remove` does for one"; CHANGELOG.md, 0.7.1: "A list
-/// shows what's being made."). Seen in the queue the list of jobs is made
-/// from (`Cutter::listed`), which leaves out clips that are gone.
+/// Several waiting clips deleted at once leave the queue, as one deleted alone
+/// does: what waits its turn after is only the clips there are (clips.rs
+/// `remove`: "taking it out of the queue"; the comment in `delete_clips`: "as
+/// `remove` does for one"; CHANGELOG.md, 0.7.1: "A list shows what's being
+/// made."). Seen in the queue the list of jobs is made from (`Cutter::listed`),
+/// which leaves out clips that are gone.
 #[test]
 fn several_waiting_clips_deleted_at_once_leave_the_queue() {
     let app = TestApp::new();
@@ -434,11 +426,11 @@ fn several_waiting_clips_cut_at_once_leave_the_queue() {
 
 // Show in folder, and the names a clip is handed out by.
 
-/// A clip shown in its folder goes by its VOD's date, title and range
-/// (clips.rs:1322, `drag_name`: "a clip its VOD's date, title and range";
-/// :928, `show_clip`: "under the name it's handed out by"; CHANGELOG.md,
-/// 0.7.2: "Clips now live in the library." "A clip or edit dragged out or
-/// shown in its folder still goes by its title").
+/// A clip shown in its folder goes by its VOD's date, title and range (clips.rs
+/// `drag_name`: "a clip its VOD's date, title and range"; `show_clip`: "under
+/// the name it's handed out by"; CHANGELOG.md, 0.7.2: "Clips now live in the
+/// library." "A clip or edit dragged out or shown in its folder still goes by
+/// its title").
 #[test]
 fn a_clip_shown_in_its_folder_goes_by_its_vod_s_date_title_and_range() {
     let app = TestApp::new();
@@ -449,10 +441,10 @@ fn a_clip_shown_in_its_folder_goes_by_its_vod_s_date_title_and_range() {
     assert_eq!(Media::read(&shown), Some(app.clip_media(&clip)), "not the clip's file");
 }
 
-/// A clip shown in its folder goes by its own file's extension, made as it
-/// was, after the format clips are made in has changed (clips.rs:1322,
-/// `drag_name`: "With its file's extension if it's made, else the one it
-/// will have, made in `format`").
+/// A clip shown in its folder goes by its own file's extension, made as it was,
+/// after the format clips are made in has changed (clips.rs `drag_name`: "With
+/// its file's extension if it's made, else the one it will have, made in
+/// `format`").
 #[test]
 fn a_made_clip_is_shown_with_its_own_file_s_extension() {
     let app = TestApp::new();
@@ -467,8 +459,8 @@ fn a_made_clip_is_shown_with_its_own_file_s_extension() {
 }
 
 /// A clip changed in the editor (a stretch taken out) is shown by its own title
-/// (clips.rs:1322, `drag_name`: "an edit's (or a snippet changed in the
-/// editor) its title").
+/// (clips.rs `drag_name`: "an edit's (or a snippet changed in the editor) its
+/// title").
 #[test]
 fn a_clip_changed_in_the_editor_is_shown_by_its_own_title() {
     let app = TestApp::new();
@@ -481,8 +473,8 @@ fn a_clip_changed_in_the_editor_is_shown_by_its_own_title() {
 }
 
 /// A clip shown twice is shown under the same name while it's the same file
-/// (clips.rs:325, `handed_out`: "One handed out before under that name is
-/// given again while it's still this file").
+/// (clips.rs `handed_out`: "One handed out before under that name is given
+/// again while it's still this file").
 #[test]
 fn a_clip_shown_twice_is_shown_under_the_same_name_while_it_is_the_same_file() {
     let app = TestApp::new();
@@ -494,12 +486,12 @@ fn a_clip_shown_twice_is_shown_under_the_same_name_while_it_is_the_same_file() {
     assert_eq!(names, 1, "a second name made");
 }
 
-/// A clip made again keeps the name it was handed out by, with the file it
-/// had then, for the app that took it; its next hand out gets a name of its
-/// own (clips.rs:325, `handed_out`: "once the clip is made again (a new file)
-/// or retitled, the old name stays as it was, for the editor whose project
-/// uses it, and the next hand out gets a name of its own"; :475, in `cut`:
-/// "those it was handed out by keep the one they had").
+/// A clip made again keeps the name it was handed out by, with the file it had
+/// then, for the app that took it; its next hand out gets a name of its own
+/// (clips.rs `handed_out`: "once the clip is made again (a new file) or
+/// retitled, the old name stays as it was, for the editor whose project uses
+/// it, and the next hand out gets a name of its own"; the comment in `cut`:
+/// "those it was handed out by stay").
 #[test]
 fn a_clip_made_again_keeps_its_old_name_and_picture_for_the_app_that_took_it_and_gets_a_new_name() {
     let app = TestApp::new();
@@ -519,10 +511,10 @@ fn a_clip_made_again_keeps_its_old_name_and_picture_for_the_app_that_took_it_and
     assert_eq!(Media::read(&taken), Some(media), "the name taken changed");
 }
 
-/// A clip handed out takes no more space where the disk allows: a hard
-/// link, not a copy or a symbolic link (clips.rs:325, `handed_out`: "A hard
-/// link, the same file under a second name, where the disk allows (no space
-/// taken); a copy where it doesn't; never a symbolic link").
+/// A clip handed out takes no more space where the disk allows: a hard link,
+/// not a copy or a symbolic link (clips.rs `handed_out`: "A hard link, the same
+/// file under a second name, where the disk allows (no space taken); a copy
+/// where it doesn't; never a symbolic link").
 #[cfg(unix)]
 #[test]
 fn a_clip_handed_out_takes_no_more_space_where_the_disk_allows() {
@@ -536,8 +528,8 @@ fn a_clip_handed_out_takes_no_more_space_where_the_disk_allows() {
     assert_eq!(link.ino(), std::fs::metadata(file_of(&clip)).unwrap().ino(), "a copy");
 }
 
-/// A clip not yet made can't be shown in its folder (clips.rs:936,
-/// `show_clip`: "That clip's file isn't made yet.").
+/// A clip not yet made can't be shown in its folder (clips.rs `show_clip`:
+/// "That clip's file isn't made yet.").
 #[test]
 fn a_clip_not_yet_made_cannot_be_shown_in_its_folder() {
     let app = TestApp::new();
@@ -554,9 +546,8 @@ fn a_clip_not_yet_made_cannot_be_shown_in_its_folder() {
 }
 
 /// A clip shown in its folder keeps that name, and its file, when it goes
-/// (clips.rs:928, `show_clip`: "from there it's the user's to take"; :415,
-/// `let_go_files`: "the names it was handed out by kept if another app took
-/// them").
+/// (clips.rs `show_clip`: "from there it's the user's to take"; `let_go_files`:
+/// "the names it was handed out by kept if another app took them").
 #[test]
 fn a_clip_shown_in_its_folder_keeps_that_name_when_it_goes() {
     let app = TestApp::new();
@@ -569,10 +560,10 @@ fn a_clip_shown_in_its_folder_keeps_that_name_when_it_goes() {
 }
 
 /// A deleted clip keeps every name another app took, of each file it had
-/// (clips.rs:415, `let_go_files`: "the names it was handed out by kept if
-/// another app took them (`handed_out`), as its project may use them";
-/// CHANGELOG.md, 0.7.0 Fixes: "Deleting an edit deletes its clips' files."
-/// "unless you dragged one out of VODscribe").
+/// (clips.rs `let_go_files`: "the names it was handed out by kept if another
+/// app took them (`handed_out`), as its project may use them"; CHANGELOG.md,
+/// 0.7.0 Fixes: "Deleting an edit deletes its clips' files." "unless you
+/// dragged one out of VODscribe").
 #[test]
 fn a_deleted_clip_keeps_the_names_another_app_took() {
     let app = TestApp::new();
@@ -587,9 +578,9 @@ fn a_deleted_clip_keeps_the_names_another_app_took() {
     }
 }
 
-/// A deleted clip nobody took leaves nothing in the clips folder: no name,
-/// no names' folder (clips.rs:415, `let_go_files`: "else deleted with it";
-/// crates/core/src/lib.rs:314, `Paths::clip_names`: "gone with it").
+/// A deleted clip nobody took leaves nothing in the clips folder: no name, no
+/// names' folder (clips.rs `let_go_files`: "else deleted with it";
+/// crates/core/src/lib.rs `Paths::clip_names`: "gone with it").
 #[test]
 fn a_deleted_clip_nobody_took_leaves_no_names_and_no_names_folder() {
     let app = TestApp::new();
@@ -602,7 +593,7 @@ fn a_deleted_clip_nobody_took_leaves_no_names_and_no_names_folder() {
 
 /// A clip whose file is still in 0.7.1's clip folder (it couldn't be linked
 /// into the library) leaves that file there when it goes; its own goes
-/// (clips.rs:392, `own_file`: "not one read from 0.7.1's clip folder
+/// (clips.rs `own_file`: "not one read from 0.7.1's clip folder
 /// (`Paths::old_clips`), which stays there"; CHANGELOG.md, 0.7.2: "Clips now
 /// live in the library." "the ones already in Videos/VODscribe stay there").
 /// At `let_go_files`, below `delete_clip`: a library as 0.7.1 left it can't
@@ -623,13 +614,13 @@ fn a_clip_going_leaves_files_outside_the_library() {
     assert!(!own.exists(), "its own file left");
 }
 
-/// A clip deleted as a drag's receiver asks for its file leaves no name
-/// behind: the ask comes wholly before the delete, which then lets go of the
-/// name it made, or wholly after, and finds the clip gone (clips.rs:1148,
-/// `hand_out_made`: "Named under the library's lock: a delete lets go of the
-/// clip's names under it too (`remove`), so it comes wholly before or
-/// after. Between them, a name linked after the delete had looked for them
-/// stayed, a full-size file that no clip named and nothing removed").
+/// A clip deleted as a drag's receiver asks for its file leaves no name behind:
+/// the ask comes wholly before the delete, which then lets go of the name it
+/// made, or wholly after, and finds the clip gone (clips.rs `hand_out_made`:
+/// "Named under the library's lock: a delete lets go of the clip's names under
+/// it too (`remove`), so it comes wholly before or after. Between them, a name
+/// linked after the delete had looked for them stayed, a full-size file that no
+/// clip named and nothing removed").
 #[test]
 fn a_clip_deleted_as_a_drag_hands_it_out_leaves_no_name_behind() {
     for asked_first in [true, false] {
@@ -667,12 +658,11 @@ fn back_in_the_window(app: &TestApp, bar: Value) {
     app.invoke("forget_gone_clips", bar).unwrap();
 }
 
-/// A clip whose file was deleted outside the app leaves its clip bar
-/// (clips.rs:852, `forget_gone_clips`: "Takes off a clip bar … the clips
-/// whose file was deleted outside the app (in a file manager)"; CHANGELOG.md,
-/// 0.4.1: "A clip whose file you delete outside VODscribe (in a file
-/// manager, say) leaves the clip bar too."; clip.mjs: "back in the window,
-/// its pill goes").
+/// A clip whose file was deleted outside the app leaves its clip bar (clips.rs
+/// `forget_gone_clips`: "Takes off a clip bar … the clips whose file was
+/// deleted outside the app (in a file manager)"; CHANGELOG.md, 0.4.1: "A clip
+/// whose file you delete outside VODscribe (in a file manager, say) leaves the
+/// clip bar too."; clip.mjs: "back in the window, its pill goes").
 #[test]
 fn a_clip_whose_file_was_deleted_outside_leaves_its_bar() {
     let app = TestApp::new();
@@ -685,9 +675,9 @@ fn a_clip_whose_file_was_deleted_outside_leaves_its_bar() {
     assert_eq!(app.heard("clip-removed"), [json!(gone.id)]);
 }
 
-/// Clips on a drive that's away stay (clips.rs:852, `forget_gone_clips`:
-/// "Only where the file's folder is still there: a drive that's away
-/// (unmounted, unplugged) takes none of them").
+/// Clips on a drive that's away stay (clips.rs `forget_gone_clips`: "Only where
+/// the file's folder is still there: a drive that's away (unmounted, unplugged)
+/// takes none of them").
 #[test]
 fn clips_on_a_drive_that_is_away_stay() {
     let app = TestApp::new();
@@ -704,12 +694,12 @@ fn clips_on_a_drive_that_is_away_stay() {
 
 /// A clip whose file went outside the app is a step of its own: undone, it
 /// comes back made again, and the next undo takes back what came before it
-/// (clips.rs:893, in `forget_gone_clips`: "A change of its own in the bar's
-/// history: undone, the clips come back (made again), apart from what was
-/// done before or after"; CHANGELOG.md, 0.5.0 Fixes: "The clip going is now
-/// its own step: undo brings it back (made again), and the next undo takes
-/// back the mark."; clip.mjs: "undone, the clip is made again, and the
-/// chapter added before that goes only with the next undo").
+/// (clips.rs, in `forget_gone_clips`: "A change of its own in the bar's
+/// history: undone, the clips come back (made again), apart from what was done
+/// before or after"; CHANGELOG.md, 0.5.0 Fixes: "The clip going is now its own
+/// step: undo brings it back (made again), and the next undo takes back the
+/// mark."; clip.mjs: "undone, the clip is made again, and the chapter added
+/// before that goes only with the next undo").
 #[test]
 fn a_clip_whose_file_went_is_its_own_step_and_undone_is_made_again() {
     let app = TestApp::new();
@@ -730,10 +720,10 @@ fn a_clip_whose_file_went_is_its_own_step_and_undone_is_made_again() {
     assert_eq!(bar(&app, vod.id), [(10.0, 20.0)], "the clip undone with the chapter");
 }
 
-/// A clip being made again isn't taken for gone, while it's made or waits
-/// its turn: its file not there is no file deleted outside the app
-/// (clips.rs:895, in `forget_gone_clips`: "Only those as they were when
-/// looked at (not made again meanwhile)").
+/// A clip being made again isn't taken for gone, while it's made or waits its
+/// turn: its file not there is no file deleted outside the app (clips.rs, in
+/// `forget_gone_clips`: "Only those as they were when looked at (not made again
+/// meanwhile)").
 #[test]
 fn a_clip_being_made_again_is_not_taken_for_gone() {
     let app = TestApp::new();
@@ -753,11 +743,11 @@ fn a_clip_being_made_again_is_not_taken_for_gone() {
     assert!(all_made(&app, vod.id).iter().all(has_file), "not made again");
 }
 
-/// An edit's clip bar lets go of clips whose files went outside the app, as
-/// a VOD's does (CHANGELOG.md, 0.5.0: "An edit has a clip bar of its own"
-/// "… and leave the bar when their file is deleted outside VODscribe (Ctrl+Z
-/// brings them back), as a VOD's do"; clips.rs:852, `forget_gone_clips`:
-/// "VOD `vod_id`'s, or edit `edit_id`'s").
+/// An edit's clip bar lets go of clips whose files went outside the app, as a
+/// VOD's does (CHANGELOG.md, 0.5.0: "An edit has a clip bar of its own" "… and
+/// leave the bar when their file is deleted outside VODscribe (Ctrl+Z brings
+/// them back), as a VOD's do"; clips.rs `forget_gone_clips`: "VOD `vod_id`'s,
+/// or edit `edit_id`'s").
 #[test]
 fn an_edit_s_clip_bar_lets_go_of_clips_whose_files_went_too() {
     let app = TestApp::new();
@@ -771,8 +761,7 @@ fn an_edit_s_clip_bar_lets_go_of_clips_whose_files_went_too() {
 }
 
 /// Asking to forget the gone clips of neither bar, or of both, is refused
-/// (clips.rs:867, `forget_gone_clips`: "Say whose clip bar: a VOD's or an
-/// edit's.").
+/// (clips.rs `forget_gone_clips`: "Say whose clip bar: a VOD's or an edit's.").
 #[test]
 fn asking_to_forget_gone_clips_of_neither_or_both_bars_is_refused() {
     let app = TestApp::new();
@@ -785,14 +774,13 @@ fn asking_to_forget_gone_clips_of_neither_or_both_bars_is_refused() {
 
 // Clips going with their edit or VOD.
 
-/// Deleting an edit lets go of the clips on its clip bar: out of the
-/// library, their making stopped, their files deleted unless another app
-/// took them, and the page told so they close in the editor (CHANGELOG.md,
-/// 0.7.0 Fixes: "Deleting an edit deletes its clips' files." "The clips on
-/// its clip bar go with their files (unless you dragged one out of
-/// VODscribe), as with a VOD's clips"; 0.7.0 Fixes: "A deleted clip closes
-/// in the editor."; edits.rs:303, `delete_edit`: "the clips on its clip bar
-/// go with it, as a VOD's do").
+/// Deleting an edit lets go of the clips on its clip bar: out of the library,
+/// their making stopped, their files deleted unless another app took them, and
+/// the page told so they close in the editor (CHANGELOG.md, 0.7.0 Fixes:
+/// "Deleting an edit deletes its clips' files." "The clips on its clip bar go
+/// with their files (unless you dragged one out of VODscribe), as with a VOD's
+/// clips"; 0.7.0 Fixes: "A deleted clip closes in the editor."; edits.rs
+/// `delete_edit`: "the clips on its clip bar go with it, as a VOD's do").
 #[test]
 fn deleting_an_edit_lets_go_of_its_bar_clips_and_their_files() {
     let app = TestApp::new();
@@ -825,8 +813,8 @@ fn deleting_an_edit_lets_go_of_its_bar_clips_and_their_files() {
 }
 
 /// Removing a VOD deletes its clips' files, unless another app took them
-/// (vods.rs:376, `delete_vod`: "its own clip goes, with its marks and its
-/// clip bar (the clips' files too, unless dragged out of the app)").
+/// (vods.rs `delete_vod`: "its own clip goes, with its marks and its clip bar
+/// (the clips' files too, unless dragged out of the app)").
 #[test]
 fn removing_a_vod_deletes_its_clips_files_unless_another_app_took_them() {
     let app = TestApp::new();
@@ -841,13 +829,11 @@ fn removing_a_vod_deletes_its_clips_files_unless_another_app_took_them() {
     assert_eq!(Media::read(&taken), Some(media), "the name another app took went");
 }
 
-// Ctrl+X on a clip bar: cut, held for a paste (CHANGELOG.md, 0.7.3: "Cut
-// clips wait for a paste. Ctrl+X (⌘X) keeps the clip and its file until you
-// paste it, copy or cut again, or quit, so Ctrl+V brings it back at once";
-// the owner, walkthrough 2026-11-07: "Shouldn't Ctrl-X be cut? As in it's
-// intended to be pasted somewhere? So the video should not actually be
-// deleted until the clipboard is erased (through quit or overwritten or
-// etc)").
+// Ctrl+X on a clip bar: cut, held for a paste (CHANGELOG.md, 0.7.3: "Cut clips
+// wait for a paste. Ctrl+X (⌘X) keeps the clip and its file until you paste it,
+// copy or cut again, or quit, so Ctrl+V brings it back at once"). Decided:
+// Ctrl+X is a cut, meant to be pasted somewhere, so the video isn't deleted
+// until the clipboard is cleared, by a quit or another copy or cut.
 
 /// What the page writes to the system's clipboard for a copy, in these tests.
 const COPIED: &str = "copied";
@@ -889,10 +875,10 @@ fn a_clip_cut_leaves_the_bar_but_keeps_its_file() {
     assert!(has_file(&held), "its file deleted");
 }
 
-/// Clips cut leave their bar at once, as one step that undo brings back
-/// whole (plans/0.7.3.md "Changes users see": "Ctrl+X on a pill takes it off
-/// the bar"; clips.rs:767, `cut_clips`: "as one change in each clip bar's
-/// history, as `delete_clips` does").
+/// Clips cut leave their bar at once, as one step that undo brings back whole
+/// (decided for 0.7.3: Ctrl+X on a pill takes it off the bar; clips.rs
+/// `cut_clips`: "as one change in each clip bar's history, as `delete_clips`
+/// does").
 #[test]
 fn a_clip_cut_leaves_its_bar_at_once_as_one_step() {
     let app = TestApp::new();
@@ -945,12 +931,12 @@ fn a_cut_clip_pasted_gets_its_own_file_without_being_made_again() {
     assert_eq!(app.clip_media(&app.made(id)), media, "the pasted clip's file went with it");
 }
 
-/// A piece added to a pasted clip in the editor while its file is copied is
-/// in its file: the copy is recorded as of what was copied, not of what the
-/// clip holds by then, so the change makes it again (clipboard.rs
-/// `copy_file`, as `edits::render_edit` does; the 0.7.3 races review,
-/// finding 1). The copy is held once written, before the library is taken,
-/// as a large clip on a slow disk would hold it (`TestApp::holds_copies`).
+/// A piece added to a pasted clip in the editor while its file is copied is in
+/// its file: the copy is recorded as of what was copied, not of what the clip
+/// holds by then, so the change makes it again (clipboard.rs `copy_file`, as
+/// `edits::render_edit` does). The copy is held once written, before the
+/// library is taken, as a large clip on a slow disk would hold it
+/// (`TestApp::holds_copies`).
 #[test]
 fn a_piece_added_as_a_pasted_clip_s_file_is_copied_is_in_its_file() {
     let app = TestApp::new();
@@ -1083,8 +1069,8 @@ fn a_clip_cut_from_an_edits_bar_is_held_too() {
     assert_eq!(app.clip_media(&app.made(id)), media);
 }
 
-/// Undo of a delete brings back the clip deleted, not a cut clip made
-/// since, held off another VOD's bar (review of the cut, 2026-11-07).
+/// Undo of a delete brings back the clip deleted, not a cut clip made since,
+/// held off another VOD's bar.
 #[test]
 fn undo_of_a_delete_brings_back_that_clip_not_a_cut_one_made_since() {
     let app = TestApp::new();
@@ -1099,9 +1085,9 @@ fn undo_of_a_delete_brings_back_that_clip_not_a_cut_one_made_since() {
     assert!(bar(&app, b.id).is_empty(), "the cut clip came back on its bar");
 }
 
-/// Undo past a cut on one bar brings back the clip deleted before it, not
-/// the cut one made after: Delete a pill, C a new one, Ctrl+X it, then
-/// undo three times (review of the cut, 2026-11-07).
+/// Undo past a cut on one bar brings back the clip deleted before it, not the
+/// cut one made after: Delete a pill, C a new one, Ctrl+X it, then undo three
+/// times.
 #[test]
 fn undo_past_a_cut_brings_back_the_clip_deleted_before_it() {
     let app = TestApp::new();
@@ -1116,9 +1102,9 @@ fn undo_past_a_cut_brings_back_the_clip_deleted_before_it() {
     assert_eq!(bar(&app, vod.id), [(10.0, 20.0)], "undo past the cut brought back the wrong clip");
 }
 
-/// A cut redone after its clip was copied again holds it, as the cut did:
-/// the clipboard has its file, so a paste gets that file, and the next copy
-/// lets it go (review of the cut, 2026-11-07; the owner's words above).
+/// A cut redone after its clip was copied again holds it, as the cut did: the
+/// clipboard has its file, so a paste gets that file, and the next copy lets it
+/// go (as decided above for Ctrl+X).
 #[test]
 fn a_cut_redone_after_the_clip_was_copied_again_keeps_its_file() {
     let app = TestApp::new();
@@ -1156,11 +1142,10 @@ fn quitting_lets_a_cut_go_before_the_library_stops_writing() {
     assert!(kept.is_none(), "still in the library");
 }
 
-/// A library set aside (recovery.rs: starting a new library "sets the old
-/// one aside, its videos and clips with it, never deleting it") keeps its
-/// clips' files: they go to the set-aside folder, where the next start, on a
-/// new library, deletes none of them (review of the cut, round 2,
-/// 2026-11-07).
+/// A library set aside (recovery.rs: starting a new library "sets the old one
+/// aside, its videos and clips with it, never deleting it") keeps its clips'
+/// files: they go to the set-aside folder, where the next start, on a new
+/// library, deletes none of them.
 #[test]
 fn a_library_set_aside_keeps_its_clip_files_at_the_next_start() {
     let app = TestApp::new();

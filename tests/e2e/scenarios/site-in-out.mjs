@@ -1,4 +1,4 @@
-// I right after a click on the timeline, on a site's VOD: the owner's test
+// I right after a click on the timeline, on a site's VOD: our test
 // VOD on Twitch (or YouTube or Kick, with E2E_SITE=youtube or kick). A click
 // moves the playhead at once, but their player says it's there only a while
 // later (it loads or seeks, buffers, and reports now and then; Twitch's,

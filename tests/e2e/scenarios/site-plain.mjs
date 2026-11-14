@@ -1,5 +1,5 @@
 // A site's VOD in its own player, left as it is (a release: no embed-takeover;
-// site-embed.mjs is the other way): the owner's test VOD on Twitch (or
+// site-embed.mjs is the other way): our test VOD on Twitch (or
 // YouTube, with E2E_SITE=youtube), played, jumped, paused and resumed from
 // the app's controls. Nothing of the app's runs in their frame, the app's own
 // player stays shut, and the time under the player follows theirs. The bar's

@@ -18,13 +18,13 @@ fn clips_drag_out_before_their_files_are_made_on_every_system() {
     assert_eq!(app.invoke("drag_before_made", json!({})), Ok(json!(true)));
 }
 
-/// F4. Where the system can't wait for a file (`VODSCRIBE_DRAG_WAITS=1`,
-/// the developer's fallback), the page waits for the clips at the window's
-/// edge, and a drag of one not made is refused, saying why; one made drags
-/// out (app clips.rs:1484, `drags_before_made`: "there VODSCRIBE_DRAG_WAITS=1
-/// goes back to waiting for the files at the window's edge before the drag
-/// begins"; app clips.rs:1613, `drag_clip`: "That clip's file isn't made
-/// yet.", "Couldn't make the clip: {why}").
+/// Where the system can't wait for a file (`VODSCRIBE_DRAG_WAITS=1`, the
+/// developer's fallback), the page waits for the clips at the window's edge,
+/// and a drag of one not made is refused, saying why; one made drags out (app
+/// `clips.rs` `drags_before_made`: "there VODSCRIBE_DRAG_WAITS=1 goes back to
+/// waiting for the files at the window's edge before the drag begins"; app
+/// `clips.rs` `drag_clip`: "That clip's file isn't made yet.", "Couldn't make
+/// the clip: {why}").
 #[test]
 fn where_the_system_cannot_wait_a_clip_not_made_is_refused_saying_why() {
     let app = TestApp::new();
@@ -120,9 +120,8 @@ fn dragged_with(app: &TestApp, id: i64) -> Vec<u8> {
     image
 }
 
-/// A clip whose picture couldn't be made drags with the app's icon
-/// (plans/clips-pilot.md, Decided 9: "A clip whose picture couldn't be made
-/// drags with the app's icon (a spec)"; app clips.rs `DRAG_ICON`).
+/// A clip whose picture couldn't be made drags with the app's icon (decided
+/// as a spec; app `clips.rs` `DRAG_ICON`).
 #[test]
 fn a_clip_whose_picture_could_not_be_made_drags_with_the_app_s_icon() {
     let app = TestApp::new();
@@ -134,7 +133,7 @@ fn a_clip_whose_picture_could_not_be_made_drags_with_the_app_s_icon() {
 }
 
 /// A clip made again whose new picture couldn't be made drags with the app's
-/// icon, not the picture of what it was before (Decided 9, as above).
+/// icon, not the picture of what it was before (decided, as above).
 #[test]
 fn a_clip_made_again_whose_picture_could_not_be_made_drags_with_the_app_s_icon() {
     let app = TestApp::new();
@@ -149,7 +148,7 @@ fn a_clip_made_again_whose_picture_could_not_be_made_drags_with_the_app_s_icon()
 
 /// A clip whose picture couldn't be made has it tried again the next time
 /// the clip is shown, on its clip bar, and drags with it once it's made
-/// (Decided 9: "its picture is tried again when the clip is next shown").
+/// (decided: its picture is tried again when the clip is next shown).
 #[test]
 fn a_clip_s_picture_that_could_not_be_made_is_tried_again_when_the_clip_is_next_shown() {
     let app = TestApp::new();
@@ -175,8 +174,8 @@ fn many_made(app: &TestApp, vod_id: i64, n: usize) -> Vec<Clip> {
 /// A picture that couldn't be made, tried again as its clip is shown and
 /// failing again, isn't tried at each listing after (the page asks for a
 /// VOD's clips every tenth of a second while a drag waits on one: clips.svelte.ts
-/// `ready`); it's tried again once the app starts again (Decided 9, as
-/// above; the clips-fixes review, L2).
+/// `ready`); it's tried again once the app starts again (its drag has the
+/// app's icon meanwhile, as above).
 #[test]
 fn a_picture_that_could_not_be_made_again_is_tried_once_a_run() {
     let app = TestApp::new();
@@ -202,8 +201,7 @@ static STATE_GONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 
 /// A quit while pictures are being made again waits for them: nothing of
 /// that work runs on, or writes, once the app has ended (as every queue of
-/// the app's ends with it: testkit.rs, `TestApp`'s drop; the clips-fixes
-/// review, M2).
+/// the app's ends with it: testkit.rs, `TestApp`'s drop).
 #[test]
 fn a_quit_while_pictures_are_made_again_leaves_nothing_running() {
     let before = std::panic::take_hook();
@@ -236,7 +234,7 @@ fn a_quit_while_pictures_are_made_again_leaves_nothing_running() {
 
 /// A stopped batch of pictures made again makes none past the stop: the
 /// app's quit (`Cutter::close`, as every queue's) doesn't wait out a whole
-/// listing's (the clips-fixes re-review, N2).
+/// listing's.
 #[test]
 fn a_batch_of_pictures_stopped_makes_no_more() {
     let app = TestApp::new();

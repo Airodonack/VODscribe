@@ -721,8 +721,8 @@ export class App {
   /**
    * Opens VOD `id` from the library, paused near its start: played (the
    * web view's player is made on the first play; the app's own opens with
-   * a file), paused once it plays. Not from a
-   * search hit: WebKitGTK stalls an mp3 started in its last second (TODO.md).
+   * a file), paused once it plays. Not from a search hit: WebKitGTK stalls
+   * an mp3 started in its last second (a known issue).
    */
   async openPaused(id) {
     await this.openVod(id);

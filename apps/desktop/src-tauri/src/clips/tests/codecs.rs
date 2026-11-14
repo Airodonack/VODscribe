@@ -1,9 +1,9 @@
-//! A format (codec) the ffmpeg in use can't make (handbook plans/clips-pilot.md,
-//! "Decided", 3: the clip fails with the app's own sentence, which format and
-//! Settings › Encoding, and that format's option in Settings is greyed out):
-//! through `add_clip`, `render_edit` by way of `remove_stretch`, `delete_vod`
-//! keeping an edit's stretch (`realize`), and `missing_clip_codecs`, which
-//! the page asks for the options to grey out.
+//! A format (codec) the ffmpeg in use can't make (decided: the clip fails with
+//! the app's own sentence, which format and Settings › Encoding, and that
+//! format's option in Settings is greyed out): through `add_clip`,
+//! `render_edit` by way of `remove_stretch`, `delete_vod` keeping an edit's
+//! stretch (`realize`), and `missing_clip_codecs`, which the page asks for
+//! the options to grey out.
 
 use super::*;
 
@@ -114,7 +114,7 @@ fn the_ffmpeg_s_encoders_are_asked_once_and_again_when_it_changes() {
 }
 
 /// An edit of a site's VOD rendered again in a codec the ffmpeg in use
-/// lacks fails before its footage is fetched again (review M1).
+/// lacks fails before its footage is fetched again.
 #[test]
 fn an_edit_in_a_codec_ffmpeg_lacks_fetches_no_footage_for_it() {
     let app = TestApp::new();
@@ -131,7 +131,7 @@ fn an_edit_in_a_codec_ffmpeg_lacks_fetches_no_footage_for_it() {
 }
 
 /// While an edit's render waits on ffmpeg's list of encoders, the library
-/// isn't held: the app goes on (review M2).
+/// isn't held: the app goes on.
 #[test]
 fn an_edit_s_render_holds_no_library_while_ffmpeg_lists_its_encoders() {
     let app = TestApp::new();
@@ -156,7 +156,7 @@ fn an_edit_s_render_holds_no_library_while_ffmpeg_lists_its_encoders() {
 
 /// An ffmpeg without AAC makes no MP4: both MP4 formats are greyed out,
 /// and a clip in one says so in the app's words, not ffmpeg's; MOV, whose
-/// sound is PCM, is made (review L4).
+/// sound is PCM, is made.
 #[test]
 fn an_ffmpeg_without_aac_makes_no_mp4() {
     let app = TestApp::new();
@@ -219,8 +219,7 @@ fn delete_kept(app: &TestApp, vod_id: i64) -> String {
 }
 
 /// The stretch an edit keeps replaces the VOD's footage, which goes next:
-/// it's made as before, H.264 at CRF 18, whatever quality clips are made in
-/// (re-review of fix-codecs-073, 1).
+/// it's made as before, H.264 at CRF 18, whatever quality clips are made in.
 #[test]
 fn a_kept_stretch_is_made_as_before_whatever_the_clips_quality() {
     let app = TestApp::new();
@@ -245,7 +244,7 @@ fn a_kept_stretch_is_made_as_before_with_clips_made_as_mov() {
 
 /// With an ffmpeg without H.264, the stretch is kept in the codec Settings ›
 /// Encoding names, at High quality, so the delete goes ahead as clips are
-/// made (correctness review 0.7.3, 1).
+/// made.
 #[test]
 fn without_h264_a_kept_stretch_is_made_in_the_chosen_codec_at_high_quality() {
     let app = TestApp::new();
