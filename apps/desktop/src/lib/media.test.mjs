@@ -249,8 +249,8 @@ test("a tick step is the first that leaves 64 pixels for its label", () => {
  */
 test("a stretch of an edit's timeline starts where the piece it falls in plays it", () => {
   const pieces = [
-    { vod_id: 1, start: 10, end: 20, struck: [] },
-    { vod_id: 2, start: 100, end: 105, struck: [] },
+    { vod_id: 1, start: 10, end: 20 },
+    { vod_id: 2, start: 100, end: 105 },
   ];
   assert.deepEqual(inEdit(pieces, 0, 4), { vodId: 1, start: 10, end: 14 });
   assert.deepEqual(inEdit(pieces, 4, 40), { vodId: 1, start: 14, end: 20 }, "no further than the piece's end");
@@ -260,8 +260,8 @@ test("a stretch of an edit's timeline starts where the piece it falls in plays i
   assert.equal(inEdit([], 0, 1), undefined);
 });
 
-/** media.ts `playedSpans`' and `playedLength`'s doc: what plays of `start`..`end` (less what's jumped over). */
-test("an edit's piece with nothing taken out plays from its start to its end", () => {
-  assert.deepEqual(playedSpans(2, 9, []), [[2, 9]]);
-  assert.equal(playedLength({ start: 2, end: 9, struck: [] }), 7);
+/** media.ts `playedSpans`' and `playedLength`'s doc: what plays of `start`..`end`. */
+test("an edit's piece plays from its start to its end", () => {
+  assert.deepEqual(playedSpans(2, 9), [[2, 9]]);
+  assert.equal(playedLength({ start: 2, end: 9 }), 7);
 });
