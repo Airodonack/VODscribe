@@ -141,7 +141,7 @@ export async function confirmRemove(vods: Vod[], gone: Edit[]): Promise<{ delete
       ]);
   const single = vods.length === 1;
   const their = single ? "its" : "their";
-  const vodText = ` ${one ? "Its transcript" : single ? "The VOD's transcript" : "The VODs' transcripts"} and any downloaded audio or video are erased from this computer, and ${their} clips leave VODscribe (their files stay in your Videos folder).`;
+  const vodText = ` ${one ? "Its transcript" : single ? "The VOD's transcript" : "The VODs' transcripts"}, ${their} clips and any downloaded audio or video are erased from this computer, except clip files you dragged into other apps.`;
   const editText = gone.length
     ? ` ${gone.length === 1 ? "The edit is" : "The edits are"} deleted${videos ? `, with ${gone.length === 1 ? "its video" : "their videos"}` : ""}.`
     : "";
@@ -153,7 +153,7 @@ export async function confirmRemove(vods: Vod[], gone: Edit[]): Promise<{ delete
     return (await ask(`Remove ${what}?${vodText}${editText}`, "Remove", "Keep")) ? { deleteVideo: false } : null;
   const whose = single ? "Its" : "Their";
   const answer = await choose(
-    `Remove ${what}? ${whose} clips leave VODscribe (their files stay in your Videos folder), and transcribing ${single ? "it" : "them"} stops.${editText} ` +
+    `Remove ${what}? ${whose} clips are deleted, except files you dragged into other apps, and transcribing ${single ? "it" : "them"} stops.${editText} ` +
       `${whose} pieces in ${listed(using)} stay. ` +
       `${REMOVE} keeps ${single ? "its video and transcript" : "their videos and transcripts"}. ` +
       `${DELETE} keeps only what ${using.length === 1 ? "the edit uses" : "the edits use"}.`,

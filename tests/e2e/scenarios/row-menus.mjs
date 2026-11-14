@@ -96,7 +96,9 @@ export default {
     const question = JSON.parse(await app.js(`return String(window.__e2e.asked.at(-1))`)).message;
     if (
       !question.includes(`Remove “${vod.title}”?`) ||
-      !question.includes("transcript and any downloaded audio or video are erased")
+      !question.includes(
+        "transcript, its clips and any downloaded audio or video are erased from this computer, except clip files you dragged into other apps.",
+      )
     )
       throw new Error(`Remove asked: ${question}`);
     if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id)) throw new Error("Keep removed the VOD");
