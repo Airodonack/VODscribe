@@ -27,6 +27,7 @@ One module per subject.
 - `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
 - `net.rs`: downloads, with stall and cancel handling.
 - `query.rs`: the search box's language, parsed.
+- [`query`](query): its tests.
 - `search.rs`: a query run against what was said and what chat wrote.
 - `searcher.rs`: search's own read connection, so a slow search never holds up the views.
 - `chat.rs`: chat replays from Kick, Twitch and YouTube.
