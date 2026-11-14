@@ -272,6 +272,11 @@ fn tidy_at_start(paths: &Paths, db: &Db) -> Vec<(i64, f64, f64)> {
     storyboards::tidy(&paths.storyboards());
     // Only tidying from here, so a library that can't be read isn't a
     // reason not to start.
+    // VODs 0.7.3 added back and left gone are VODs like any other again,
+    // before any queue reads them: their pieces play, their chat is fetched.
+    if let Err(e) = db.clear_listed_gone() {
+        eprintln!("VODs added back by an older version stay gaps in edits: {e:#}");
+    }
     let vods = db.vods();
     // Files a quit (or a crash) left being received from another app's drop.
     let files: Option<Vec<String>> =

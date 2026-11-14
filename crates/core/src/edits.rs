@@ -2185,13 +2185,13 @@ pub(crate) mod tests {
         assert!(!db.is_gone(again.id).unwrap());
         assert!(db.vod(vod).unwrap().is_none());
         // One still used is listed again when added back, not gone: its
-        // pieces play again (`clear_gone`).
+        // pieces play again, and it's new to the library (`clear_gone`).
         let used = db.add_vod(&info("y")).unwrap().0.id;
         db.add_piece(edit, used, (1.0, 2.0), "b", None).unwrap();
         assert!(!db.remove_entry(used).unwrap());
         db.set_gone(used).unwrap();
         let (back, new) = db.add_vod(&info("y")).unwrap();
-        assert_eq!((back.id, new, back.listed), (used, false, true));
+        assert_eq!((back.id, new, back.listed), (used, true, true));
         assert!(!db.is_gone(used).unwrap());
     }
 

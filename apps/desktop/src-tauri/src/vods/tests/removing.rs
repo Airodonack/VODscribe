@@ -930,6 +930,124 @@ fn a_vod_removed_with_its_video_and_added_back_is_a_vod_like_any_other_again() {
     keep_video(&app, vod.id);
 }
 
+/// The site serves VOD `vod`'s chat replay: three messages.
+fn serves_its_chat(app: &TestApp, vod: &Vod) {
+    let lines = [10.0, 20.0, 30.0].iter().map(|&at| yt_dlp::chat_line(at, "@ada", "hi")).collect();
+    app.yt_dlp.serves_chat(&vod.info.url, lines);
+}
+
+/// Whether VOD `id`'s chat is fetched: all three messages of it.
+fn has_its_chat(app: &TestApp, id: i64) -> bool {
+    app.db().vod(id).unwrap().is_some_and(|v| v.chat == ChatStatus::Done) && app.db().chat(id).unwrap().len() == 3
+}
+
+/// Remove on VOD `id`'s row with its video deleted anyway, whatever edits
+/// use of it, waited out.
+fn remove_with_video_anyway(app: &TestApp, id: i64) {
+    let answer = app.invoke("delete_vod", json!({ "id": id, "deleteVideo": true, "anyway": true })).unwrap();
+    assert_eq!(answer, Value::Null);
+    app.erasures_done();
+}
+
+/// Removed with its video anyway while an edit uses it, then added back by
+/// its link, a VOD has its chat fetched again, as one added anew does
+/// (`a_vod_removed_with_its_video_and_added_back_is_a_vod_like_any_other_again`;
+/// vods.rs `add_vod`).
+#[test]
+fn a_vod_removed_with_its_video_and_added_back_has_its_chat_fetched_again() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    serves_its_chat(&app, &vod);
+    app.fetches_chats();
+    eventually("its chat fetched", || has_its_chat(&app, vod.id));
+    an_edit(&app, vod.id, 10.0, 20.0);
+    remove_with_video_anyway(&app, vod.id);
+    app.invoke("add_vod", json!({ "url": vod.info.url })).unwrap();
+    eventually("its chat fetched again", || has_its_chat(&app, vod.id));
+}
+
+/// Removed with its video anyway while an edit uses it, then added back by
+/// its link, a VOD has its picture again, fetched from its site as when it
+/// was added (`a_vod_removed_with_its_video_and_added_back_is_a_vod_like_any_other_again`;
+/// thumbnails.rs `cache_thumbnail`), not the name of the one its erasure
+/// deleted (vods.rs `erase_source`: "Erases VOD `id`'s files, footage and
+/// pictures").
+#[test]
+fn a_vod_removed_with_its_video_and_added_back_has_its_picture_again() {
+    let app = TestApp::new();
+    app.net.public("pictures.example");
+    app.net.serves("https://pictures.example/talk.png", b"\x89PNG\r\n\x1a\n".to_vec());
+    let link = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    let mut details = yt_dlp::details("youtube", "noa29qsTc4g", link, "A talk", 60.0);
+    details["thumbnail"] = "https://pictures.example/talk.png".into();
+    app.yt_dlp.serves(details);
+    let id = app.invoke("add_vod", json!({ "url": link })).unwrap()["vod"]["id"].as_i64().unwrap();
+    app.threads_done();
+    let picture = |app: &TestApp| app.db().vod(id).unwrap().unwrap().thumb.filter(|name| !name.is_empty());
+    let first = picture(&app).expect("its picture fetched");
+    an_edit(&app, id, 10.0, 20.0);
+    remove_with_video_anyway(&app, id);
+    assert!(app.invoke("thumbnail", json!({ "name": first })).is_err(), "its picture kept by its erasure");
+    app.invoke("add_vod", json!({ "url": link })).unwrap();
+    app.threads_done();
+    let name = picture(&app).expect("no picture named");
+    assert!(app.invoke("thumbnail", json!({ "name": name })).is_ok(), "the picture named is gone");
+}
+
+/// Removed with its video anyway while an edit uses it, then added back by
+/// its link, a VOD is offered its VODscription again once the file host is
+/// found to have one, as one added anew is
+/// (`a_vod_removed_with_its_video_and_added_back_is_a_vod_like_any_other_again`;
+/// vods.rs `add_vod`, `look_up_added`).
+#[test]
+fn a_vod_removed_with_its_video_and_added_back_is_offered_its_vodscription_again() {
+    let app = TestApp::new();
+    // The file host is asked about one VOD at a time in the whole process,
+    // by its id (annotations.rs `ASKING`): this test's is numbered apart.
+    for i in 0..4 {
+        app.add_video_file(&format!("Before {i}.mp4"), 60.0);
+    }
+    let link = "https://www.youtube.com/watch?v=readded0001";
+    app.yt_dlp.serves(yt_dlp::details("youtube", "readded0001", link, "A stream", 600.0));
+    app.net.replies("https://dl.vodscribe.com/annotations/youtube/readded0001.json", |asked| {
+        (asked.method == "HEAD").then(|| vodscribe_core::testkit::Reply::status(200).with_header("ETag", "\"v1\""))
+    });
+    let id = app.invoke("add_vod", json!({ "url": link })).unwrap()["vod"]["id"].as_i64().unwrap();
+    app.threads_done();
+    assert_eq!(app.heard("annotations-found"), [json!(id)]);
+    an_edit(&app, id, 10.0, 20.0);
+    remove_with_video_anyway(&app, id);
+    app.invoke("add_vod", json!({ "url": link })).unwrap();
+    app.threads_done();
+    assert_eq!(app.heard("annotations-found"), [json!(id), json!(id)], "not offered again once added back");
+}
+
+/// A VOD an older version added back after it was removed with its video
+/// while an edit used it is listed and still gone, as 0.7.3 left it (its
+/// `add_vod` listed it again, leaving it gone): from the next start it's a
+/// VOD like any other, the edit's piece of it playing again and its chat
+/// fetched again (lib.rs `tidy_at_start`; core sources.rs
+/// `clear_listed_gone`).
+#[test]
+fn a_vod_an_older_version_added_back_still_gone_plays_in_edits_from_the_next_start() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    serves_its_chat(&app, &vod);
+    app.fetches_chats();
+    eventually("its chat fetched", || has_its_chat(&app, vod.id));
+    let (edit, _) = an_edit(&app, vod.id, 10.0, 20.0);
+    // What 0.7.3's erasure left of it, listed again.
+    app.db().clear_chat(vod.id).unwrap();
+    app.db().set_gone(vod.id).unwrap();
+    assert_eq!(pieces(&app, edit)[0]["hole"], json!(true));
+    let app = TestApp::on(app.quit());
+    serves_its_chat(&app, &vod);
+    app.fetches_chats();
+    assert_eq!(listed(&app), [vod.id]);
+    assert_eq!(pieces(&app, edit)[0]["hole"], json!(false), "a gap in the edit still");
+    eventually("its chat fetched again", || has_its_chat(&app, vod.id));
+}
+
 /// Removed with its video anyway, its work slow to stop, then added back
 /// while its erasure waits for that work, a VOD's new transcription isn't
 /// paused by the erasure: it's left as it is (vods.rs `erase_unused`:

@@ -274,7 +274,8 @@ fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vo
 /// work doesn't stop in time (`WORK_STOPPING`) is set aside instead
 /// (`Db::set_aside`), its files erased once it has (`Sweeper::left`). One
 /// removed with its video while clips use it has its files deleted first,
-/// and is listed again, not gone (`Db::clear_gone`).
+/// and is listed again, not gone, new to the library as one added anew is
+/// (`Db::clear_gone`): its chat, picture and VODscription are got again.
 fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
     let (erasing, gone) = {

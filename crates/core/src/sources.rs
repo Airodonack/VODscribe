@@ -148,7 +148,9 @@ impl Db {
     /// VOD `vod_id`, gone, is added back while clips still use it: a VOD
     /// like any other again, its pieces no longer holes (its footage is
     /// downloaded again as needed), with nothing left of what it had, as one
-    /// nothing used is added anew. Its erasure may not have finished: what
+    /// nothing used is added anew, its chat and what's known of its
+    /// published annotations to get again (`back_from_gone`); `add_vod`
+    /// tells it's new. Its erasure may not have finished: what
     /// it left of the transcript, chat and stretches goes now (its files are
     /// the app's to delete: vods.rs `add_to_library`).
     pub fn clear_gone(&self, vod_id: i64) -> Result<()> {
@@ -158,8 +160,51 @@ impl Db {
             db.clear_stretches(vod_id)?;
             // Its audio, a work file, is deleted with the rest of its files.
             db.set_audio_path(vod_id, None)?;
-            db.conn.execute("UPDATE vods SET gone = 0 WHERE id = ?1", [vod_id])?;
-            Ok(())
+            db.back_from_gone(vod_id)
+        })
+    }
+
+    /// VOD `vod_id`, gone, not gone any more, keeping what it has: what its
+    /// row still says of what its erasure took is forgotten. Its chat, if
+    /// it has none, is to be fetched again (`chat_pending`), and what was
+    /// known of its published annotations, if none were brought in since
+    /// (`set_gone` deleted what an import brought), is to be asked again.
+    /// An ask for its whole video is from before it went gone (nothing asks
+    /// one of a gone VOD, and 0.7.3 asks none), so it's not carried on.
+    fn back_from_gone(&self, vod_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET chat = NULL, chat_error = NULL, chat_resume = NULL, chat_slices = NULL
+             WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM chat WHERE vod_id = ?1)",
+            [vod_id],
+        )?;
+        self.conn.execute(
+            "UPDATE vods SET annotations = NULL, annotations_version = NULL, annotations_imported = NULL
+             WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM vod_annotations WHERE vod_id = ?1)",
+            [vod_id],
+        )?;
+        self.conn.execute("UPDATE vods SET gone = 0, video_height = NULL WHERE id = ?1", [vod_id])?;
+        Ok(())
+    }
+
+    /// The VODs in the library's list and gone at once, as 0.7.3 left one
+    /// it added back after it was removed with its video while clips used
+    /// it (its `add_vod` listed it again, leaving it gone, its pieces
+    /// holes): each a VOD like any other again (`back_from_gone`). Its files
+    /// went when it went gone, and what it has was given it since, as
+    /// listed (a transcript, a kept video), so it's kept. A VOD added back
+    /// now is never both (`add_vod` runs `clear_gone` as it lists it), and
+    /// one out of the list stays gone, for its erasure. The VODs it changed.
+    pub fn clear_listed_gone(&self) -> Result<Vec<i64>> {
+        self.atomically(|db| {
+            let mut stmt = db.conn.prepare(
+                "SELECT id FROM vods WHERE gone = 1
+                 AND EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) ORDER BY id",
+            )?;
+            let ids: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            for &id in &ids {
+                db.back_from_gone(id)?;
+            }
+            Ok(ids)
         })
     }
 
@@ -194,6 +239,69 @@ mod tests {
         // Still there to name its files, and the next start erases it.
         assert!(db.vod(old).unwrap().is_some(), "its row deleted by the add");
         assert_eq!(db.unused_sources().unwrap(), vec![old]);
+    }
+
+    /// VOD `vod_id`'s published annotations, imported in version "v1",
+    /// its chat fetched.
+    fn imported_with_chat(db: &Db, vod_id: i64) {
+        db.set_annotations_imported(vod_id, Some("\"v1\"")).unwrap();
+        db.set_chat_status(vod_id, crate::db::ChatStatus::Done, None).unwrap();
+    }
+
+    /// A VOD removed with its video while an edit uses it, then added back,
+    /// is new to the library, as one nothing used is added anew (`clear_gone`:
+    /// "a VOD like any other again", "with nothing left of what it had"):
+    /// its chat is to be fetched again (`chat_pending`), and its published
+    /// annotations, brought in before, are to be asked about and offered again.
+    #[test]
+    fn a_vod_added_back_after_it_went_gone_is_new_its_chat_and_annotations_to_get_again() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("y")).unwrap().0.id;
+        imported_with_chat(&db, vod);
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (1.0, 2.0), "b", None).unwrap();
+        assert!(!db.remove_entry(vod).unwrap());
+        db.set_gone(vod).unwrap();
+        let (back, new) = db.add_vod(&info("y")).unwrap();
+        assert_eq!((back.id, new, back.listed), (vod, true, true), "added back, it's new to the library");
+        assert_eq!(back.chat, crate::db::ChatStatus::Pending);
+        assert_eq!(db.chat_pending().unwrap(), [vod]);
+        let offer = db.annotations_offer(vod).unwrap();
+        assert_eq!(offer.available, crate::db::Availability::Unknown, "what was known of its annotations kept");
+        assert!(!offer.up_to_date, "its annotations taken as brought in still");
+    }
+
+    /// A VOD 0.7.3 added back after it was removed with its video while an
+    /// edit used it is listed and still gone (0.7.3's `add_vod` listed it
+    /// again, leaving it gone): each start makes such a VOD one like any
+    /// other again (`clear_listed_gone`), keeping what it was given since
+    /// (here a transcript), its chat to be fetched again. A VOD removed with
+    /// its video and not added back stays gone, to be erased.
+    #[test]
+    fn a_vod_listed_and_gone_is_a_vod_like_any_other_again_keeping_what_it_has_since() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let [vod, out] = ["y", "z"].map(|id| db.add_vod(&info(id)).unwrap().0.id);
+        let edit = db.add_edit("e").unwrap().id;
+        for id in [vod, out] {
+            imported_with_chat(&db, id);
+            db.add_piece(edit, id, (1.0, 2.0), "b", None).unwrap();
+            assert!(!db.remove_entry(id).unwrap());
+            db.set_gone(id).unwrap();
+        }
+        // As 0.7.3's add_vod did: listed again, gone left as it was; then
+        // transcribed anew.
+        db.atomically(|db| db.add_vod_clip(vod, "y").map(|_| ())).unwrap();
+        let word = Word { text: " hi".into(), start: 1.0, end: 1.5 };
+        db.insert_segments(vod, &[Segment { start: 1.0, end: 1.5, text: " hi".into(), words: vec![word] }]).unwrap();
+        assert!(db.vod(vod).unwrap().unwrap().listed && db.is_gone(vod).unwrap());
+
+        assert_eq!(db.clear_listed_gone().unwrap(), [vod]);
+        assert!(!db.is_gone(vod).unwrap(), "listed, still gone: the edit's piece of it a hole");
+        assert_eq!(db.lines(vod).unwrap().len(), 1, "its transcript from since lost");
+        assert_eq!(db.chat_pending().unwrap(), [vod]);
+        assert!(!db.annotations_offer(vod).unwrap().up_to_date);
+        assert!(db.is_gone(out).unwrap(), "a VOD out of the list made not gone");
+        assert!(db.clear_listed_gone().unwrap().is_empty());
     }
 
     #[test]

@@ -1873,7 +1873,9 @@ impl Db {
         Ok(Self { conn, files })
     }
 
-    /// Inserts a VOD, or returns the existing row if it was already added.
+    /// Inserts a VOD, or returns the existing row if it was already added;
+    /// with whether it's new to the library: inserted, or one removed with
+    /// its video added back with nothing of what it had (`clear_gone`).
     pub fn add_vod(&self, info: &VodInfo) -> Result<(Vod, bool)> {
         if let Some(existing) = self.find_vod(&info.platform, &info.platform_id)? {
             if existing.listed {
@@ -1887,13 +1889,15 @@ impl Db {
             } else {
                 // Taken out of the list but kept for other clips: listed
                 // again, anew if it was removed with its video (`clear_gone`).
-                self.atomically(|db| {
-                    if db.is_gone(existing.id)? {
+                let anew = self.atomically(|db| {
+                    let gone = db.is_gone(existing.id)?;
+                    if gone {
                         db.clear_gone(existing.id)?;
                     }
-                    db.add_vod_clip(existing.id, &existing.info.title)
+                    db.add_vod_clip(existing.id, &existing.info.title)?;
+                    Ok(gone)
                 })?;
-                return Ok((self.vod(existing.id)?.expect("just found"), false));
+                return Ok((self.vod(existing.id)?.expect("just found"), anew));
             }
         }
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).

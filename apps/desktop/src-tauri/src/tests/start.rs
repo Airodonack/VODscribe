@@ -406,9 +406,12 @@ fn a_removed_vods_video_download_is_not_carried_on_at_the_next_start() {
 }
 
 /// A gone VOD's video isn't downloaded at the next start, though it was
-/// asked for: its files went, and its pieces are holes (core db.rs
-/// `wanted_videos`: "only those in its list, and not gone"). Remove and
-/// Delete video clear the ask; this is a library where it was left.
+/// asked for: its files went (core db.rs `wanted_videos`: "only those in
+/// its list, and not gone"). Remove and Delete video clear the ask; this is
+/// a library where it was left, on a VOD listed and gone, as 0.7.3 left one
+/// it added back, which the start makes not gone, the ask from before
+/// dropped (core sources.rs `back_from_gone`: "An ask for its whole video is
+/// from before it went gone").
 #[test]
 fn a_gone_vods_video_is_not_downloaded_at_the_next_start() {
     let app = TestApp::new();
