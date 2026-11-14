@@ -71,7 +71,10 @@ impl Flicks {
         match rate.filter(|r| rest.on_frame(*r) && r.exact()) {
             Some(rate) => format!("{sign}{h}:{m:02}:{s:02}:{:02}", rest.frame(rate)),
             None => {
-                format!("{sign}{h}:{m:02}:{s:02}.{:03}", div_round(i128::from(rest.0), i128::from(Self::MILLISECOND.0)))
+                // Round the whole moment, so 0.9996 s carries into the next second.
+                let ms = div_round(i128::from(t.0), i128::from(Self::MILLISECOND.0)) as i64;
+                let (whole, ms) = (ms / 1000, ms % 1000);
+                format!("{sign}{}:{:02}:{:02}.{ms:03}", whole / 3600, whole / 60 % 60, whole % 60)
             }
         }
     }
@@ -87,18 +90,19 @@ impl Flicks {
         };
         // The fraction: milliseconds after a dot, or frames as a fourth part.
         let (clock, millis, frames) = if let Some((clock, ms)) = text.split_once('.') {
-            if ms.is_empty() || !ms.chars().all(|c| c.is_ascii_digit()) {
+            if !is_digits(ms) {
                 return None;
             }
             (clock, Some(format!("{ms:0<3}")[..3].parse::<i64>().ok()?), None)
         } else if text.matches(':').count() == 3 {
             let (clock, ff) = text.rsplit_once(':')?;
-            (clock, None, Some(ff.parse::<i64>().ok()?))
+            (clock, None, Some(if is_digits(ff) { ff.parse::<i64>().ok()? } else { return None }))
         } else {
             (text, None, None)
         };
-        let parts: Vec<i64> = clock.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
-        if parts.is_empty() || parts.len() > 3 || parts.iter().any(|&p| p < 0) {
+        let parts: Vec<i64> =
+            clock.split(':').map(|p| if is_digits(p) { p.parse().ok() } else { None }).collect::<Option<_>>()?;
+        if parts.is_empty() || parts.len() > 3 {
             return None;
         }
         let seconds = parts.iter().fold(0, |acc, &p| acc * 60 + p);
@@ -111,6 +115,11 @@ impl Flicks {
         }
         Some(Flicks(if negative { -flicks } else { flicks }))
     }
+}
+
+/// Digits only: no sign, no space.
+fn is_digits(part: &str) -> bool {
+    !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())
 }
 
 fn div_round(n: i128, d: i128) -> i128 {
@@ -162,7 +171,13 @@ impl Rate {
             let num = (value * f64::from(den)).round();
             ((num / f64::from(den) - value).abs() < 1e-6).then_some(Rate::new(num as u32, den))
         };
-        near(fps, 1).or_else(|| near(fps, 1001).filter(|r| r.num % 1000 == 0)).or_else(|| near(fps, 1000))
+        let rate =
+            near(fps, 1).or_else(|| near(fps, 1001).filter(|r| r.num % 1000 == 0)).or_else(|| near(fps, 1000))?;
+        let (mut a, mut b) = (rate.num, rate.den);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        Some(Rate::new(rate.num / a, rate.den / a))
     }
 
     pub fn fps(self) -> f64 {

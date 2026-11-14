@@ -271,7 +271,6 @@ fn timecode_never_claims_a_frame_the_moment_isnt_on() {
 /// milliseconds, so a moment less than half a millisecond short of a second is
 /// the next second, not a thousand milliseconds.
 #[test]
-#[ignore = "disagreement: a moment under half a millisecond short of a second is written 0:00:00.1000, four digits"]
 fn timecode_milliseconds_are_three_digits() {
     assert_eq!(Flicks::from_seconds(0.9996).timecode(None), "0:00:01.000");
     assert_eq!(Flicks::from_seconds(59.9996).timecode(None), "0:01:00.000");
@@ -349,9 +348,8 @@ fn parse_is_none_for_text_that_isnt_a_timecode() {
 /// `Flicks::parse`: "None if it isn't one": a frame or a part with a sign
 /// isn't a timecode (only a leading "-" is).
 #[test]
-#[ignore = "disagreement: parse(\"1:02:03:-1\") is Some(2626937040000 flicks); a sign inside a timecode is read, not refused"]
 fn parse_refuses_a_sign_inside_the_text() {
-    for text in ["1:02:03:+1", "+5", "1:+2", "0:00:00:+1"] {
+    for text in ["1:02:03:+1", "1:02:03:-1", "+5", "1:+2", "1:-2", "0:00:00:+1", "--5"] {
         assert_eq!(Flicks::parse(text, Some(R60)), None, "{text:?}");
     }
 }
@@ -422,7 +420,6 @@ fn no_rate_comes_from_nothing_or_nonsense() {
 /// `Rate` is "frames a second in lowest terms: 30000/1001 for 29.97", so a
 /// rate from 12.5 is 25/2.
 #[test]
-#[ignore = "disagreement: from_fps(12.5) is 12500/1000, not 25/2, so it isn't in lowest terms"]
 fn a_rate_from_fps_is_in_lowest_terms() {
     assert_eq!(Rate::from_fps(12.5), Some(Rate::new(25, 2)));
     assert_eq!(Rate::from_fps(29.97), Some(Rate::new(2997, 100)));
