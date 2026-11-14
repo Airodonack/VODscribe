@@ -151,10 +151,11 @@ fn shared_phrase_search_cases() {
     }
 }
 
-/// Terms are lowercase, without accents, split at what isn't a letter or a
-/// digit; a phrase is found by its terms, as inclusive ranges of the words
-/// they're in, its last term a prefix when asked (transcript.rs `terms`:
-/// "Splits text into lowercase, diacritic-free alphanumeric terms";
+/// Terms are lowercase, accents off Latin letters, split where the index
+/// parts words; a phrase is found by its terms, as inclusive ranges of the
+/// words they're in, its last term a prefix when asked (transcript.rs
+/// `terms`: "Splits text into the terms the search index makes of it ... so
+/// lowercase, accents off Latin letters, and every other script as written";
 /// `find_phrase`: "Finds each occurrence of `query` (a phrase whose last term
 /// may be a prefix) in `words`, returning inclusive word-index ranges").
 #[test]

@@ -260,8 +260,9 @@ fn providers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EmoteProviders, D
 }
 
 /// The key bindings that are lists of keys; any other (the file edited by
-/// hand) is left out, so that action has its defaults, rather than every
-/// binding going with it (`read_each`).
+/// hand, or a later version's shape) is left out, so that action has its
+/// defaults, rather than every binding going with it, and stays in the file
+/// (`read_each`).
 fn bindings<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
     let Value::Object(all) = Value::deserialize(d)? else { return Ok(BTreeMap::new()) };
     Ok(all.into_iter().filter_map(|(id, keys)| Some((id, serde_json::from_value(keys).ok()?))).collect())
@@ -372,12 +373,28 @@ impl Settings {
 /// The settings in `file`, each read on its own, as a missing one would be
 /// when its value can't be read (a value of the wrong type, or one this
 /// version doesn't know); and those left out, with every key this version
-/// doesn't have, as they were written.
+/// doesn't have, as they were written. A setting that reads only in part (an
+/// emote provider a later version added, a key binding in a shape it writes)
+/// is read as far as it can be, and left out too, as it was written.
 fn read_each(file: Map<String, Value>) -> (Settings, Map<String, Value>) {
     let known = serde_json::to_value(Settings::default()).expect("settings are written as JSON");
-    let (read, left_out): (Map<_, _>, Map<_, _>) = file.into_iter().partition(|(key, value)| {
-        known.get(key).is_some() && serde_json::from_value::<Settings>(serde_json::json!({ key: value })).is_ok()
-    });
+    let mut read = Map::new();
+    let mut left_out = Map::new();
+    for (key, value) in file {
+        let alone =
+            known.get(&key).and_then(|_| serde_json::from_value::<Settings>(serde_json::json!({ &key: &value })).ok());
+        if let Some(alone) = alone {
+            // Read alone, it's written back as it was only if nothing in it
+            // was lost.
+            let whole = serde_json::to_value(alone).ok().is_some_and(|written| written.get(&key) == Some(&value));
+            if !whole {
+                left_out.insert(key.clone(), value.clone());
+            }
+            read.insert(key, value);
+        } else {
+            left_out.insert(key, value);
+        }
+    }
     // Each was read alone, and no setting is read from another, so together
     // they read too.
     (serde_json::from_value(Value::Object(read)).unwrap_or_default(), left_out)

@@ -57,8 +57,8 @@ fn left_as(json: &str, change: impl FnOnce(&mut Settings)) -> Settings {
     file.saved_and_loaded(&settings)
 }
 
-/// Missing settings are the defaults (settings.rs `load`: "Missing or
-/// unreadable settings fall back to defaults").
+/// Missing settings are the defaults (settings.rs `load`: "Missing settings
+/// are the defaults").
 #[test]
 fn no_settings_file_is_every_default() {
     let file = File::none("settings-missing");
@@ -91,9 +91,9 @@ fn an_unreadable_settings_file_is_every_default() {
 /// list, a number in one) made the whole file unreadable, so every
 /// setting fell back to its default, and the next change saved those
 /// over the file. Only the bindings that aren't lists of keys go
-/// (settings.rs `bindings`: "any other (the file edited by hand) is left
-/// out, so that action has its defaults, rather than making the whole file
-/// unreadable and every setting its default").
+/// (settings.rs `bindings`: "any other (the file edited by hand, or a later
+/// version's shape) is left out, so that action has its defaults, rather
+/// than every binding going with it").
 #[test]
 fn a_misshapen_key_binding_loses_only_itself() {
     let loaded = read(
@@ -401,8 +401,8 @@ fn a_second_unreadable_settings_file_the_same_day_keeps_the_first() {
 }
 
 /// A missing file, or one only a key binding of is misshapen, is read as
-/// it is, and nothing is set aside (`bindings`: "rather than making the
-/// whole file unreadable and every setting its default").
+/// it is, and nothing is set aside (`bindings`: "rather than every binding
+/// going with it").
 #[test]
 fn a_missing_or_readable_settings_file_is_not_set_aside() {
     let dir = crate::TempDir::new("settings-readable");
@@ -438,8 +438,8 @@ fn the_settings_files_earlier_versions_wrote_are_not_set_aside() {
 
 /// A settings file that can't be read for lack of permission is read as the
 /// defaults and set aside too, as one that isn't settings is (settings.rs
-/// `load`: "Unreadable ones ... are the defaults too, and the file is set
-/// aside").
+/// `load`: "A file that isn't a JSON object ... is read as the defaults too,
+/// and set aside"; one it can't read goes to `set_aside` the same way).
 #[cfg(unix)]
 #[test]
 fn a_settings_file_the_user_may_not_read_is_set_aside() {
@@ -600,4 +600,47 @@ fn what_a_newer_version_wrote_is_kept_until_its_setting_changes() {
     );
     assert_eq!(written["captions_size"], 3, "a setting this version doesn't have stays");
     assert_eq!(file.load().theme, Theme::Light);
+}
+
+/// An emote provider a later version added (an id this version doesn't
+/// know) stays in the file, in its place, when another setting changes; once
+/// the user changes the providers, they're written as changed (settings.rs
+/// `read_each`: "A setting that reads only in part ... is read as far as it
+/// can be, and left out too, as it was written"; `kept_from`: "Each is written back as it was unless the
+/// user changed that setting since").
+#[test]
+fn a_later_versions_emote_provider_is_kept_until_the_providers_change() {
+    let providers = json!([{"id": "kick7", "on": true}, {"id": "7tv", "on": true}, {"id": "bttv", "on": false}, {"id": "ffz", "on": false}]);
+    let file =
+        File::with("settings-newer-provider", &json!({"theme": "system", "emote_providers": providers}).to_string());
+    let loaded = file.load();
+    assert_eq!(loaded.emote_providers.enabled(), ["7tv"], "read as far as it can be");
+    file.saved_and_loaded(&Settings { theme: Theme::Dark, ..loaded });
+    let written = file.written();
+    assert_eq!((&written["theme"], &written["emote_providers"]), (&json!("dark"), &providers));
+    let mut changed = file.load();
+    changed.emote_providers.0[0].on = false;
+    file.saved_and_loaded(&changed);
+    let ids: Vec<_> = file.written()["emote_providers"].as_array().unwrap().iter().map(|p| p["id"].clone()).collect();
+    assert_eq!(ids, [json!("7tv"), json!("bttv"), json!("ffz")]);
+}
+
+/// A key binding in a shape a later version writes stays in the file when
+/// another setting changes; once the user changes the bindings, they're
+/// written as changed (settings.rs `read_each`: "A setting that reads only
+/// in part ... is read as far as it can be, and left out too, as it was
+/// written").
+#[test]
+fn a_key_binding_in_a_later_shape_is_kept_until_the_bindings_change() {
+    let bindings = json!({"play.toggle": ["p"], "seek.back": {"keys": ["j"], "repeat": true}});
+    let file = File::with("settings-newer-binding", &json!({"key_bindings": bindings}).to_string());
+    let loaded = file.load();
+    assert_eq!(loaded.key_bindings.keys().collect::<Vec<_>>(), ["play.toggle"], "read as far as it can be");
+    file.saved_and_loaded(&Settings { show_keys: true, ..loaded });
+    let written = file.written();
+    assert_eq!((&written["show_keys"], &written["key_bindings"]), (&json!(true), &bindings));
+    let mut changed = file.load();
+    changed.key_bindings.insert("mute.toggle".to_string(), vec!["m".to_string()]);
+    file.saved_and_loaded(&changed);
+    assert_eq!(file.written()["key_bindings"], json!({"play.toggle": ["p"], "mute.toggle": ["m"]}));
 }

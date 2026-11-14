@@ -14,7 +14,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Chapters in removed stretches still show. A chapter whose start was taken out of an edit with Remove now starts where the next piece begins.
   - Old edits' hidden jumps become splits. Lines struck out in 0.4 are taken out of the edit, its piece split there, so each part can be moved and trimmed.
   - Transcript lines no longer vanish mid-transcription. Lines written while the whole transcript was being read could disappear until the next progress step.
-  - Search finds words in every script. Korean, Greek with its accents, Japanese such as ガンダム and newer emoji in a transcript or chat weren't found.
+  - Search finds Korean, Greek and emoji. In Japanese and Chinese, a word is found only where a run without spaces begins.
   - Clips deleted while finishing leave nothing. A clip deleted just as its file was finished kept that file in the library's folder for good.
   - Paused requests show their whole waveform. A request paused or failed after its audio came showed levels only up to where it stopped.
   - VODscribe starts on a newer library. A library a later version changed no longer keeps it from opening, and it says what doesn't work.
