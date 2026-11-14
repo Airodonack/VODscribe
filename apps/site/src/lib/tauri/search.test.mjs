@@ -1,6 +1,6 @@
 // The demo's search (search.ts) against the app's: its phrase search and
 // highlighting against the Rust's cases (crates/core/tests/phrase-search.json),
-// and the library search against search.rs's tests, below.
+// and the library search against the core's search tests, below.
 // node --test apps/site/src/lib/tauri/search.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -27,7 +27,7 @@ for (const c of cases) {
 }
 
 // The search over a library (`searchLibrary`, `authorSuggestions`) against
-// the app's own tests of it, case for case: crates/core search.rs `mod tests`
+// the app's own tests of it, case for case: crates/core db/tests/search.rs
 // (all but the ones on what the app does only to be fast). A test added or
 // changed there is added or changed here.
 

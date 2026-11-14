@@ -31,6 +31,7 @@ One module per subject.
 - [`query`](query): its tests.
 - `search.rs`: a query run against what was said and what chat wrote.
 - `searcher.rs`: search's own read connection, so a slow search never holds up the views.
+- [`search`](search): the evaluator's own tests.
 - `chat.rs`: chat replays from Kick, Twitch and YouTube.
 - [`chat`](chat): chat replays' tests.
 - `emotes.rs`: local copies of emote images.
