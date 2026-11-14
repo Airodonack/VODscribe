@@ -152,6 +152,27 @@ fn a_removed_vods_download_or_transcription_stops_where_it_is() {
     assert!(!app.paths().source_audio(vod.id, "m4a").exists(), "its download went on");
 }
 
+/// A removed VOD's download stopped partway leaves no file behind: what
+/// was written of it, in its part file, goes with the VOD (CHANGELOG.md,
+/// 0.3.0 Fixes: "Stopping or removing a download could leave partial files
+/// behind.").
+#[test]
+fn a_removed_vods_partial_download_leaves_no_files() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    let halfway = Gate::new();
+    app.yt_dlp.holds_at(0.5, &halfway);
+    app.invoke("transcribe_stretch", json!({ "vodId": vod.id, "start": 0.0, "end": null })).unwrap();
+    halfway.reached();
+    let audio = app.paths().source_audio(vod.id, "m4a");
+    let part = PathBuf::from(format!("{}.part", audio.display()));
+    assert!(part.is_file(), "half of it written");
+    remove(&app, vod.id);
+    app.erasures_done();
+    assert!(!part.exists(), "its part file stayed");
+    assert!(!audio.exists(), "its download went on");
+}
+
 /// A removed VOD nothing uses is erased at once, each as it's removed,
 /// while a clip of another is still being made (vods.rs:385, `delete_vod`:
 /// "if nothing does now, it's erased at once, a job beside the encodes";

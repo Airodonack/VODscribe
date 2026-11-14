@@ -54,6 +54,8 @@ tauri = { version = "2", features = ["test"] }
 vodscribe-core = { path = "../../../crates/core", features = ["testkit"] }
 # The player's sound on a stand-in, not the computer's speakers.
 vodscribe-player = { path = "../../../crates/player", features = ["counts"] }
+# Drops onto the window played without a system's drag.
+dragndrop-target = { path = "../../../crates/dragndrop-target", features = ["fake"] }
 
 # macOS: the app starts the drag itself (drag_source), and takes drops
 # (drop_target).

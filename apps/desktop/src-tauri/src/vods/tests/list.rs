@@ -189,3 +189,23 @@ fn interrupted_requests_are_waiting_again_after_a_restart() {
         [downloading, transcribing].iter().all(|&id| row(&app, id).status == Status::Ready)
     });
 }
+
+/// A file on this computer waits in a queue of its own: without the video
+/// downloader, which a link's download needs, a link asked for first waits,
+/// and a file asked for after it is taken first (worker.rs `next_job`:
+/// "Without the video downloader, only local files can be fetched; online
+/// VODs wait"; db.rs `next_stretch`, its `local_only`; core's
+/// `local_files_queue_separately`, moved up here).
+#[test]
+fn a_file_vod_waits_in_its_own_queue() {
+    let app = TestApp::new();
+    let link = app.add_site_vod("youtube", "abc", "A link", 600.0).id;
+    let file = app.add_video_file("a file.mp4", 60.0).id;
+    app.lacks_yt_dlp();
+    ask(&app, link, 0.0, None);
+    ask(&app, file, 0.0, None);
+    // Ready: its audio is there, and it waits for the transcription's turn,
+    // which doesn't come in a test.
+    eventually("the file taken first", || row(&app, file).status == Status::Ready);
+    assert_eq!(row(&app, link).status, Status::Queued, "the link waits for the downloader");
+}

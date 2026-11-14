@@ -2,9 +2,10 @@
 
 Fakes for what's outside the app, and helpers to set up a library, so a unit or integration test does no slow I/O and decides the order things happen in. The app's own kit, `apps/desktop/src-tauri/src/testkit.rs`, runs the whole app on them.
 
-- `tools.rs`: programs faked in this process, keyed by their path; `Gate`, a point a fake waits at; the points of the library's own code a test holds (`hold_at`); and the runs the app tracks for its quit to stop, by the folder they work in (`stop_tracked_in`).
+- `tools.rs`: programs faked in this process, keyed by their path; `Gate`, a point a fake waits at; the points of the library's own code a test holds (`hold_at`); the runs the app tracks for its quit to stop, by the folder they work in (`stop_tracked_in`); and the PATH a test gives the app (`path_for`).
 - `ffmpeg.rs`: a fake ffmpeg: details, cuts and renders with progress, stills, the player's and the storyboards' decoding, and its failures.
-- `yt_dlp.rs`: a fake yt-dlp: a VOD's details and its downloads, as the site serves them.
+- `yt_dlp.rs`: a fake yt-dlp: a VOD's details, its downloads and its chat replay, as the site serves them, and its version.
+- `nvidia_smi.rs`: a fake `nvidia-smi`: the graphics card the computer has, or none.
 - `worker.rs`: a fake transcription worker: the words it's told are said.
 - `media.rs`: the fake media files the fakes write and read, and the frames they decode.
 - `net.rs`: the network: where a name resolves, and each request's answer.
@@ -58,6 +59,9 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `TestApp::on_with(folder, |fakes| fakes.ffmpeg.holds_at(0.25, &gate))` tells the fakes what to do before the start does anything with them: a cut left unmade is held as it begins again.
 - `invoke("quit_app")` (Ctrl+Q) ends the app as its event loop's end would, which Tauri's mock runtime can't; `exited()` then gives the code it ended with and its `Folder`.
 - `drag_out(&[ids])` drags clips out of the window as the page does, and `drags().last()` is the drag. No system drag begins. `drag_ended()` waits for what the page hears at its end.
+- `drop_files(&[("Day 3.mp4", None)])` drops files with no path on the window (a video in a zip folder, a file promise), as the system's drop target hands them over: each the window takes is received, and the test gives its bytes (`give(&Media::video(60.0).to_bytes())`), then ends it `whole()`, `fails("why")` as its app, or drops it (canceled). `drop_paths(&[path])` and `drop_links(&[url])` drop files with paths and a browser's links: the page hears them as paths (`heard("tauri://drag-drop")`). On Linux, `drop_gives_nothing("why")` is a drop whose app saved nothing.
+- `lacks_yt_dlp()`: the computer has no yt-dlp, as before setup. A test's app finds none of the computer's programs on the PATH.
+- `nvidia_smi().shows("NVIDIA GeForce RTX 4070", 12282, 11000)`: the computer has that graphics card, with that much memory free (MB); without it, none.
 - `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
 - `folder.holds_worker_start(&gate)`, before `TestApp::on(folder)`: that start's transcription waits at the gate while the other queues take up what was left, as on a busy start.
@@ -92,7 +96,8 @@ Each fake answers as its program does, failures included. A test changes how it 
 - `app.ffmpeg.holds_details(&gate)`: each time it's asked a file's details (a probe, the player's open among them), it waits at the gate.
 - `app.ffmpeg.updated()`: its file replaced, as an update does, so the app sees a new ffmpeg at the same path.
 - `app.yt_dlp.refuses(url)`: the site refuses the download.
-- `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is. A download is a part file beside its file till it's whole, as yt-dlp's is: one stopped or held partway leaves it.
+- `app.yt_dlp.holds(&gate)`: each download waits at the gate once it's begun, before it says how far it is; `holds_at(0.5, &gate)` once half of it is in. A download is written a quarter at a time to a part file beside its file till it's whole, as yt-dlp's is: one stopped or held partway leaves it, and the next carries on from it. A section's progress is gauged from its part file too, against its bitrate (`tbr` in the details).
+- `app.yt_dlp.is_version("2025.11.12")`: what `--version` says.
 - `app.yt_dlp.holds_details(&gate)`: each look-up of a link's details (an add, a refresh) waits at the gate before it answers.
 - `app.yt_dlp.serves_chat(url, lines)`: a YouTube video's chat replay, each line a moment's messages (`yt_dlp::chat_line(12.0, "@ada", "hi")`), written a line at a time as yt-dlp writes it. A video it serves none of has none. `holds_chat(&gate)` holds each once its first line is written.
 - `app.worker().holds(&gate)` waits after the first minute it transcribes, and `fails_at(200.0, "message")` fails there.
@@ -177,7 +182,7 @@ app.net.replies("https://gql.twitch.tv/gql", |asked| {
 });
 ```
 
-Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, and `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file.
+Core tests use the same fakes without the app: `Library::new()` for the library, `Ffmpeg::at(dir.join("bin/ffmpeg"))` and the like for a program, `TempDir::new(name)` for files, `tools::hold_at(At::SettingsSave, &path, &gate)` to hold the library's own code at a point for a file, and `tools::path_for(&bin, &[dir])` for the PATH the system's programs are found on (`NvidiaSmi::in_dir(&dir)` there).
 
 ## Older libraries
 
@@ -200,7 +205,7 @@ let db = Db::open(&path).unwrap(); // upgraded from 29
 
 ## What's real and what isn't
 
-The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, and the updater. These still start their program directly, so with a fake in the bin folder they run its empty file and fail: the yt-dlp update's version check (`tools::update_yt_dlp`) and the GPU check (`gpu.rs`). The chat queue runs only once a test asks (`fetches_chats`), and the start's other jobs that reach the network (the missing thumbnails, the streamer cards) don't run.
+The library is SQLite with every migration, and files are files, in a temporary folder that goes with the test, or with the last app started on it. Programs, the network, the desktop and drags out of the window and onto it are faked. A restart starts the fakes anew: what a test told them before has to be told again, and the fake site serves each site's VOD the library has. A clip's progress goes by the test's clock, its download's part too; an edit's render's and the footage and video downloads' own go by the real one. A restart starts a new clock and no variables. These aren't faked, so a test can't reach them yet: the job queues' timing, and the updater. The yt-dlp update's version check answers, but the update before it checks the release's signature, which only the real release files pass. The chat queue runs only once a test asks (`fetches_chats`), and the start's other jobs that reach the network (the missing thumbnails, the streamer cards) don't run.
 
 A core test's own network: a link a test answers or a host it names is the fake's; any other goes to the network as before, for the tests that ask a site for real (`--ignored`, named `…_live`). Those are run alone: a test beside them that names a site's host takes it from them.
 

@@ -69,6 +69,8 @@ mod folder;
 #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 mod links;
 
+#[cfg(feature = "fake")]
+pub mod fake;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "macos")]

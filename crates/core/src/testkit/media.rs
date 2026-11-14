@@ -89,7 +89,9 @@ impl Media {
         std::fs::write(path, self.to_bytes()).unwrap();
     }
 
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+    /// What its file holds, as `write` writes it: for a file given another
+    /// way (a drop's bytes).
+    pub fn to_bytes(&self) -> Vec<u8> {
         format!("{MAGIC}{}\n", serde_json::to_string(self).unwrap()).into_bytes()
     }
 

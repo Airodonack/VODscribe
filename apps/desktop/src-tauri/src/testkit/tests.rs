@@ -1,7 +1,9 @@
 //! The app kit's own specs: the app starts on its fakes, and again on the
 //! library of one that quit or was killed; its commands are reached as the
 //! page reaches them; what it says and asks is heard; a drag out of the
-//! window ends where the test lets it go; and its screen is the test's.
+//! window ends where the test lets it go, and a drop onto it is received
+//! as the test gives it; it finds only the programs the test gives it; and
+//! its screen is the test's.
 
 use serde_json::json;
 
@@ -730,4 +732,87 @@ fn the_chat_queue_runs_once_asked_and_ends_with_its_test() {
     app.fetches_chats();
     gate.reached();
     drop(app);
+}
+
+/// A file with no path dropped on the window is received as the system's
+/// drop target hands it over: heard by name as it comes over, listed with
+/// the jobs while its bytes come, then added as a VOD, which the page opens.
+/// One its app fails to give, and one let go of, leave nothing; a drag of
+/// none the window takes is refused as it comes over.
+#[test]
+fn a_drop_of_files_with_no_path_is_received_as_the_test_gives_them() {
+    let app = TestApp::new();
+    let media = Media::video(60.0).to_bytes();
+    let mut given = app.drop_files(&[("Day 3.mp4", Some(media.len() as u64)), ("notes.txt", None)]);
+    assert_eq!(given.len(), 1, "the text file isn't taken");
+    let entered = app.heard("tauri://drag-enter");
+    assert_eq!(entered.last().unwrap()["paths"], json!(["Day 3.mp4"]));
+    assert_eq!(app.heard("tauri://drag-drop").last().unwrap()["paths"], json!([]));
+    let mut day3 = given.remove(0);
+    day3.give(&media[..10]).unwrap();
+    let jobs = app.invoke("list_jobs", json!({})).unwrap();
+    assert_eq!((jobs[0]["kind"].clone(), jobs[0]["label"].clone()), (json!("receive"), json!("Day 3.mp4")));
+    day3.give(&media[10..]).unwrap();
+    day3.whole();
+    app.threads_done();
+    let opened = app.heard("received").last().cloned().unwrap();
+    assert_eq!(opened["kind"], "open");
+    let vod = app.db().vod(opened["vod"].as_i64().unwrap()).unwrap().unwrap();
+    assert_eq!(Media::read(Path::new(vod.source_path.as_deref().unwrap())).map(|m| m.duration), Some(60.0));
+    // Failed by its app, and let go of: nothing left of either.
+    let mut failed = app.drop_files(&[("Day 4.mp4", None)]).remove(0);
+    failed.give(b"FAKE").unwrap();
+    failed.fails("the archive is broken");
+    drop(app.drop_files(&[("Day 5.mp4", None)]));
+    let failures: Vec<_> = app.heard("received").into_iter().filter(|r| r["kind"] == "failed").collect();
+    assert_eq!(failures.len(), 1, "a let-go is no failure: {failures:?}");
+    assert_eq!(failures[0]["name"], "Day 4.mp4");
+    let incoming = std::fs::read_dir(app.paths().received_incoming()).unwrap().count();
+    assert_eq!(incoming, 0, "something left being received");
+    assert_eq!(app.invoke("list_jobs", json!({})), Ok(json!([])));
+    // None the window takes: refused as it comes over.
+    let heard = app.heard("tauri://drag-enter").len();
+    assert!(app.drop_files(&[("notes.txt", None)]).is_empty());
+    assert_eq!(app.heard("tauri://drag-enter").len(), heard);
+}
+
+/// On Linux, a drop whose app saved nothing for the window (an archive
+/// manager that couldn't) is told to the page as a file not handed over.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_drop_given_nothing_is_told_to_the_page() {
+    let app = TestApp::new();
+    app.drop_gives_nothing("the archive manager couldn't save");
+    let told = app.heard("received");
+    assert_eq!(told, [json!({ "kind": "failed", "name": null, "why": "The app it came from didn't hand it over." })]);
+}
+
+/// Files with paths, and links from a browser, dropped on the window reach
+/// the page as Tauri's own drag-drop events, as paths.
+#[test]
+fn a_drop_of_paths_or_links_reaches_the_page_as_paths() {
+    let app = TestApp::new();
+    let file = app.paths().root.with_file_name("files").join("Day 3.mp4");
+    app.drop_paths(std::slice::from_ref(&file));
+    assert_eq!(app.heard("tauri://drag-drop").last().unwrap()["paths"], json!([file]));
+    app.drop_links(&["https://www.twitch.tv/videos/2901646294"]);
+    let dropped = app.heard("tauri://drag-drop");
+    assert_eq!(dropped.last().unwrap()["paths"], json!(["https://www.twitch.tv/videos/2901646294"]));
+    assert_eq!(app.heard("tauri://drag-enter").len(), 2);
+}
+
+/// A test's app finds no program of this computer's on the PATH, so it
+/// lacks yt-dlp once its own is gone, and has a graphics card only where
+/// the test gives it one (`gpu_status`).
+#[test]
+fn an_app_finds_only_the_programs_its_test_gives_it() {
+    let app = TestApp::new();
+    assert_eq!(app.invoke("gpu_status", json!({})).unwrap()["gpu"], json!(null));
+    assert!(vodscribe_core::tools::find_yt_dlp(&app.paths().bin()).is_some());
+    app.lacks_yt_dlp();
+    assert!(vodscribe_core::tools::find_yt_dlp(&app.paths().bin()).is_none(), "the computer's yt-dlp found");
+    assert_eq!(app.invoke("setup_status", json!({})).unwrap()["yt_dlp"], json!(false));
+    app.nvidia_smi().shows("NVIDIA GeForce RTX 4070", 12282, 11000);
+    let gpu = app.invoke("gpu_status", json!({})).unwrap()["gpu"].clone();
+    assert_eq!(gpu, json!({ "name": "NVIDIA GeForce RTX 4070", "total_mb": 12282, "free_mb": 11000 }));
 }

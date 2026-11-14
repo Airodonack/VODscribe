@@ -12,6 +12,10 @@ categories = ["gui", "os"]
 # Published once its API settles.
 publish = false
 
+[features]
+# A drop played without a system's drag, for an app's tests (`fake`).
+fake = []
+
 # The objc2 crates' versions as wry builds them.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

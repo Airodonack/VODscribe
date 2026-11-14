@@ -7,9 +7,11 @@
 //! temporary folder (`Library`, `TempDir`). What's outside the app is faked,
 //! each behind one seam in the app's code:
 //!
-//! - programs (`tools`): ffmpeg (`Ffmpeg`), yt-dlp (`YtDlp`) and the
-//!   transcription worker (`Worker`), run in this process by
-//!   `vodscribe_core::tools::spawn`, `output` and `status`;
+//! - programs (`tools`): ffmpeg (`Ffmpeg`), yt-dlp (`YtDlp`), the
+//!   transcription worker (`Worker`) and the graphics card's `nvidia-smi`
+//!   (`NvidiaSmi`), run in this process by `vodscribe_core::tools::spawn`,
+//!   `output` and `status`; and the PATH the system's are found on
+//!   (`tools::path_for`);
 //! - the network (`net`): where a name resolves (`net::public_url`), and
 //!   the answer to each request, by `net::get` and by the HTTP clients
 //!   (`net::agent`); the sites' own APIs answered as they answer (`sites`);
@@ -22,6 +24,7 @@ pub mod ffmpeg;
 pub mod library;
 pub mod media;
 pub mod net;
+pub mod nvidia_smi;
 pub mod sites;
 pub mod tools;
 pub mod worker;
@@ -34,6 +37,7 @@ pub use ffmpeg::Ffmpeg;
 pub use library::{Library, Released, at_version, back_to, newer, said};
 pub use media::Media;
 pub use net::{Net, Reply, Request};
+pub use nvidia_smi::NvidiaSmi;
 pub use tools::Gate;
 pub use worker::Worker;
 pub use yt_dlp::YtDlp;

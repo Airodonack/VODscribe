@@ -335,7 +335,8 @@ pub(crate) struct GpuStatus {
 #[tauri::command]
 pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatus> {
     let pack = state.paths.gpu_pack();
-    let gpu = tauri::async_runtime::spawn_blocking(gpu::detect).await.map_err(err)?;
+    let bin = state.paths.bin();
+    let gpu = tauri::async_runtime::spawn_blocking(move || gpu::detect(&bin)).await.map_err(err)?;
     Ok(GpuStatus {
         supported: gpu::supported(),
         installed: gpu::is_installed(&pack) && model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL),

@@ -221,7 +221,8 @@ fn the_fake_ffmpeg_keeps_the_pixel_format_and_tag_the_real_one_makes() {
 }
 
 /// A download held at the fake yt-dlp's gate has said nothing of how far
-/// it is: what the app reads of its progress comes once it's let go.
+/// it is: what the app reads of its progress comes once it's let go, a
+/// quarter at a time.
 #[test]
 fn a_fake_yt_dlp_held_says_nothing_of_its_progress_till_let_go() {
     let dir = TempDir::new("kit-yt-dlp-hold");
@@ -235,24 +236,16 @@ fn a_fake_yt_dlp_held_says_nothing_of_its_progress_till_let_go() {
     fake.holds(&gate);
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let (done, result) = mpsc::channel();
-    let (heard, ffmpeg, out) = (seen.clone(), dir.join("bin/ffmpeg"), dir.join("section"));
+    let (heard, out) = (seen.clone(), dir.join("audio"));
     std::thread::spawn(move || {
-        let wanted = fetch::Wanted::Section {
-            selector: "b",
-            ffmpeg: &ffmpeg,
-            start: 0.0,
-            end: 60.0,
-            matroska: true,
-            sound_only: false,
-        };
         let report = |p| heard.lock().unwrap().push(p);
-        done.send(fetch::download(&yt_dlp, &info_path, &out, wanted, &never(), report).is_ok()).unwrap();
+        done.send(fetch::download(&yt_dlp, &info_path, &out, fetch::Wanted::Audio, &never(), report).is_ok()).unwrap();
     });
     gate.reached();
     assert!(seen.lock().unwrap().is_empty(), "progress before it was let go");
     gate.open();
     assert_eq!(result.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
-    assert_eq!(*seen.lock().unwrap(), [0.25, 1.0]);
+    assert_eq!(*seen.lock().unwrap(), [0.25, 0.5, 0.75, 1.0]);
 }
 
 #[test]
@@ -1016,4 +1009,123 @@ fn the_fake_twitch_api_has_a_vods_chat() {
     assert!(crate::chat::fetch(&video, None, &dir.join("chat-1"), &mut store, &never(), |_| {}).unwrap());
     let said: Vec<(f64, &str, String)> = store.messages.iter().map(|m| (m.time, m.author.as_str(), m.text())).collect();
     assert_eq!(said, [(10.0, "ada", "hello".to_string()), (30.0, "bo", "o7".to_string())]);
+}
+
+/// The fake yt-dlp's download held halfway has written half of it to its
+/// part file and said so of a quarter only; let go, it says the rest.
+/// Stopped there, the next download carries on from the part file, as
+/// yt-dlp does, and once whole it isn't downloaded again.
+#[test]
+fn a_fake_yt_dlps_download_is_written_as_it_goes_and_carried_on() {
+    let dir = TempDir::new("kit-yt-dlp-goes");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    fake.serves(yt_dlp::details("youtube", "noa29qsTc4g", url, "The test video", 600.0));
+    let yt_dlp = std::sync::Arc::new(tools::YtDlp { path: fake.path().into(), js_runtime: None });
+    let info_path = dir.join("info.json");
+    fetch::probe(&yt_dlp, url, &info_path, &never()).unwrap();
+    let out = dir.join("audio");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let download = |stop: std::sync::Arc<AtomicBool>| {
+        let (yt_dlp, info_path, out, heard) = (yt_dlp.clone(), info_path.clone(), out.clone(), seen.clone());
+        std::thread::spawn(move || {
+            fetch::download(&yt_dlp, &info_path, &out, fetch::Wanted::Audio, &stop, |p| heard.lock().unwrap().push(p))
+        })
+    };
+    let half = Gate::new();
+    fake.holds_at(0.5, &half);
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let stopped = download(stop.clone());
+    half.reached();
+    assert_eq!(fetch::part_files(&out), [(dir.join("audio.m4a.part"), 2000)], "half of its 4000 bytes");
+    eventually("a quarter said", || *seen.lock().unwrap() == [0.25]);
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(stopped.join().unwrap().is_err());
+    // Carried on: from the half it had.
+    fake.holds_at(1.0, &Gate::opened());
+    seen.lock().unwrap().clear();
+    assert_eq!(download(std::sync::Arc::new(never())).join().unwrap().unwrap(), dir.join("audio.m4a"));
+    assert_eq!(*seen.lock().unwrap(), [0.75, 1.0]);
+    assert_eq!(Media::read(&dir.join("audio.m4a")).map(|m| m.duration), Some(600.0));
+    // Whole: not again.
+    seen.lock().unwrap().clear();
+    assert_eq!(download(std::sync::Arc::new(never())).join().unwrap().unwrap(), dir.join("audio.m4a"));
+    assert_eq!(*seen.lock().unwrap(), Vec::<f64>::new());
+}
+
+/// A section, which yt-dlp hands to ffmpeg, has its progress gauged from
+/// its part file's growth against the bitrate the fake prints before it
+/// (`tbr`, as the site's format has it): held halfway, having said only a
+/// quarter, the download reads as half done.
+#[test]
+fn a_fake_yt_dlps_section_grows_as_its_bitrate_says() {
+    let dir = TempDir::new("kit-yt-dlp-rate");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+    let mut details = yt_dlp::details("youtube", "noa29qsTc4g", url, "The test video", 600.0);
+    details["tbr"] = 8.0.into();
+    fake.serves(details);
+    let yt_dlp = tools::YtDlp { path: fake.path().into(), js_runtime: None };
+    let info_path = dir.join("info.json");
+    fetch::probe(&yt_dlp, url, &info_path, &never()).unwrap();
+    let half = Gate::new();
+    fake.holds_at(0.5, &half);
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (heard, ffmpeg, out) = (seen.clone(), dir.join("bin/ffmpeg"), dir.join("section"));
+    let downloading = std::thread::spawn(move || {
+        let wanted = fetch::Wanted::Section {
+            selector: "b",
+            ffmpeg: &ffmpeg,
+            start: 120.0,
+            end: 180.0,
+            matroska: true,
+            sound_only: false,
+        };
+        fetch::download(&yt_dlp, &info_path, &out, wanted, &never(), |p| heard.lock().unwrap().push(p))
+    });
+    half.reached();
+    // 8 kbit/s for a minute: 60,000 bytes, half of them in.
+    assert_eq!(fetch::part_files(&dir.join("section")), [(dir.join("section.mkv.part"), 30_000)]);
+    eventually("half gauged", || seen.lock().unwrap().last() == Some(&0.5));
+    half.open();
+    assert_eq!(downloading.join().unwrap().unwrap(), dir.join("section.mkv"));
+}
+
+/// The fake yt-dlp says its version, as `--version` prints it, and a new
+/// one once told.
+#[test]
+fn a_fake_yt_dlp_says_its_version() {
+    let dir = TempDir::new("kit-yt-dlp-version");
+    let fake = YtDlp::at(dir.join("bin/yt-dlp"));
+    let version = || {
+        let out = tools::output(tools::command(fake.path()).arg("--version")).unwrap();
+        (out.status.success(), String::from_utf8(out.stdout).unwrap())
+    };
+    assert_eq!(version(), (true, format!("{}\n", yt_dlp::VERSION)));
+    fake.is_version("2025.11.12");
+    assert_eq!(version(), (true, "2025.11.12\n".to_string()));
+}
+
+/// A PATH a test gives the app's programs' folder is the only one its
+/// lookups see (`tools::on_path`): an empty one finds no system program,
+/// though this computer has it; one holding a fake `nvidia-smi` finds that,
+/// and the GPU check reads the card it says, or none.
+#[test]
+fn a_tests_path_is_all_the_app_finds_on_it() {
+    let dir = TempDir::new("kit-path");
+    let bin = dir.join("bin");
+    super::tools::path_for(&bin, &[]);
+    assert_eq!(crate::tools::on_path(&bin, "sh"), None, "the computer's PATH looked in");
+    assert!(crate::tools::find_yt_dlp(&bin).is_none());
+    assert_eq!(crate::gpu::detect(&bin).map(|g| g.name), None);
+    let smi = NvidiaSmi::in_dir(&dir.join("driver"));
+    super::tools::path_for(&bin, &[dir.join("driver")]);
+    assert_eq!(crate::tools::on_path(&bin, "nvidia-smi").as_deref(), Some(smi.path()));
+    assert!(crate::gpu::detect(&bin).is_none(), "no card");
+    smi.shows("NVIDIA GeForce RTX 4070", 12282, 11000);
+    let card = crate::gpu::detect(&bin).unwrap();
+    assert_eq!((card.name.as_str(), card.total_mb, card.free_mb), ("NVIDIA GeForce RTX 4070", 12282, 11000));
+    // Let go of with its folder: the computer's PATH again.
+    super::tools::let_go(&dir);
+    assert_eq!(super::tools::path_of(&bin), None);
 }

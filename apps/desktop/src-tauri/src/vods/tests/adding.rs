@@ -409,6 +409,32 @@ fn a_file_of_the_apps_own_data_is_added_only_if_it_was_received() {
     assert_eq!(vods(&app).len(), 1);
 }
 
+/// A second file received from a drop under the same name as the first is
+/// a VOD of its own, each with its own file, not the first found again
+/// (core db/tests.rs `a_second_file_received_under_the_same_name_is_a_new_vod`,
+/// moved up to the drop: its doc, "Files received from drops arrive under
+/// the name their app gave, which is free again once the first is renamed
+/// for its VOD: a second file of that name is a VOD of its own").
+#[test]
+fn a_second_file_received_under_the_same_name_is_a_new_vod() {
+    let app = TestApp::new();
+    let received = |media: &Media| {
+        let mut file = app.drop_files(&[("Day 3.mp4", None)]).remove(0);
+        file.give(&media.to_bytes()).unwrap();
+        file.whole();
+        app.threads_done();
+        let opened = app.heard("received").last().cloned().unwrap();
+        assert_eq!(opened["kind"], "open", "{opened}");
+        app.db().vod(opened["vod"].as_i64().unwrap()).unwrap().unwrap()
+    };
+    let first = received(&Media::video(60.0));
+    let second = received(&Media::video(90.0));
+    assert_ne!(first.id, second.id, "the first file's VOD found again");
+    let length = |vod: &Vod| Media::read(Path::new(vod.source_path.as_deref().unwrap())).map(|m| m.duration);
+    assert_eq!((length(&first), length(&second)), (Some(60.0), Some(90.0)));
+    assert_eq!(vods(&app).len(), 2);
+}
+
 /// yt-dlp's details of site VOD `vod`, naming no channel.
 fn details_of(vod: &Vod) -> Value {
     let info = &vod.info;

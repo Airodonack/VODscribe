@@ -287,9 +287,9 @@ pub fn held_at(at: At, path: &Path) {
 }
 
 /// Opens and forgets each gate held for a file in `dir` (`hold_at`), and
-/// forgets that a quit stopped the runs there for good (`stop_tracked_in`):
-/// a test's end, so nothing it held waits on, and the next app started on
-/// its folder runs.
+/// forgets that a quit stopped the runs there for good (`stop_tracked_in`)
+/// and the PATH given to a folder there (`path_for`): a test's end, so
+/// nothing it held waits on, and the next app started on its folder runs.
 pub fn let_go(dir: &Path) {
     held().retain(|(_, path, gate)| {
         let ours = path.starts_with(dir);
@@ -299,6 +299,30 @@ pub fn let_go(dir: &Path) {
         !ours
     });
     tracking().quit.retain(|quit| !quit.starts_with(dir));
+    paths().retain(|(bin, _)| !bin.starts_with(dir));
+}
+
+/// The PATH each test gave the app whose programs are in a folder
+/// (`path_for`): the tests run at once, in one process, which has one PATH.
+fn paths() -> MutexGuard<'static, Vec<(PathBuf, Vec<PathBuf>)>> {
+    static PATHS: Mutex<Vec<(PathBuf, Vec<PathBuf>)>> = Mutex::new(Vec::new());
+    PATHS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// From now, the app whose own programs are in `bin_dir` (`Paths::bin`)
+/// finds the system's (`tools::on_path`: yt-dlp, ffmpeg, a JavaScript
+/// runtime, nvidia-smi) in `dirs` alone, as if they were its PATH, not
+/// this computer's: none at all for none. Until `let_go` of a folder it's
+/// in.
+pub fn path_for(bin_dir: &Path, dirs: &[PathBuf]) {
+    let mut paths = paths();
+    paths.retain(|(bin, _)| bin != bin_dir);
+    paths.push((bin_dir.to_path_buf(), dirs.to_vec()));
+}
+
+/// The PATH a test gave the app whose programs are in `bin_dir`, if one did.
+pub(crate) fn path_of(bin_dir: &Path) -> Option<Vec<PathBuf>> {
+    paths().iter().find(|(bin, _)| bin == bin_dir).map(|(_, dirs)| dirs.clone())
 }
 
 /// The runs the app tracks, as `tools::stop_tracked` keeps the processes.

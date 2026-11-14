@@ -4,6 +4,8 @@ Read what a drag dropped on your window offers: the plain paths, the virtual fil
 
 It reads data only. Your drop target stays yours: from its drop handler you pass the native drag object, and you get the paths, the virtual items (a name, a size if known), and a fetch of each item into a folder or a writer, with progress and cancel.
 
+With the `fake` feature, `fake::item` and `fake::fetch` play a drop without a system's drag, its bytes given by your tests.
+
 Windows, macOS (file promises) and Linux work. On Linux (GTK 3) it reads the files of sandboxed apps (the document portal's file transfer) as paths, and has archive managers save theirs for you (XdndDirectSave from File Roller and Engrampa, Ark's own way on KDE).
 
 ```rust

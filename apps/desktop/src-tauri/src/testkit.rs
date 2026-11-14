@@ -7,7 +7,10 @@
 //! kept (`TestApp::heard`), and what the system's desktop would be asked to
 //! do is heard by `Desktop` (system.rs). A drag out of the window begins
 //! no system's drag: `Drags` keeps it, and the test lets it go where it
-//! says (drag_source). The app's clock stands still till the test moves it
+//! says (drag_source); a drop onto it is played as the system's drop target
+//! hands it over (`drop_files`, receive.rs), its files' bytes given by the
+//! test. None of the computer's programs is found on the PATH: the test's
+//! computer has only those it gives it (`nvidia_smi`). The app's clock stands still till the test moves it
 //! (`Clock`), and the variables it was started with are the test's own
 //! (`Env`). The window has no screen for the player to draw on till the
 //! test gives it one (`Screen`), and the player's sound goes to no device.
@@ -35,7 +38,9 @@ use serde_json::Value;
 use tauri::{Listener, Manager};
 use vodscribe_core::db::{Clip, ClipStatus, Db, Vod};
 use vodscribe_core::testkit::tools::{self as fakes, At, Fake, Run};
-use vodscribe_core::testkit::{Ffmpeg, Gate, Media, Net, TempDir, Worker, YtDlp, eventually, library, yt_dlp};
+use vodscribe_core::testkit::{
+    Ffmpeg, Gate, Media, Net, NvidiaSmi, TempDir, Worker, YtDlp, eventually, library, yt_dlp,
+};
 
 use crate::{AppHandle, AppState, CmdResult, Rt, WebviewWindow};
 
@@ -60,6 +65,8 @@ const EVENTS: &[&str] = &[
     "jobs",
     "player-time",
     "received",
+    "tauri://drag-drop",
+    "tauri://drag-enter",
     "restored",
     "video-progress",
     "vod",
@@ -84,6 +91,9 @@ pub(crate) struct TestApp {
     pub(crate) net: Net,
     /// The transcription worker the app runs, faked once asked for (`worker`).
     worker: OnceLock<Worker>,
+    /// The graphics card's driver tool on the app's PATH, faked once asked
+    /// for (`nvidia_smi`).
+    nvidia_smi: OnceLock<NvidiaSmi>,
     heard: Arc<Mutex<HashMap<String, Vec<Value>>>>,
     /// Where the test's own files go (a VOD's file on this computer),
     /// outside the library's folder.
@@ -242,6 +252,9 @@ impl TestApp {
         let yt_dlp = YtDlp::in_bin(&paths.bin());
         let net = Net::new();
         net.sites();
+        // No program of this computer's is found on the PATH (`tools::on_path`):
+        // the test's computer has only what it says (`nvidia_smi`).
+        fakes::path_for(&paths.bin(), &[]);
         let app = tauri::test::mock_builder()
             .invoke_handler(crate::commands())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -293,6 +306,7 @@ impl TestApp {
             yt_dlp,
             net,
             worker,
+            nvidia_smi: OnceLock::new(),
             heard,
             files,
             dragged: AtomicU64::new(0),
@@ -469,6 +483,24 @@ impl TestApp {
         self.worker.get_or_init(|| fake_worker(&self.paths()))
     }
 
+    /// The computer has no yt-dlp: neither the app's own (the fake's file
+    /// gone) nor one on the PATH (none of the computer's is found: `on`), as
+    /// before setup has downloaded it. Till the app starts again.
+    pub(crate) fn lacks_yt_dlp(&self) {
+        std::fs::remove_file(self.yt_dlp.path()).unwrap();
+    }
+
+    /// The graphics card driver's `nvidia-smi`, faked, on the app's PATH
+    /// (`gpu::detect`): the computer has no card till it `shows` one.
+    pub(crate) fn nvidia_smi(&self) -> &NvidiaSmi {
+        self.nvidia_smi.get_or_init(|| {
+            let driver = self.paths.root.with_file_name("driver");
+            let smi = NvidiaSmi::in_dir(&driver);
+            fakes::path_for(&self.paths.bin(), &[driver]);
+            smi
+        })
+    }
+
     /// Each storyboards' sweep from now (`storyboards::sweep`, the start's)
     /// waits at `gate` once it has read the library's VODs, before it goes
     /// through the storyboards: a VOD can be added meanwhile.
@@ -545,6 +577,70 @@ impl TestApp {
         let n = self.drags_ended.fetch_add(1, Ordering::SeqCst);
         eventually(&format!("drag {} ended", n + 1), || self.heard("drag-ended").len() > n);
         self.heard("drag-ended")[n].clone()
+    }
+
+    /// Files with paths on this computer dragged from another app (a file
+    /// manager) and let go on the window: the page hears the drag come over
+    /// and its drop, with the paths, as Tauri's own events
+    /// ("tauri://drag-enter", "tauri://drag-drop"), from the window's own
+    /// drop target (receive.rs) as on Windows.
+    pub(crate) fn drop_paths(&self, paths: &[PathBuf]) {
+        use crate::drop_target::{Event, Target};
+        let target = self.drop_target();
+        target.heard(Event::Enter { paths: paths.to_vec(), names: vec![], links: vec![], at: DROPPED_AT });
+        target.heard(Event::Drop { paths: paths.to_vec(), links: vec![], at: DROPPED_AT });
+    }
+
+    /// Links dragged from a browser (`https://…`, as text) and let go on
+    /// the window: the page hears them as a drop's paths, as wry gives them
+    /// on Linux.
+    pub(crate) fn drop_links(&self, links: &[&str]) {
+        use crate::drop_target::{Event, Target};
+        let target = self.drop_target();
+        let links: Vec<String> = links.iter().map(|l| l.to_string()).collect();
+        target.heard(Event::Enter { paths: vec![], names: vec![], links: links.clone(), at: DROPPED_AT });
+        target.heard(Event::Drop { paths: vec![], links, at: DROPPED_AT });
+    }
+
+    /// Files with no path on this computer (a video inside a zip folder in
+    /// Explorer, a macOS file promise, a file an archive manager saves),
+    /// each a name and its length if its app says, dragged over the window
+    /// and let go there, as the system's drop target hands them over
+    /// (drop_target): those the window takes are heard by name as the drag
+    /// comes over, then received (receive.rs); one offering none it takes
+    /// is refused as it comes over, and nothing is heard. Each received is
+    /// given, in order: the test gives its bytes (`give`) and ends it whole
+    /// (`whole`), failed by its app (`fails`), or let go of (dropped:
+    /// canceled, as the window closing), before the app ends.
+    pub(crate) fn drop_files(&self, files: &[(&str, Option<u64>)]) -> Vec<Giving> {
+        use crate::drop_target::{Event, Target};
+        let target = self.drop_target();
+        let taken: Vec<_> = files
+            .iter()
+            .filter(|(name, _)| target.takes(name))
+            .map(|(name, size)| dragndrop_target::fake::item(name, *size))
+            .collect();
+        if taken.is_empty() {
+            return Vec::new();
+        }
+        let names = taken.iter().map(|item| item.name().to_string()).collect();
+        target.heard(Event::Enter { paths: vec![], names, links: vec![], at: DROPPED_AT });
+        target.heard(Event::Drop { paths: vec![], links: vec![], at: DROPPED_AT });
+        dragndrop_target::fake::fetch(target.incoming(taken))
+    }
+
+    /// A drop's app gave nothing at all, saying `why` (Linux: an archive
+    /// manager that couldn't save its files, a portal's files that didn't
+    /// come), as the window's drop target tells it.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn drop_gives_nothing(&self, why: &str) {
+        use crate::drop_target::Target;
+        self.drop_target().nothing_given(&dragndrop_target::Error::Source(why.into()));
+    }
+
+    /// The window's side of its drops, as the system's drop target is given it.
+    fn drop_target(&self) -> impl crate::drop_target::Target {
+        crate::receive::target(self.handle(), self.window.label())
     }
 
     /// Runs a command's future (`clips::add_clip(app.handle().clone(), …)`)
@@ -708,6 +804,12 @@ impl TestApp {
         Media::read(Path::new(path)).unwrap_or_else(|| panic!("no media at {path}"))
     }
 }
+
+/// Where on the window a test's drop is let go (`TestApp::drop_files`).
+const DROPPED_AT: (f64, f64) = (100.0, 100.0);
+
+/// A file of a test's drop, being received (`TestApp::drop_files`).
+pub(crate) type Giving = dragndrop_target::fake::Giving;
 
 /// The fakes a test tells what to do before a start runs (`TestApp::on_with`).
 pub(crate) struct Fakes<'a> {

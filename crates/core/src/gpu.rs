@@ -43,14 +43,14 @@ pub struct GpuInfo {
     pub free_mb: u64,
 }
 
-/// Queries the first NVIDIA GPU. `nvidia-smi` ships with the driver on Linux and Windows.
-pub fn detect() -> Option<GpuInfo> {
-    let smi = which::which("nvidia-smi").ok()?;
-    let out = tools::command(&smi)
-        .args(["--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"])
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+/// Queries the first NVIDIA GPU. `nvidia-smi` ships with the driver on Linux
+/// and Windows, and is found on PATH (`tools::on_path`, for the app whose
+/// own programs are in `bin_dir`).
+pub fn detect(bin_dir: &Path) -> Option<GpuInfo> {
+    let smi = tools::on_path(bin_dir, "nvidia-smi")?;
+    let mut cmd = tools::command(&smi);
+    cmd.args(["--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"]).stdin(Stdio::null());
+    let out = tools::output(&mut cmd).ok()?;
     if !out.status.success() {
         return None;
     }

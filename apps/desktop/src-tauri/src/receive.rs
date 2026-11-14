@@ -226,6 +226,8 @@ fn tidy_in(dir: &std::path::Path, kept: Option<&std::collections::HashSet<std::p
 
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 pub(crate) use taking::take_drops;
+#[cfg(test)]
+pub(crate) use taking::target;
 
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod taking {
@@ -305,6 +307,13 @@ mod taking {
             Err(e) => eprintln!("The window can't take files saved for it: {e:#}"),
         }
         Ok(())
+    }
+
+    /// The window `label`'s side of its drops, as `take_drops` gives it to
+    /// the system's drop target: for a test's drop (`testkit::Drops`).
+    #[cfg(test)]
+    pub(crate) fn target(app: &AppHandle, label: &str) -> impl drop_target::Target {
+        Window { app: app.clone(), label: label.into() }
     }
 
     /// Where a drag over the window is, as Tauri's drag-drop events say it.
@@ -545,7 +554,8 @@ mod taking {
                 return;
             }
             // Added off the reading thread (it may be the window's).
-            std::thread::spawn(move || {
+            let app = self.app.clone();
+            let adding = std::thread::spawn(move || {
                 match crate::vods::add_received(&self.app, &self.to) {
                     // Off the jobs first, so the page opens it with its job gone.
                     Ok(vod) => {
@@ -562,6 +572,11 @@ mod taking {
                     }
                 }
             });
+            // A test's app waits for it before it ends.
+            #[cfg(test)]
+            crate::testkit::started(&app, adding);
+            #[cfg(not(test))]
+            drop((app, adding));
         }
     }
 

@@ -70,7 +70,7 @@ impl YtDlp {
 /// Prefers the managed yt-dlp; a system install is often too stale for YouTube.
 pub fn find_yt_dlp(bin_dir: &Path) -> Option<YtDlp> {
     let managed = managed_yt_dlp(bin_dir);
-    let path = if managed.is_file() { managed } else { which::which("yt-dlp").ok()? };
+    let path = if managed.is_file() { managed } else { on_path(bin_dir, "yt-dlp")? };
     Some(YtDlp { path, js_runtime: find_js_runtime(bin_dir) })
 }
 
@@ -78,7 +78,7 @@ pub fn find_yt_dlp(bin_dir: &Path) -> Option<YtDlp> {
 pub fn find_js_runtime(bin_dir: &Path) -> Option<(&'static str, PathBuf)> {
     ["deno", "node", "bun"].into_iter().find_map(|name| {
         let local = crate::deps::managed_path(bin_dir, name);
-        let path = if local.is_file() { local } else { which::which(name).ok()? };
+        let path = if local.is_file() { local } else { on_path(bin_dir, name)? };
         Some((name, path))
     })
 }
@@ -89,7 +89,21 @@ pub fn find_ffmpeg(bin_dir: &Path) -> Option<PathBuf> {
     if local.is_file() {
         return Some(local);
     }
-    which::which("ffmpeg").ok()
+    on_path(bin_dir, "ffmpeg")
+}
+
+/// The system's program `name`, found on PATH, for the app whose own
+/// programs are in `bin_dir` (`Paths::bin`). In a test build, a test may
+/// give that folder a PATH of its own (`testkit::tools::path_for`): only
+/// that is looked in, so the tests' computer has no program it doesn't say.
+pub fn on_path(bin_dir: &Path, name: &str) -> Option<PathBuf> {
+    #[cfg(any(test, feature = "testkit"))]
+    if let Some(dirs) = crate::testkit::tools::path_of(bin_dir) {
+        let path = std::env::join_paths(dirs).ok().filter(|p| !p.is_empty())?;
+        return which::which_in(name, Some(path), bin_dir).ok();
+    }
+    let _ = bin_dir;
+    which::which(name).ok()
 }
 
 /// Whether `ffmpeg` (as `find_ffmpeg` found it) is VODscribe's own, the one
@@ -247,7 +261,7 @@ fn file_sha256(path: &Path) -> Option<String> {
 /// than with its own `-U`) and describes the result.
 pub fn update_yt_dlp(bin_dir: &Path, on_progress: impl FnMut(Progress)) -> Result<String> {
     let (path, changed) = install_yt_dlp(bin_dir, &AtomicBool::new(false), on_progress)?;
-    let out = command(&path).arg("--version").output().context("run yt-dlp --version")?;
+    let out = output(command(&path).arg("--version")).context("run yt-dlp --version")?;
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
     Ok(if changed {
         format!("Updated yt-dlp to {version} · signature and SHA‑256 checked")

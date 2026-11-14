@@ -575,7 +575,7 @@ fn plan_transcription(
     let Ok(program) = tools::sidecar("vodscribe-worker-cuda") else {
         return skip("this version of VODscribe can't use graphics cards");
     };
-    let Some(info) = gpu::detect() else {
+    let Some(info) = gpu::detect(&paths.bin()) else {
         return skip("no NVIDIA graphics card was found");
     };
     let Some(batch) = gpu::batch_for_free_vram(info.free_mb) else {
