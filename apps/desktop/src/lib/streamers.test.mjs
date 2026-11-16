@@ -1,8 +1,9 @@
-// Streamer cards (streamers.ts) and the fields annotations give them (annotations.ts): node --test apps/desktop/src/lib/streamers.test.mjs
+// Streamer cards (streamers.ts): node --test apps/desktop/src/lib/streamers.test.mjs
+// Sources: streamers.ts's doc comments; CHANGELOG.md 0.7.2 ("Names open a streamer card.", "Refresh a VOD's details.").
+// A card's format and version, and the card id's rule, are tested in annotations.test.mjs.
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import { test } from "node:test";
-import { cardId, parseAnnotations } from "./annotations.ts";
 
 // streamers.ts imports "./annotations" as the page's bundler finds it; here it
 // is the .ts file it is.
@@ -15,7 +16,8 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }`),
 );
-const { CardCache, accountKey, cardIdOf, cardView, httpsUrl, readStreamer } = await import("./streamers.ts");
+const { CONTEXT_TITLES, CardCache, accountKey, cardIdOf, cardView, httpsUrl, readStreamer } =
+  await import("./streamers.ts");
 
 /** A card file of Quill's, with `fields`. @param {Record<string, unknown>} fields */
 const card = (fields) => ({ format: "vodscribe-streamer", version: 1, id: "quill", ...fields });
@@ -24,65 +26,121 @@ const index = (accounts) => ({ format: "vodscribe-streamers", version: 1, accoun
 /** An account, typed as one. @param {import("./annotations").Account["platform"]} platform @param {string} login */
 const A = (platform, login) => ({ platform, login });
 const twitch = A("twitch", "Quill_Live");
+/** A card as read, from `fields`. @param {Record<string, unknown>} fields */
+const read = (fields) => readStreamer(card(fields), "quill");
 
+// Reading a card.
+
+/** streamers.ts `Streamer` ("Everything in a card but its id may be missing, and the card shows only what's there"). */
 test("a card with only its id reads as one with nothing in it", () => {
-  assert.deepEqual(readStreamer(card({}), "quill"), {
-    id: "quill",
-    channels: [],
-    aliases: [],
-    socials: [],
-    contexts: {},
+  assert.deepEqual(read({}), { id: "quill", channels: [], aliases: [], socials: [], contexts: {} });
+});
+
+/** streamers.ts `readStreamer` ("What's in it that can't be read is left out"); `text` (trimmed, 200 characters at most). */
+test("a card's name is read trimmed, and left out when it isn't text or is too long", () => {
+  assert.equal(read({ name: "  Quill  " })?.name, "Quill");
+  for (const bad of ["", "   ", 3, null, "q".repeat(201)])
+    assert.equal(read({ name: bad })?.name, undefined, String(bad));
+  assert.equal(read({ name: "q".repeat(200) })?.name, "q".repeat(200));
+});
+
+/** streamers.ts `StreamerFile` (`avatar`: "one of their accounts ... Never a picture's address"). */
+test("a card's picture is one of their accounts, or none", () => {
+  assert.deepEqual(read({ avatar: twitch })?.avatar, twitch);
+  assert.equal(read({ avatar: { platform: "vimeo", login: "q" } })?.avatar, undefined);
+  assert.equal(read({ avatar: "https://img.example/q.png" })?.avatar, undefined);
+});
+
+/** streamers.ts `readStreamer` ("a channel on a site not listed" is left out); `StreamerFile` (`channels`). */
+test("a card's channels are the accounts that can be read, each once", () => {
+  const got = read({
+    channels: [
+      twitch,
+      A("twitch", "quill_live"),
+      A("kick", "../x"),
+      { platform: "vimeo", login: "q" },
+      A("youtube", "@quill"),
+      "quill",
+    ],
   });
+  assert.deepEqual(got?.channels, [twitch, A("youtube", "@quill")]);
 });
 
-test("a card of another format, version or person isn't one", () => {
-  assert.equal(readStreamer(card({ format: "vodscribe-annotations" }), "quill"), null);
-  assert.equal(readStreamer(card({ version: 2 }), "quill"), null);
-  assert.equal(readStreamer(card({}), "other"), null);
-  assert.equal(readStreamer(null, "quill"), null);
-  assert.equal(readStreamer("quill", "quill"), null);
+/** streamers.ts `readStreamer` (aliases: text, once each). */
+test("a card's other names are read once each, the blank and what isn't text left out", () => {
+  assert.deepEqual(read({ aliases: ["Q", " Q ", "", 3, "Quilly"] })?.aliases, ["Q", "Quilly"]);
 });
 
-test("what can't be read in a card is left out, the rest kept", () => {
-  const got = readStreamer(
-    card({
-      name: "  Quill  ",
-      avatar: { platform: "vimeo", login: "q" },
-      channels: [twitch, A("twitch", "quill_live"), A("kick", "../x"), A("youtube", "@quill"), "quill"],
-      aliases: ["Q", " Q ", "", 3],
-      socials: [
-        { label: "Bluesky", url: "https://bsky.app/profile/quill.example" },
-        { url: "http://quill.example" },
-        { url: "javascript:alert(1)" },
-        { url: "https://quill.example/" },
-      ],
-      contexts: {
-        nopixel: {
-          characters: [{ name: "Ivy Quill", wiki: "https://nopixel.fandom.com/wiki/Ivy_Quill" }, { name: "" }],
-        },
-        "Bad Key": { characters: [{ name: "x" }] },
-        empty: { characters: [] },
-        other: { title: "Other server", characters: [{ name: "Ivy", wiki: "http://wiki.example" }] },
-      },
-    }),
-    "quill",
-  );
-  assert.deepEqual(got, {
-    id: "quill",
-    name: "Quill",
-    channels: [twitch, A("youtube", "@quill")],
-    aliases: ["Q"],
-    socials: [{ label: "Bluesky", url: "https://bsky.app/profile/quill.example" }, { url: "https://quill.example/" }],
+/** streamers.ts `readStreamer` ("a link that isn't `https`" is left out); `httpsUrl`. */
+test("a card's other pages are links only when they are https, with their label when they have one", () => {
+  const got = read({
+    socials: [
+      { label: "Bluesky", url: "https://bsky.app/profile/quill.example" },
+      { url: "http://quill.example" },
+      { url: "javascript:alert(1)" },
+      { label: "No link" },
+      null,
+      { url: "https://quill.example/", label: " " },
+    ],
+  });
+  assert.deepEqual(got?.socials, [
+    { label: "Bluesky", url: "https://bsky.app/profile/quill.example" },
+    { url: "https://quill.example/" },
+  ]);
+});
+
+/** streamers.ts `readStreamer` ("a section with no characters" is left out); `ContextSection` ("its heading (else `CONTEXT_TITLES`', else its id)"). */
+test("a card's contexts keep the sections with characters, headed by their title, else the known one, else their id", () => {
+  assert.equal(CONTEXT_TITLES.nopixel, "NoPixel");
+  const got = read({
     contexts: {
-      nopixel: {
-        title: "NoPixel",
-        characters: [{ name: "Ivy Quill", wiki: "https://nopixel.fandom.com/wiki/Ivy_Quill" }],
-      },
+      nopixel: { characters: [{ name: "Ivy Quill" }] },
       other: { title: "Other server", characters: [{ name: "Ivy" }] },
+      plain: { characters: [{ name: "Jo" }] },
+      empty: { characters: [] },
+      noneat: {},
+      "Bad Key": { characters: [{ name: "x" }] },
+      text: "nopixel",
     },
   });
+  assert.deepEqual(got?.contexts, {
+    nopixel: { title: "NoPixel", characters: [{ name: "Ivy Quill" }] },
+    other: { title: "Other server", characters: [{ name: "Ivy" }] },
+    plain: { title: "plain", characters: [{ name: "Jo" }] },
+  });
 });
 
+/** streamers.ts `Character` ("its name, and its wiki page (`https`)"). */
+test("a character keeps its name, and its wiki page only when it is https", () => {
+  const got = read({
+    contexts: {
+      nopixel: {
+        characters: [
+          { name: "Ivy Quill", wiki: "https://nopixel.fandom.com/wiki/Ivy_Quill" },
+          { name: "Ivy", wiki: "http://wiki.example" },
+          { name: "" },
+          { wiki: "https://wiki.example" },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(got?.contexts.nopixel.characters, [
+    { name: "Ivy Quill", wiki: "https://nopixel.fandom.com/wiki/Ivy_Quill" },
+    { name: "Ivy" },
+  ]);
+});
+
+/** streamers.ts `MOST` ("The most a card brings of each, short of what would make it a page"). */
+test("a card brings at most fifty of each list", () => {
+  const got = read({
+    channels: Array.from({ length: 80 }, (_, i) => A("twitch", `q${i}`)),
+    aliases: Array.from({ length: 80 }, (_, i) => `a${i}`),
+    socials: Array.from({ length: 80 }, (_, i) => ({ url: `https://q${i}.example/` })),
+  });
+  assert.deepEqual([got?.channels.length, got?.aliases.length, got?.socials.length], [50, 50, 50]);
+});
+
+/** streamers.ts `httpsUrl` ("`value` as an address a card may link to: `https`, and nothing that isn't one"). */
 test("only https addresses are links", () => {
   assert.equal(httpsUrl("https://a.example/x"), "https://a.example/x");
   assert.equal(httpsUrl(" https://a.example "), "https://a.example/");
@@ -90,20 +148,39 @@ test("only https addresses are links", () => {
     assert.equal(httpsUrl(bad), null, String(bad));
 });
 
-test("an account's card id is in the index by its site and login in lower case", () => {
+// The index.
+
+/** streamers.ts `accountKey`, `StreamerIndex` ("each account's card id, by \"<platform>/<login in lower case>\""). */
+test("an account's key in the index is its site and login in lower case", () => {
   assert.equal(accountKey(twitch), "twitch/quill_live");
+  assert.equal(accountKey(A("youtube", "@Quill")), "youtube/@quill");
+});
+
+/** streamers.ts `cardIdOf` ("The card id of `account` in `index` ..., or null: none there, or no index"). */
+test("an account's card id is found in the index by its key, or is none", () => {
   const idx = index({ "twitch/quill_live": "quill", "kick/bad": "Not An Id" });
   assert.equal(cardIdOf(idx, twitch), "quill");
+  assert.equal(cardIdOf(idx, A("twitch", "QUILL_LIVE")), "quill", "any case");
   assert.equal(cardIdOf(idx, A("kick", "bad")), null, "an id that can't be one");
   assert.equal(cardIdOf(idx, A("kick", "quill")), null, "not there");
   assert.equal(cardIdOf(idx, A("twitch", "constructor")), null, "only the index's own keys");
   assert.equal(cardIdOf(null, twitch), null, "no index");
-  assert.equal(cardIdOf({ ...idx, version: 2 }, twitch), null, "an index of another shape");
+  assert.equal(cardIdOf({ ...index({}), accounts: null }, twitch), null, "an index with no accounts");
 });
 
-test("a card shows what its file has, else what the cast says, and no section the VOD doesn't name", () => {
-  const member = { aliases: ["Quilly"], account: A("kick", "quill") };
-  // Nothing from the file host: the cast's name, aliases and account.
+// What a card shows.
+
+const member = { aliases: ["Quilly"], account: A("kick", "quill") };
+const streamer = read({
+  name: "Quill",
+  channels: [A("youtube", "@quill"), twitch],
+  aliases: ["Quill", "Q"],
+  socials: [{ url: "https://www.quill.example/" }],
+  contexts: { nopixel: { characters: [{ name: "Ivy Quill" }] }, gta: { characters: [{ name: "Jo" }] } },
+});
+
+/** streamers.ts `cardView` ("where it has it, else what the VOD's cast says (`named`)"). */
+test("with no card from the file host, a card shows what the cast says", () => {
   assert.deepEqual(cardView(member, "Ivy (Quill)", null, ["nopixel"]), {
     name: "Ivy (Quill)",
     avatar: A("kick", "quill"),
@@ -112,7 +189,10 @@ test("a card shows what its file has, else what the cast says, and no section th
     socials: [],
     sections: [],
   });
-  // No account either: a name, and nothing else.
+});
+
+/** streamers.ts `CardView` ("each list empty when there's nothing for it, and then not drawn at all"). */
+test("a cast member with no account and no card has a name and nothing else", () => {
   assert.deepEqual(cardView({ aliases: [] }, "Jules", null, []), {
     name: "Jules",
     avatar: null,
@@ -121,106 +201,200 @@ test("a card shows what its file has, else what the cast says, and no section th
     socials: [],
     sections: [],
   });
-  const streamer = readStreamer(
-    card({
-      name: "Quill",
-      channels: [A("youtube", "@quill"), twitch],
-      aliases: ["Quill", "Q"],
-      socials: [{ url: "https://www.quill.example/" }],
-      contexts: { nopixel: { characters: [{ name: "Ivy Quill" }] } },
-    }),
-    "quill",
-  );
-  const full = cardView(member, "Ivy (Quill)", streamer, ["nopixel"]);
-  assert.equal(full.name, "Quill");
-  assert.deepEqual(full.aliases, ["Q"], "not the name it's headed by");
-  assert.deepEqual(
-    full.channels.map((c) => c.platform),
-    ["youtube", "twitch", "kick"],
-    "the card's, then the cast's",
-  );
-  assert.deepEqual(full.avatar, A("kick", "quill"), "the cast's account, not YouTube's");
-  assert.deepEqual(full.socials, [{ label: "quill.example", href: "https://www.quill.example/" }]);
-  assert.deepEqual(full.sections, [{ id: "nopixel", title: "NoPixel", characters: [{ name: "Ivy Quill" }] }]);
-  assert.deepEqual(cardView(member, "Ivy (Quill)", streamer, []).sections, [], "the VOD names no context");
-  assert.deepEqual(cardView(member, "Ivy (Quill)", streamer, ["gta"]).sections, [], "nor this one");
 });
 
-test("cards are asked for once a session; offline, asked again next time", async () => {
-  /** @type {string[]} */
-  const asked = [];
-  let online = false;
-  const cache = new CardCache(
+/** streamers.ts `cardView` (the card's name where it has one; aliases: not the name it's headed by). */
+test("a card is headed by its file's name, and doesn't list that name among its other names", () => {
+  const full = cardView(member, "Ivy (Quill)", streamer, []);
+  assert.equal(full.name, "Quill");
+  assert.deepEqual(full.aliases, ["Q"]);
+  assert.deepEqual(cardView(member, "Ivy", read({ aliases: ["Q"] }), []).aliases, ["Q"]);
+  assert.deepEqual(cardView(member, "Ivy", read({}), []).aliases, ["Quilly"], "a card with none: the cast's");
+  assert.deepEqual(
+    cardView({ aliases: ["ivy", " "] }, "Ivy", null, []).aliases,
+    [],
+    "the cast's too, but for the name",
+  );
+});
+
+/** streamers.ts `cardView` ("Their account in the cast is one of their channels either way"). */
+test("a card's channels are the file's, then the cast's account unless it is among them", () => {
+  assert.deepEqual(
+    cardView(member, "Ivy", streamer, []).channels.map((c) => c.platform),
+    ["youtube", "twitch", "kick"],
+  );
+  const same = cardView({ aliases: [], account: A("twitch", "QUILL_LIVE") }, "Ivy", streamer, []);
+  assert.equal(same.channels.length, 2, "the same account in another case isn't added again");
+});
+
+/** streamers.ts `cardView` ("The image server has no YouTube pictures to show: another site's first"; `avatar`: the card's own first). */
+test("a card's picture is the file's, else the cast's account, else a channel on a site with pictures", () => {
+  assert.deepEqual(cardView(member, "Ivy", read({ avatar: A("twitch", "pic") }), []).avatar, A("twitch", "pic"));
+  assert.deepEqual(cardView(member, "Ivy", streamer, []).avatar, A("kick", "quill"), "the cast's, not YouTube's");
+  assert.deepEqual(cardView({ aliases: [] }, "Ivy", streamer, []).avatar, twitch, "a channel's, not YouTube's");
+  const onlyYoutube = read({ channels: [A("youtube", "@quill")] });
+  assert.deepEqual(
+    cardView({ aliases: [] }, "Ivy", onlyYoutube, []).avatar,
+    A("youtube", "@quill"),
+    "YouTube's, when it's all there is",
+  );
+});
+
+/** streamers.ts `socialLabel` ("the one given, else the address without its scheme and trailing slash"). */
+test("a card's other pages are labelled as given, else by their address", () => {
+  const got = cardView(
+    member,
+    "Ivy",
+    read({ socials: [{ label: "Bluesky", url: "https://bsky.app/q" }, { url: "https://www.quill.example/" }] }),
+    [],
+  );
+  assert.deepEqual(got.socials, [
+    { label: "Bluesky", href: "https://bsky.app/q" },
+    { label: "quill.example", href: "https://www.quill.example/" },
+  ]);
+});
+
+/** streamers.ts `cardView` ("A section shows only for a context the VOD names, in the VOD's order"). */
+test("a card shows a section only for a context the VOD names, in the VOD's order", () => {
+  /** @param {string[]} contexts */
+  const ids = (contexts) => cardView(member, "Ivy", streamer, contexts).sections.map((s) => s.id);
+  assert.deepEqual(ids(["nopixel"]), ["nopixel"]);
+  assert.deepEqual(ids(["gta", "nopixel"]), ["gta", "nopixel"]);
+  assert.deepEqual(ids(["nopixel", "gta", "nopixel"]), ["nopixel", "gta"], "each once");
+  assert.deepEqual(ids([]), [], "the VOD names none");
+  assert.deepEqual(ids(["other"]), [], "nor this one");
+  assert.deepEqual(cardView(member, "Ivy", streamer, ["nopixel"]).sections[0], {
+    id: "nopixel",
+    title: "NoPixel",
+    characters: [{ name: "Ivy Quill" }],
+  });
+});
+
+/** streamers.ts `cardView` (sections come from the card: none without one). */
+test("without a card from the file host there are no sections, whatever the VOD names", () => {
+  assert.deepEqual(cardView(member, "Ivy", null, ["nopixel"]).sections, []);
+});
+
+// Asking for cards.
+
+/** @param {{ online: boolean, asked: string[], published?: boolean }} world */
+function cacheIn(world) {
+  return new CardCache(
     async (id) => {
-      asked.push(id);
-      if (!online) throw new Error("offline");
-      return id === "quill" ? card({ name: "Quill" }) : null;
+      world.asked.push(id);
+      if (!world.online) throw new Error("offline");
+      return id === "quill" && world.published !== false ? card({ name: "Quill" }) : null;
     },
     async () => {
-      asked.push("index");
-      if (!online) throw new Error("offline");
-      return index({ "twitch/quill_live": "quill" });
+      world.asked.push("index");
+      if (!world.online) throw new Error("offline");
+      return index(world.published === false ? {} : { "twitch/quill_live": "quill" });
     },
   );
-  // Offline: none, and nothing kept.
-  assert.equal(await cache.card("quill"), null);
-  assert.equal(await cache.of({ account: twitch }), null);
-  online = true;
+}
+
+/** streamers.ts `CardCache` ("each asked for once a session"). */
+test("a card and the index are asked for once a session", async () => {
+  const world = { online: true, asked: /** @type {string[]} */ ([]) };
+  const cache = cacheIn(world);
   assert.equal((await cache.card("quill"))?.name, "Quill");
-  assert.equal((await cache.of({ streamer: "quill" }))?.name, "Quill", "by the id the cast names");
-  assert.equal((await cache.of({ account: twitch }))?.name, "Quill", "by the account, through the index");
-  assert.equal((await cache.of({}, twitch))?.name, "Quill", "by the channel's account");
-  assert.equal(await cache.card("nobody"), null, "not there");
+  assert.equal((await cache.card("quill"))?.name, "Quill");
+  assert.equal((await cache.of({ account: twitch }))?.name, "Quill");
+  assert.equal((await cache.of({ account: twitch }))?.name, "Quill");
+  assert.equal(await cache.card("nobody"), null, "one that isn't there");
   assert.equal(await cache.card("nobody"), null);
-  assert.equal(await cache.of({ streamer: "../x" }), null, "an id that can't be one asks nothing");
-  assert.deepEqual(asked, ["quill", "index", "quill", "index", "nobody"]);
+  assert.deepEqual(world.asked, ["quill", "index", "nobody"]);
 });
 
+/** streamers.ts `CardCache` ("A failure to ask (offline) is kept for nothing, so the next card opened asks again"). */
+test("offline, a card and the index are none and asked again the next time", async () => {
+  const world = { online: false, asked: /** @type {string[]} */ ([]) };
+  const cache = cacheIn(world);
+  assert.equal(await cache.card("quill"), null);
+  assert.equal(await cache.of({ account: twitch }), null);
+  world.online = true;
+  assert.equal((await cache.card("quill"))?.name, "Quill");
+  assert.equal((await cache.of({ account: twitch }))?.name, "Quill");
+  assert.deepEqual(world.asked, ["quill", "index", "quill", "index"]);
+});
+
+/** streamers.ts `CardCache.of` ("the one the VOD's annotations name, else the one the index has for their account (`account`, the VOD's channel's when the cast gives none), else none"). */
+test("a cast member's card is the one the VOD names, else the index's for their account or the channel's", async () => {
+  const world = { online: true, asked: /** @type {string[]} */ ([]) };
+  const cache = cacheIn(world);
+  assert.equal((await cache.of({ streamer: "quill" }))?.name, "Quill", "by the id the cast names");
+  assert.deepEqual(world.asked, ["quill"], "the index isn't asked when the cast names the card");
+  assert.equal((await cache.of({ account: twitch }))?.name, "Quill", "by the account, through the index");
+  assert.equal((await cache.of({}, twitch))?.name, "Quill", "by the channel's account");
+  assert.equal(await cache.of({}), null, "no card, no account");
+});
+
+/** streamers.ts `CardCache.of` (a name that can't be a card id asks for nothing). */
+test("an id that can't be a card's asks for nothing", async () => {
+  const world = { online: true, asked: /** @type {string[]} */ ([]) };
+  assert.equal(await cacheIn(world).of({ streamer: "../x" }), null);
+  assert.deepEqual(world.asked, []);
+});
+
+/** streamers.ts `CardCache.fresh` ("`of`, past what's kept this session: the index asked for again, and the card it then names"); CHANGELOG 0.7.2 "Refresh a VOD's details." ("any VODscription or streamer card published since"). */
 test("a card asked for fresh is asked for past what's kept, so one published since shows", async () => {
-  /** @type {string[]} */
-  const asked = [];
-  let published = false;
-  const cache = new CardCache(
-    async (id) => (asked.push(id), published ? card({ name: "Quill" }) : null),
-    async () => (asked.push("index"), index(published ? { "twitch/quill_live": "quill" } : {})),
-  );
+  const world = { online: true, asked: /** @type {string[]} */ ([]), published: false };
+  const cache = cacheIn(world);
   assert.equal(await cache.of({}, twitch), null, "not in the index yet");
   assert.equal(await cache.of({ streamer: "quill" }), null, "nor the card");
-  published = true;
+  world.published = true;
   assert.equal(await cache.of({}, twitch), null, "kept for the session");
   assert.equal((await cache.fresh({}, twitch))?.name, "Quill", "by the index asked again");
   assert.equal((await cache.of({ streamer: "quill" }))?.name, "Quill", "and kept so");
-  assert.equal(await cache.fresh({}), null, "no account, no card: nothing to ask for");
-  assert.deepEqual(asked, ["index", "quill", "index", "quill"]);
+  assert.deepEqual(world.asked, ["index", "quill", "index", "quill"]);
 });
 
-test("annotations name a cast member's card and the VOD's contexts, and drop what can't be one", () => {
-  const file = {
-    format: "vodscribe-annotations",
-    version: 1,
-    source: { platform: "twitch", id: "v1", channel: "Quill", title: "", duration: 60, recorded_at: null },
-    produced: { at: "2026-11-05T00:00:00Z", build: "b" },
-    transcript: { segments: [], corrected: 0 },
-    chapters: [],
-    highlights: [],
-    cast: [
-      { name: "Ivy", aliases: [], role: "in-game character", player: "Quill", streamer: " quill " },
-      { name: "Bo", aliases: [], role: "friend", streamer: "Bo/../x" },
-    ],
-    activity: [],
-    contexts: ["nopixel", "nopixel", "No Pixel", 7],
-  };
-  const read = parseAnnotations(file);
-  assert.equal(read.cast[0].streamer, "quill");
-  assert.equal("streamer" in read.cast[1], false);
-  assert.deepEqual(read.contexts, ["nopixel"]);
-  assert.deepEqual(parseAnnotations({ ...file, contexts: undefined }).contexts, [], "a file with none has none");
-  assert.throws(
-    () => parseAnnotations({ ...file, contexts: Array.from({ length: 101 }, (_, i) => `c${i}`) }),
-    /more than 100 contexts/,
+/** streamers.ts `CardCache.fresh` (no named card and no account: nothing to ask for). */
+test("a card asked for fresh with no id and no account asks for nothing", async () => {
+  const world = { online: true, asked: /** @type {string[]} */ ([]) };
+  assert.equal(await cacheIn(world).fresh({}), null);
+  assert.deepEqual(world.asked, []);
+});
+
+/** streamers.ts `CardCache.fresh` ("A failure keeps nothing, as ever"). */
+test("a card asked for fresh while offline is none, and kept for nothing", async () => {
+  const world = { online: false, asked: /** @type {string[]} */ ([]) };
+  const cache = cacheIn(world);
+  assert.equal(await cache.fresh({ streamer: "quill" }), null);
+  world.online = true;
+  assert.equal((await cache.of({ streamer: "quill" }))?.name, "Quill");
+});
+
+/** streamers.ts `MOST` ("The most a card brings of each"): contexts too. */
+test("a card brings at most fifty contexts", () => {
+  const contexts = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`c${i}`, { characters: [{ name: "x" }] }]));
+  assert.equal(Object.keys(read({ contexts })?.contexts ?? {}).length, 50);
+});
+
+/** streamers.ts `readStreamer` ("What's in it that can't be read is left out"): contexts, sections and characters that are nothing. */
+test("a card whose contexts, a section or a character is nothing is read without it", () => {
+  assert.deepEqual(read({ contexts: null })?.contexts, {});
+  assert.deepEqual(read({ contexts: ["nopixel"] })?.contexts, {});
+  const got = read({ contexts: { nopixel: null, gta: "x", other: { characters: [null, 3, { name: "Jo" }] } } });
+  assert.deepEqual(got?.contexts, { other: { title: "other", characters: [{ name: "Jo" }] } });
+});
+
+/** streamers.ts `socialLabel` ("the address without its scheme and trailing slash"). */
+test("a page with no label is read out without its scheme at the start, www or not, and its last slash", () => {
+  const got = cardView(
+    member,
+    "Ivy",
+    read({ socials: [{ url: "https://bsky.app/q/r/" }, { url: "https://a.example/go?to=https://b.example/" }] }),
+    [],
   );
-  // As crates/core annotations.rs `card_id` reads one.
-  for (const good of ["quill", "s-0001", "a_b", "7"]) assert.equal(cardId(good), good);
-  for (const bad of ["", "-a", "_a", "Quill", "a/b", "..", "a.b", "a b", "é", "a".repeat(65), 3, null])
-    assert.equal(cardId(bad), null, String(bad));
+  assert.deepEqual(
+    got.socials.map((s) => s.label),
+    ["bsky.app/q/r", "a.example/go?to=https://b.example"],
+  );
+});
+
+/** streamers.ts `cardView` (aliases: "not the name it's headed by"): whatever the spaces around either. */
+test("an alias that is the name it's headed by isn't repeated whatever the spaces around it", () => {
+  assert.deepEqual(cardView({ aliases: [" ivy ", "Iv"] }, " Ivy ", null, []).aliases, ["Iv"]);
+  assert.deepEqual(cardView(member, "Ivy", read({ name: "Quill", aliases: [" quill ", "Q"] }), []).aliases, ["Q"]);
 });
