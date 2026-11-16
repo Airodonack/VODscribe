@@ -21,6 +21,7 @@ One module per subject.
 - [`youtube`](youtube): youtube's tests.
 - `local.rs`: files on this computer, read in place.
 - `pipeline.rs`: gets a stretch's audio and runs the worker on it.
+- [`pipeline`](pipeline): pipeline's tests.
 - `audio.rs`: decodes any media to 16 kHz mono with ffmpeg.
 - `asr.rs`: runs the speech model through sherpa-onnx.
 - `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
