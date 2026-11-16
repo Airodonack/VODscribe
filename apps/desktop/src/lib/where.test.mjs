@@ -69,3 +69,59 @@ test("on a clip bar a paste goes after the clip picked, else after them all", ()
   assert.deepEqual(insertionPoint("bar", selected({ stretch: { start: 2, end: 4 }, mark: 3 }), bar), { after: null });
   assert.deepEqual(insertionPoint("bar", selected({ picked: [segment(1, 2)] }), bar), { after: null });
 });
+
+// where.ts: "'Over' is where the pointer is"; the library's pane is on the left of the window.
+test("the pane's right edge is the main side's; the bar's left and top edges are the bar's, its right and bottom the timeline's", () => {
+  assert.equal(where(page({ pointer: { x: 299, y: 630 } })), "library");
+  assert.equal(where(page({ pointer: { x: 300, y: 630 } })), "clips");
+  assert.equal(where(page({ pointer: { x: 800, y: 600 } })), "clips");
+  assert.equal(where(page({ pointer: { x: 800, y: 660 } })), "timeline");
+  assert.equal(where(page({ pointer: { x: 1400, y: 630 } })), "timeline");
+});
+
+// where.ts: "over the library's pane, its list"; CHANGELOG 0.7.1: "over the library its list".
+test("over the library's pane, whatever its height, its list; with no pane the pointer never says library", () => {
+  assert.equal(where(page({ pointer: { x: 100, y: 620 }, focus: "clips" })), "library");
+  assert.equal(where(page({ pane: null, pointer: { x: 100, y: 620 }, bar: { ...bar, left: 0 } })), "clips");
+});
+
+// where.ts: "before the pointer has moved, where the focus is".
+test("with a pointer, the focus is not asked", () => {
+  assert.equal(where(page({ pointer: { x: 100, y: 10 }, focus: "other" })), "library");
+  assert.equal(where(page({ pointer: { x: 800, y: 10 }, focus: "library" })), "timeline");
+});
+
+// where.ts: "(a clip open in the editor has none): its timeline" and "(the main side with nothing open: the library's page)".
+test("the focus in the clip bar, with no bar and nothing open, is nowhere", () => {
+  assert.equal(where(page({ bar: null, timeline: false, focus: "clips" })), null);
+  assert.equal(where(page({ bar: null, timeline: false, pointer: { x: 800, y: 630 } })), null);
+});
+
+// where.ts `insertionPoint`: "after the stretch selected, after the last stretch picked ..., at the mark selected, else at the playhead".
+test("on a timeline the stretch selected beats what's picked, and what's picked beats the mark", () => {
+  const picked = [segment(5, 6)];
+  assert.deepEqual(insertionPoint("timeline", selected({ stretch: { start: 1, end: 2 }, picked, mark: 8 })), { at: 2 });
+  assert.deepEqual(insertionPoint("timeline", selected({ picked, mark: 8 })), { at: 6 });
+  // Clips picked beside the stretches don't count for the timeline.
+  assert.deepEqual(insertionPoint("timeline", selected({ picked: [clip(3), segment(5, 6)] })), { at: 6 });
+});
+
+// where.ts `insertionPoint`: "a target only when nothing is selected" (the playhead).
+test("a mark at the start of the video is a place, not nothing", () => {
+  assert.deepEqual(insertionPoint("timeline", selected({ mark: 0, playhead: 10 })), { at: 0 });
+  assert.deepEqual(insertionPoint("timeline", selected({ stretch: { start: 0, end: 0 }, playhead: 10 })), { at: 0 });
+});
+
+// where.ts `insertionPoint`: "On a clip bar, after the last clip picked (in the bar's order)".
+test("on a clip bar a clip picked first on the bar counts as the first, not as none", () => {
+  assert.deepEqual(insertionPoint("bar", selected({ picked: [clip(7)] }), [7, 8]), { after: 7 });
+  assert.deepEqual(insertionPoint("bar", selected({ picked: [clip(7), clip(99)] }), [7, 8]), { after: 7 });
+  assert.deepEqual(insertionPoint("bar", selected({ picked: [clip(7)] })), { after: null });
+});
+
+// where.ts `where`: "over the clip bar, its clips": the bar's own box, not what is left of it.
+test("left of the clip bar, when the pane ends before it, is the timeline", () => {
+  const apart = { ...bar, left: 400 };
+  assert.equal(where(page({ bar: apart, pointer: { x: 350, y: 630 } })), "timeline");
+  assert.equal(where(page({ bar: apart, pointer: { x: 400, y: 630 } })), "clips");
+});
