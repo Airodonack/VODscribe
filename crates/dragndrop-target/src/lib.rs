@@ -307,16 +307,40 @@ impl Shared {
     }
 }
 
+/// What the crate's tests share: a fresh folder and a sink that keeps what it's given.
 #[cfg(test)]
-mod tests {
+pub(crate) mod testkit {
     use super::*;
     use std::sync::Mutex;
 
-    /// What a test's sink was given: its bytes, and how it finished.
-    type Given = (Vec<u8>, Option<Result<u64, String>>);
+    /// A fresh, empty folder of this test's own (made), under the temp folder.
+    pub(crate) fn fresh(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dragndrop-target-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
-    /// A sink that keeps what it's given, for the tests.
-    struct Kept(Arc<Mutex<Given>>);
+    /// The names in `dir`, sorted.
+    pub(crate) fn names(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<_> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    /// What a test's sink was given: its bytes, and how it finished (None until it has).
+    pub(crate) type Given = (Vec<u8>, Option<Result<u64, String>>);
+
+    /// A sink that keeps what it's given.
+    #[derive(Clone, Default)]
+    pub(crate) struct Kept(pub(crate) Arc<Mutex<Given>>);
+
+    impl Kept {
+        pub(crate) fn given(&self) -> Given {
+            self.0.lock().unwrap().clone()
+        }
+    }
 
     impl Sink for Kept {
         fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -324,35 +348,174 @@ mod tests {
             Ok(())
         }
         fn finish(self: Box<Self>, result: Result<u64, Error>) {
-            self.0.lock().unwrap().1 = Some(result.map_err(|e| e.to_string()));
+            let mut given = self.0.lock().unwrap();
+            assert!(given.1.is_none(), "an item finishes once");
+            given.1 = Some(result.map_err(|e| e.to_string()));
         }
     }
 
-    fn item(name: &str, size: Option<u64>) -> Item {
+    pub(crate) fn item(name: &str, size: Option<u64>) -> Item {
         Item { name: name.into(), size, index: 0 }
     }
+}
 
-    #[test]
-    fn progress_is_counted_and_a_cancel_stops_the_next_bytes() {
-        let kept = Arc::new(Mutex::new((vec![], None)));
-        let (shared, mut jobs) = Shared::new(vec![(item("a.mp4", Some(4)), Destination::sink(Kept(kept.clone())))]);
+#[cfg(test)]
+mod tests {
+    use super::testkit::*;
+    use super::*;
+    use std::sync::mpsc;
+
+    /// The shared state of one item going to `kept`, and its job.
+    fn one(size: Option<u64>) -> (Arc<Shared>, Job, Fetch, Kept) {
+        let kept = Kept::default();
+        let (shared, mut jobs) = Shared::new(vec![(item("a.mp4", size), Destination::sink(kept.clone()))]);
         let fetch = shared.handle(false);
-        let mut job = jobs.remove(0);
+        (shared, jobs.remove(0), fetch, kept)
+    }
+
+    /// `Item::name` and `Item::size`: "Its file name as the source gives it, without any folder: not
+    /// made safe for a file system"; "Its length in bytes, if the source says."
+    #[test]
+    fn an_item_says_its_name_as_given_and_its_size_if_known() {
+        let (named, unsized_) = (item("a:b.mp4", Some(7)), item("c.mkv", None));
+        assert_eq!((named.name(), named.size()), ("a:b.mp4", Some(7)));
+        assert_eq!((unsized_.name(), unsized_.size()), ("c.mkv", None));
+    }
+
+    /// `Offer`: "Files that are where they are, as paths. Empty with none."
+    #[test]
+    fn an_offer_of_nothing_has_no_paths_and_no_items() {
+        let offer = Offer::default();
+        assert!(offer.paths.is_empty() && offer.items.is_empty());
+    }
+
+    /// `Fetch::progress`: "How far each item is, in the order asked", `Progress::got`: "Bytes
+    /// fetched so far."
+    #[test]
+    fn progress_counts_the_bytes_each_item_has_been_given() {
+        let kept = (Kept::default(), Kept::default());
+        let (shared, mut jobs) = Shared::new(vec![
+            (item("a.mp4", Some(4)), Destination::sink(kept.0.clone())),
+            (item("b.mp4", None), Destination::sink(kept.1.clone())),
+        ]);
+        let fetch = shared.handle(false);
+        let mut b = jobs.remove(1);
+        shared.write(&mut b, b"xyz").unwrap();
+        assert_eq!(
+            fetch.progress(),
+            [Progress { got: 0, size: Some(4), ended: false }, Progress { got: 3, size: None, ended: false }]
+        );
+    }
+
+    /// `Sink`: "Where an item's bytes go, yours: written in order from whichever thread fetches,
+    /// then finished once."
+    #[test]
+    fn a_sink_hears_the_bytes_in_order_then_how_it_ended_once() {
+        let (shared, mut job, fetch, kept) = one(Some(4));
         shared.write(&mut job, b"ab").unwrap();
-        assert_eq!(fetch.progress(), [Progress { got: 2, size: Some(4), ended: false }]);
+        shared.write(&mut job, b"cd").unwrap();
+        assert_eq!(kept.given(), (b"abcd".to_vec(), None));
+        shared.end(job, Ok(4));
+        assert_eq!(kept.given(), (b"abcd".to_vec(), Some(Ok(4))));
+        assert_eq!(fetch.progress(), [Progress { got: 4, size: Some(4), ended: true }]);
+    }
+
+    /// `Fetch::is_finished`: "Every item has ended."
+    #[test]
+    fn a_fetch_is_finished_only_once_every_item_has_ended() {
+        let (shared, mut jobs) = Shared::new(vec![
+            (item("a.mp4", None), Destination::sink(Kept::default())),
+            (item("b.mp4", None), Destination::sink(Kept::default())),
+        ]);
+        let fetch = shared.handle(false);
+        shared.end(jobs.remove(0), Ok(0));
         assert!(!fetch.is_finished());
+        shared.end(jobs.remove(0), Ok(0));
+        assert!(fetch.is_finished());
+    }
+
+    /// `Fetch::cancel`: "the item being read stops at its next bytes, and every item not yet whole
+    /// ends with `Error::Canceled`."
+    #[test]
+    fn a_cancel_stops_the_next_bytes_and_the_item_ends_canceled() {
+        let (shared, mut job, fetch, kept) = one(Some(4));
+        shared.write(&mut job, b"ab").unwrap();
         fetch.cancel();
         let stopped = shared.write(&mut job, b"cd");
         assert!(matches!(stopped, Err(Error::Canceled)));
         shared.end(job, stopped.map(|()| 4));
-        assert!(fetch.is_finished());
-        assert_eq!(*kept.lock().unwrap(), (b"ab".to_vec(), Some(Err("canceled".into()))));
+        assert_eq!(kept.given(), (b"ab".to_vec(), Some(Err("canceled".into()))));
+        assert_eq!(fetch.progress()[0].got, 2, "what was refused isn't counted");
     }
 
+    /// `Fetch`: "Keep it until `Fetch::is_finished`: dropped earlier, it cancels what's left."
     #[test]
-    fn a_fetch_dropped_cancels() {
-        let (shared, _jobs) = Shared::new(vec![]);
-        drop(shared.handle(true));
-        assert!(shared.canceled());
+    fn a_fetch_dropped_before_it_finishes_cancels() {
+        let (shared, mut job, fetch, _) = one(None);
+        drop(fetch);
+        assert!(matches!(shared.write(&mut job, b"x"), Err(Error::Canceled)));
+    }
+
+    /// `Sink::write`: "An error stops this item, which then finishes with `Error::Write`."
+    #[test]
+    fn a_sink_that_fails_a_write_stops_its_item_with_a_write_error() {
+        struct Refuses(mpsc::Sender<String>);
+        impl Sink for Refuses {
+            fn write(&mut self, _: &[u8]) -> io::Result<()> {
+                Err(io::Error::other("disk full"))
+            }
+            fn finish(self: Box<Self>, result: Result<u64, Error>) {
+                self.0.send(result.unwrap_err().to_string()).unwrap();
+            }
+        }
+        let (tell, heard) = mpsc::channel();
+        let (shared, mut jobs) = Shared::new(vec![(item("a.mp4", None), Destination::sink(Refuses(tell)))]);
+        let fetch = shared.handle(false);
+        let mut job = jobs.remove(0);
+        let failed = shared.write(&mut job, b"x");
+        assert!(matches!(failed, Err(Error::Write(_))));
+        shared.end(job, failed.map(|()| 1));
+        assert_eq!(heard.recv().unwrap(), "it couldn't be written: disk full");
+        assert_eq!(fetch.progress()[0].got, 0);
+    }
+
+    /// `Destination::folder`: "`done` hears the file's path, or why it isn't there."
+    #[test]
+    fn a_folder_destination_tells_its_callback_the_file_it_wrote() {
+        let dir = fresh("lib-folder");
+        let (tell, heard) = mpsc::channel();
+        let (shared, mut jobs) =
+            Shared::new(vec![(item("a.mp4", None), Destination::folder(&dir, move |r| tell.send(r).unwrap()))]);
+        let mut job = jobs.remove(0);
+        shared.write(&mut job, b"abc").unwrap();
+        shared.end(job, Ok(3));
+        assert_eq!(heard.recv().unwrap().unwrap(), dir.join("a.mp4"));
+        assert_eq!(std::fs::read(dir.join("a.mp4")).unwrap(), b"abc");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `Fetch::in_background`: "It's read on a thread of its own ... False when it was all read
+    /// before `fetch` returned."
+    #[test]
+    fn a_fetch_says_whether_it_is_read_in_the_background() {
+        let (shared, _) = Shared::new(vec![]);
+        assert!(shared.handle(true).in_background());
+        assert!(!shared.handle(false).in_background());
+    }
+
+    /// `Error`'s `Display`, which the app shows when an item fails.
+    #[test]
+    fn why_an_item_failed_reads_as_a_sentence() {
+        assert_eq!(Error::Canceled.to_string(), "canceled");
+        assert_eq!(Error::Source("refused".into()).to_string(), "the app it came from didn't give it: refused");
+        assert_eq!(Error::Write(io::Error::other("full")).to_string(), "it couldn't be written: full");
+    }
+
+    /// `Error`: "Write: It couldn't be written: the sink's error, or the folder's." keeps the cause.
+    #[test]
+    fn a_write_error_keeps_its_cause_and_the_others_have_none() {
+        use std::error::Error as _;
+        assert!(Error::Write(io::Error::other("full")).source().is_some());
+        assert!(Error::Canceled.source().is_none() && Error::Source("x".into()).source().is_none());
     }
 }

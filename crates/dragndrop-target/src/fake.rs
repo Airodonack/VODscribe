@@ -88,65 +88,122 @@ impl Drop for Giving {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use std::sync::Mutex;
+    use crate::testkit::{Kept, fresh, names};
+    use std::sync::mpsc;
 
-    /// A fresh folder for a test.
-    fn folder(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("dragndrop-fake-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
-    /// Into a folder: whole, it's there; failed or let go of, nothing is.
+    /// Module doc: "through the same destinations, progress and cancel a system's fetch has": into a
+    /// folder, an item given whole is there under its name.
     #[test]
-    fn a_fake_fetch_writes_what_its_test_gives() {
-        let dir = folder("folder");
-        let ended: Arc<Mutex<Vec<String>>> = Arc::default();
-        let to = |ended: &Arc<Mutex<Vec<String>>>| {
-            let ended = ended.clone();
-            Destination::folder(&dir, move |r| {
-                ended.lock().unwrap().push(r.map(|p| p.display().to_string()).unwrap_or_else(|e| e.to_string()))
-            })
-        };
-        let mut items = fetch(vec![
-            (item("a.mp4", Some(4)), to(&ended)),
-            (item("b.mp4", None), to(&ended)),
-            (item("c.mp4", None), to(&ended)),
-        ])
-        .into_iter();
-        let (mut a, mut b, c) = (items.next().unwrap(), items.next().unwrap(), items.next().unwrap());
+    fn an_item_given_whole_into_a_folder_is_there_under_its_name() {
+        let dir = fresh("fake-whole");
+        let (tell, heard) = mpsc::channel();
+        let mut a = fetch(vec![(item("a.mp4", Some(4)), Destination::folder(&dir, move |r| tell.send(r).unwrap()))]);
+        let mut a = a.remove(0);
+        assert_eq!(a.name(), "a.mp4");
         a.give(b"ab").unwrap();
         assert_eq!(a.fetch().progress()[0].got, 2);
         a.give(b"cd").unwrap();
         a.whole();
+        assert_eq!(heard.recv().unwrap().unwrap(), dir.join("a.mp4"));
         assert_eq!(std::fs::read(dir.join("a.mp4")).unwrap(), b"abcd");
-        b.give(b"x").unwrap();
-        b.fails("refused");
-        drop(c);
-        assert_eq!(
-            *ended.lock().unwrap(),
-            [
-                dir.join("a.mp4").display().to_string(),
-                "the app it came from didn't give it: refused".to_string(),
-                "canceled".to_string()
-            ]
-        );
-        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
-        assert_eq!(left, ["a.mp4"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Canceled, the next bytes are refused and the item ends so.
+    /// Module doc: "failed as a source that doesn't give it": the folder keeps nothing and its
+    /// callback hears why.
     #[test]
-    fn a_fake_fetch_canceled_refuses_the_next_bytes() {
-        let dir = folder("cancel");
-        let mut items = fetch(vec![(item("a.mp4", None), Destination::folder(&dir, |_| {}))]);
+    fn an_item_its_source_fails_leaves_nothing_and_says_so() {
+        let dir = fresh("fake-fails");
+        let (tell, heard) = mpsc::channel();
+        let mut b = fetch(vec![(item("b.mp4", None), Destination::folder(&dir, move |r| tell.send(r).unwrap()))]);
+        let mut b = b.remove(0);
+        b.give(b"x").unwrap();
+        b.fails("refused");
+        assert_eq!(heard.recv().unwrap().unwrap_err().to_string(), "the app it came from didn't give it: refused");
+        assert_eq!(names(&dir), Vec::<String>::new());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Module doc: "let go of unfinished, canceled, as a fetch dropped early".
+    #[test]
+    fn an_item_let_go_of_unfinished_ends_canceled_and_leaves_nothing() {
+        let dir = fresh("fake-let-go");
+        let (tell, heard) = mpsc::channel();
+        let mut c = fetch(vec![(item("c.mp4", None), Destination::folder(&dir, move |r| tell.send(r).unwrap()))]);
+        let mut c = c.remove(0);
+        c.give(b"x").unwrap();
+        drop(c);
+        assert!(matches!(heard.recv().unwrap(), Err(Error::Canceled)));
+        assert_eq!(names(&dir), Vec::<String>::new());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `Giving::give`: "Refused (the fetch canceled ...), it ends with why, as a system's fetch ends
+    /// it."
+    #[test]
+    fn a_fake_fetch_canceled_refuses_the_next_bytes_and_ends_its_items() {
+        let kept = Kept::default();
+        let mut items = fetch(vec![(item("a.mp4", None), Destination::sink(kept.clone()))]);
         let mut a = items.remove(0);
         a.give(b"ab").unwrap();
         a.fetch().cancel();
         assert_eq!(a.give(b"cd"), Err("canceled".to_string()));
         assert!(a.fetch().is_finished());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(kept.given(), (b"ab".to_vec(), Some(Err("canceled".into()))));
+    }
+
+    /// `Giving::give`: "(the destination's write failed), it ends with why".
+    #[test]
+    fn a_write_the_destination_refuses_ends_the_item_with_why() {
+        let dir = fresh("fake-refused");
+        let blocked = dir.join("not-a-dir");
+        std::fs::write(&blocked, b"").unwrap();
+        let (tell, heard) = mpsc::channel();
+        let mut items = fetch(vec![(
+            item("a.mp4", None),
+            Destination::folder(blocked.join("under"), move |r| tell.send(r).unwrap()),
+        )]);
+        let mut a = items.remove(0);
+        assert!(a.give(b"x").unwrap_err().starts_with("it couldn't be written"));
+        assert!(matches!(heard.recv().unwrap(), Err(Error::Write(_))));
+        assert_eq!(a.give(b"y"), Err("it has ended".to_string()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Module doc: "Each item ends once": each of several items of one fake fetch ends by itself.
+    #[test]
+    fn each_item_of_a_fake_fetch_ends_on_its_own() {
+        let kept = (Kept::default(), Kept::default());
+        let mut items = fetch(vec![
+            (item("a.mp4", None), Destination::sink(kept.0.clone())),
+            (item("b.mp4", None), Destination::sink(kept.1.clone())),
+        ])
+        .into_iter();
+        let (mut a, mut b) = (items.next().unwrap(), items.next().unwrap());
+        a.give(b"a").unwrap();
+        a.whole();
+        assert!(kept.1.given().1.is_none());
+        b.give(b"bbb").unwrap();
+        b.whole();
+        assert_eq!(kept.0.given(), (b"a".to_vec(), Some(Ok(1))));
+        assert_eq!(kept.1.given(), (b"bbb".to_vec(), Some(Ok(3))));
+    }
+
+    /// `Giving::fails`: "Its source doesn't give the rest, saying `why`": the other items go on.
+    #[test]
+    fn an_item_its_source_fails_leaves_the_others_to_go_on() {
+        let kept = (Kept::default(), Kept::default());
+        let mut items = fetch(vec![
+            (item("a.mp4", None), Destination::sink(kept.0.clone())),
+            (item("b.mp4", None), Destination::sink(kept.1.clone())),
+        ])
+        .into_iter();
+        let (a, mut b) = (items.next().unwrap(), items.next().unwrap());
+        a.fails("no");
+        assert!(kept.1.given().1.is_none());
+        b.give(b"b").unwrap();
+        b.whole();
+        assert_eq!(kept.0.given().1, Some(Err("the app it came from didn't give it: no".into())));
+        assert_eq!(kept.1.given(), (b"b".to_vec(), Some(Ok(1))));
     }
 }

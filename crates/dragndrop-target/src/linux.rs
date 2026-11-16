@@ -716,13 +716,9 @@ fn staged_files(dir: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testkit::{Kept, fresh, names};
+    use crate::{Progress, Sink};
     use std::sync::mpsc;
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("dragndrop-target-linux-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
 
     /// A drop whose source saved `files` (name, bytes) into a fresh folder of `stage`.
     fn saved(stage: &Path, files: &[(&str, &[u8])]) -> Received {
@@ -735,35 +731,210 @@ mod tests {
         staged(dir)
     }
 
+    /// Waits until `fetch` has ended every item.
     fn wait(fetch: &Fetch) {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !fetch.is_finished() {
             assert!(std::time::Instant::now() < until, "the fetch never ended");
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::yield_now();
         }
     }
 
+    /// Waits until `path` is gone (the stage goes just after the last item ends).
+    fn wait_gone(path: &Path) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while path.exists() {
+            assert!(std::time::Instant::now() < until, "{path:?} is still there");
+            std::thread::yield_now();
+        }
+    }
+
+    /// The timer that keeps a test's main loop waking, removed when the test is done with it.
+    struct Wake(Option<glib::SourceId>);
+
+    impl Drop for Wake {
+        fn drop(&mut self) {
+            if let Some(id) = self.0.take() {
+                id.remove();
+            }
+        }
+    }
+
+    /// Runs `body` with GLib's default main context held by this thread, as `settled` (which puts
+    /// a timer on it) is used inside GTK's loop; one test at a time, as the context is held. A timer
+    /// of its own keeps the loop waking, so that one with nothing to wait for fails at `spin`'s
+    /// deadline rather than hanging.
+    fn on_main_loop<R>(body: impl FnOnce(&glib::MainContext) -> R) -> R {
+        static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+        let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let context = glib::MainContext::default();
+        let _held = context.acquire().expect("the default main context is free");
+        let _wake =
+            Wake(Some(glib::timeout_add_local(std::time::Duration::from_millis(50), || glib::ControlFlow::Continue)));
+        body(&context)
+    }
+
+    /// Iterates `context` until `done`: the timers get their turns, nothing is slept on.
+    fn spin(context: &glib::MainContext, done: impl Fn() -> bool) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < until, "the main loop never got there");
+            context.iteration(true);
+        }
+    }
+
+    /// Module doc: "An XDS source that answers "F" (it can't write there) is asked for
+    /// application/octet-stream instead". `Answer`: "S": saved where named, "F", "E", and "No
+    /// answer, or one the protocol doesn't have".
     #[test]
-    fn the_answers_are_the_protocols() {
+    fn the_xds_answers_are_the_protocols() {
         assert_eq!(answer_of(b"S"), Answer::Saved);
         assert_eq!(answer_of(b"F"), Answer::Cant);
         assert_eq!(answer_of(b"E"), Answer::Error);
-        assert_eq!(answer_of(b"s"), Answer::None);
-        assert_eq!(answer_of(b""), Answer::None);
     }
 
+    /// `Answer::None`: "No answer, or one the protocol doesn't have".
     #[test]
-    fn only_local_file_uris_are_paths() {
+    fn an_xds_answer_the_protocol_doesnt_have_is_none() {
+        for bytes in [&b"s"[..], b"", b"SS", b"X"] {
+            assert_eq!(answer_of(bytes), Answer::None, "{bytes:?}");
+        }
+    }
+
+    /// Module doc: "text/uri-list: file URIs, the paths." `file_path`: "The local path of URI `uri`,
+    /// if it's a file's": an escaped one is unescaped.
+    #[test]
+    fn a_file_uri_is_its_path_unescaped() {
         assert_eq!(file_path("file:///a%20b/c.mp4"), Some(PathBuf::from("/a b/c.mp4")));
+    }
+
+    /// `file_path`: only local files: no host, or "localhost".
+    #[test]
+    fn a_file_uri_of_another_host_or_a_web_link_is_no_path() {
         assert_eq!(file_path("file://localhost/c.mp4"), Some(PathBuf::from("/c.mp4")));
         assert_eq!(file_path("file://elsewhere/c.mp4"), None);
         assert_eq!(file_path("https://example.com/c.mp4"), None);
+        assert_eq!(file_path("not a uri"), None);
     }
 
+    /// Module doc: "application/vnd.portal.filetransfer ... The portal gives files that are on disk
+    /// ..., so they are paths too". `files_of`: "The portal's answer as paths", an empty entry
+    /// being none.
+    #[test]
+    fn the_portals_files_are_paths_without_its_empty_entries() {
+        let files = ["/run/user/1000/doc/a/a.mp4", "", "/home/me/b.mp4"].map(String::from).to_vec();
+        assert_eq!(files_of(files), [PathBuf::from("/run/user/1000/doc/a/a.mp4"), PathBuf::from("/home/me/b.mp4")]);
+    }
+
+    /// `retrieve_args`: "RetrieveFiles' arguments: the key, no options": a string and a dictionary,
+    /// as the portal's method is typed.
+    #[test]
+    fn the_portal_is_asked_with_the_key_and_a_dictionary_of_no_options() {
+        let args = retrieve_args("a-key");
+        assert_eq!(args.type_().as_str(), "(sa{sv})");
+        assert_eq!(args.child_value(0).str(), Some("a-key"));
+        assert_eq!(args.child_value(1).n_children(), 0);
+    }
+
+    /// `fresh_folder`: "A new empty folder inside `stage` (made if needed)", each one new.
+    #[test]
+    fn each_fresh_folder_is_a_new_empty_one_in_the_stage_which_is_made() {
+        let stage = fresh("linux-fresh").join("not yet");
+        let (one, two) = (fresh_folder(&stage).unwrap(), fresh_folder(&stage).unwrap());
+        assert_ne!(one, two);
+        assert!(one.starts_with(&stage) && two.starts_with(&stage));
+        assert!(one.read_dir().unwrap().next().is_none());
+        std::fs::remove_dir_all(stage.parent().unwrap()).unwrap();
+    }
+
+    /// `fresh_folder`: "A new empty folder": one whose name is already taken is skipped.
+    #[test]
+    fn a_fresh_folder_never_reuses_a_name_already_in_the_stage() {
+        let stage = fresh("linux-fresh-taken");
+        let first = fresh_folder(&stage).unwrap();
+        let number = |dir: &Path| -> u64 { dir.to_string_lossy().rsplit('-').next().unwrap().parse().unwrap() };
+        let at = number(&first);
+        let taken: Vec<_> =
+            (at + 1..=at + 50).map(|n| stage.join(format!(".dragndrop-{}-{n}", std::process::id()))).collect();
+        taken.iter().for_each(|dir| std::fs::create_dir(dir).unwrap());
+        // (No test makes fifty more of them.)
+        let next = fresh_folder(&stage).unwrap();
+        assert!(!taken.contains(&next) && next != first && number(&next) > at + 50, "{next:?}");
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `fresh_folder` returns `io::Result`: a stage that can't be written to is an error, which
+    /// `receive` tells as the drop's failure.
+    #[test]
+    fn a_stage_that_cant_be_written_to_gives_no_fresh_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let stage = fresh("linux-fresh-readonly");
+        std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let made = fresh_folder(&stage);
+        std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // (A user the permission doesn't bind, root, can make it.)
+        if let Ok(dir) = &made {
+            assert!(dir.is_dir());
+        } else {
+            assert_eq!(made.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        }
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `staged_files`: "The regular files under `dir`, at any depth, in name order (links not
+    /// followed)".
+    #[test]
+    fn what_a_source_saved_is_found_at_any_depth_in_name_order_and_links_are_not_followed() {
+        let dir = fresh("linux-found");
+        std::fs::create_dir_all(dir.join("in/deeper")).unwrap();
+        std::fs::write(dir.join("b.mp4"), b"b").unwrap();
+        std::fs::write(dir.join("in/a.mp4"), b"a").unwrap();
+        std::fs::write(dir.join("in/deeper/c.mp4"), b"c").unwrap();
+        std::os::unix::fs::symlink(dir.join("b.mp4"), dir.join("link.mp4")).unwrap();
+        std::os::unix::fs::symlink(dir.join("in"), dir.join("linked-folder")).unwrap();
+        assert_eq!(staged_files(&dir), [dir.join("b.mp4"), dir.join("in/a.mp4"), dir.join("in/deeper/c.mp4")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Module doc: "then gives each as an item with its own name and size".
+    #[test]
+    fn each_file_a_source_saved_is_an_item_with_its_own_name_and_size() {
+        let stage = fresh("linux-staged");
+        let received = saved(&stage, &[("b.mp4", b"bb"), ("in/a.mp4", b"a")]);
+        let items: Vec<_> = received.offer().items.iter().map(|i| (i.name().to_string(), i.size())).collect();
+        assert_eq!(items, [("b.mp4".to_string(), Some(2)), ("a.mp4".to_string(), Some(1))]);
+        assert!(received.offer().paths.is_empty() && received.failure().is_none());
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `Received`: "The saved files are in a folder of the stage you named, removed with this".
+    #[test]
+    fn a_drop_let_go_of_takes_its_folder_with_it() {
+        let stage = fresh("linux-let-go");
+        let received = saved(&stage, &[("a.mp4", b"a")]);
+        let (dir, _) = received.stage.clone().unwrap();
+        assert!(dir.exists());
+        drop(received);
+        assert!(!dir.exists());
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `Received::failure`: "Why the source gave nothing, if it was asked and didn't."; a drop of
+    /// paths has none, and no items.
+    #[test]
+    fn a_drop_of_paths_has_the_paths_and_no_items_or_failure() {
+        let received = Received::paths(vec![PathBuf::from("/a.mp4")]);
+        assert_eq!(received.offer().paths, [PathBuf::from("/a.mp4")]);
+        assert!(received.offer().items.is_empty() && received.failure().is_none());
+        let failed = Received::failed(Error::Source("it offers no files".into()));
+        assert!(failed.offer().paths.is_empty() && failed.failure().is_some());
+    }
+
+    /// Module doc: "[`receive`] waits until the folder holds files and they've stopped changing for
+    /// a second, with no process holding one open". `open_in`: a file held open is seen.
     #[test]
     fn a_file_held_open_in_the_folder_is_seen() {
-        let dir = scratch("open");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh("linux-open");
         let file = File::create(dir.join("a.mp4")).unwrap();
         assert!(open_in(&dir));
         drop(file);
@@ -771,81 +942,204 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// `settled`: "Saved before it answered: taken at once." (Module doc: "A source that saves may do
+    /// it before it answers (File Roller 3)".)
     #[test]
-    fn what_a_source_saved_is_found_at_any_depth() {
-        let stage = scratch("staged");
-        let received = saved(&stage, &[("b.mp4", b"bb"), ("in/a.mp4", b"a")]);
-        let names: Vec<_> = received.offer().items.iter().map(|i| (i.name().to_string(), i.size())).collect();
-        assert_eq!(names, [("b.mp4".to_string(), Some(2)), ("a.mp4".to_string(), Some(1))]);
-        let (dir, _) = received.stage.clone().unwrap();
+    fn files_saved_before_the_source_answered_are_taken_at_once() {
+        let stage = fresh("linux-settled-now");
+        let dir = fresh_folder(&stage).unwrap();
+        std::fs::write(dir.join("a.mp4"), b"abc").unwrap();
+        let got = Arc::new(Mutex::new(None));
+        let hear = got.clone();
+        settled(dir.clone(), move |received| *hear.lock().unwrap() = Some(received));
+        let received = got.lock().unwrap().take().expect("heard before settled returned");
+        assert_eq!(received.offer().items.iter().map(|i| i.size()).collect::<Vec<_>>(), [Some(3)]);
         drop(received);
-        assert!(!dir.exists(), "a drop let go of takes its folder with it");
         std::fs::remove_dir_all(&stage).unwrap();
     }
 
+    /// Module doc: "(Engrampa, Ark): [`receive`] waits until the folder holds files and they've
+    /// stopped changing for a second": files that come after are taken once `QUIET` has passed.
     #[test]
-    fn into_a_folder_a_file_is_moved_and_into_a_sink_copied() {
-        let stage = scratch("fetch");
+    fn files_saved_after_the_source_answered_are_taken_once_they_have_stopped_changing() {
+        let stage = fresh("linux-settled-later");
+        let dir = fresh_folder(&stage).unwrap();
+        let got = Arc::new(Mutex::new(None));
+        let received = on_main_loop(|context| {
+            let hear = got.clone();
+            settled(dir.clone(), move |received| *hear.lock().unwrap() = Some(received));
+            assert!(got.lock().unwrap().is_none(), "nothing has come");
+            std::fs::write(dir.join("a.mp4"), b"abc").unwrap();
+            let came = std::time::Instant::now();
+            spin(context, || got.lock().unwrap().is_some());
+            assert!(came.elapsed() >= QUIET, "taken before it had stayed as it was for a second");
+            got.lock().unwrap().take().unwrap()
+        });
+        assert_eq!(received.offer().items.len(), 1);
+        drop(received);
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// Module doc: "with no process holding one open": a file still held open is waited for, and
+    /// taken once let go.
+    #[test]
+    fn a_file_still_held_open_is_waited_for() {
+        let stage = fresh("linux-settled-open");
+        let dir = fresh_folder(&stage).unwrap();
+        let file = File::create(dir.join("a.mp4")).unwrap();
+        let got = Arc::new(Mutex::new(None));
+        let received = on_main_loop(|context| {
+            let hear = got.clone();
+            settled(dir.clone(), move |received| *hear.lock().unwrap() = Some(received));
+            assert!(got.lock().unwrap().is_none(), "taken at once, held open");
+            context.iteration(true);
+            assert!(got.lock().unwrap().is_none(), "taken at a look, held open");
+            drop(file);
+            spin(context, || got.lock().unwrap().is_some());
+            got.lock().unwrap().take().unwrap()
+        });
+        assert_eq!(received.offer().items.len(), 1);
+        drop(received);
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `fetch`: "into a folder, each file is moved ... Every item ends exactly once": a moved file
+    /// is in the folder (numbered if its name is taken) and gone from the stage.
+    #[test]
+    fn into_a_folder_a_file_is_moved_under_its_name_numbered_if_taken() {
+        let stage = fresh("linux-move");
         let into = stage.join("into");
         std::fs::create_dir_all(&into).unwrap();
         std::fs::write(into.join("a.mp4"), b"there already").unwrap();
-        let received = saved(&stage, &[("a.mp4", b"aaa"), ("b.mp4", b"bbbb"), ("left.txt", b"")]);
+        let received = saved(&stage, &[("a.mp4", b"aaa")]);
         let (dir, _) = received.stage.clone().unwrap();
-        let items = received.offer().items.clone();
+        let item = received.offer().items[0].clone();
         let (tell, heard) = mpsc::channel();
-        let kept = Arc::new(Mutex::new((vec![], None)));
-        type Given = (Vec<u8>, Option<Result<u64, String>>);
-        struct Kept(Arc<Mutex<Given>>);
-        impl crate::Sink for Kept {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-                self.0.lock().unwrap().0.extend_from_slice(bytes);
-                Ok(())
-            }
-            fn finish(self: Box<Self>, result: Result<u64, Error>) {
-                self.0.lock().unwrap().1 = Some(result.map_err(|e| e.to_string()));
-            }
-        }
-        let fetch = super::fetch(
-            received,
-            vec![
-                (
-                    items[0].clone(),
-                    Destination::folder(&into, move |r| tell.send(r.map_err(|e| e.to_string())).unwrap()),
-                ),
-                (items[1].clone(), Destination::sink(Kept(kept.clone()))),
-            ],
-        );
+        let fetch = super::fetch(received, vec![(item, Destination::folder(&into, move |r| tell.send(r).unwrap()))]);
         assert!(fetch.in_background());
-        wait(&fetch);
         assert_eq!(heard.recv().unwrap().unwrap(), into.join("a (2).mp4"));
+        wait(&fetch);
         assert_eq!(std::fs::read(into.join("a (2).mp4")).unwrap(), b"aaa");
-        assert_eq!(*kept.lock().unwrap(), (b"bbbb".to_vec(), Some(Ok(4))));
-        assert_eq!(fetch.progress().iter().map(|p| p.got).collect::<Vec<_>>(), [3, 4]);
-        // (The stage goes just after the last item ends.)
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while dir.exists() && std::time::Instant::now() < until {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        assert!(!dir.exists(), "the stage, with what wasn't taken, is gone");
+        assert_eq!(std::fs::read(into.join("a.mp4")).unwrap(), b"there already");
+        assert_eq!(fetch.progress()[0].got, 3);
+        wait_gone(&dir);
         std::fs::remove_dir_all(&stage).unwrap();
     }
 
+    /// `fetch`: "into a sink, copied", with the progress of what's copied.
     #[test]
-    fn a_canceled_fetch_ends_its_items_canceled() {
-        let stage = scratch("cancel");
-        let received = saved(&stage, &[("a.mp4", b"aaa")]);
+    fn into_a_sink_a_file_is_copied_in_order_with_its_progress() {
+        let stage = fresh("linux-copy");
+        let received = saved(&stage, &[("b.mp4", b"bbbb")]);
         let item = received.offer().items[0].clone();
+        let kept = Kept::default();
+        let fetch = super::fetch(received, vec![(item, Destination::sink(kept.clone()))]);
+        wait(&fetch);
+        assert_eq!(kept.given(), (b"bbbb".to_vec(), Some(Ok(4))));
+        assert_eq!(fetch.progress(), [Progress { got: 4, size: Some(4), ended: true }]);
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `fetch`: "the stage goes once all have": what no request took goes with it.
+    #[test]
+    fn the_stage_with_what_wasnt_taken_is_gone_once_every_item_has_ended() {
+        let stage = fresh("linux-stage-gone");
+        let received = saved(&stage, &[("a.mp4", b"a"), ("left.txt", b"")]);
+        let (dir, _) = received.stage.clone().unwrap();
+        let item = received.offer().items[0].clone();
+        let fetch = super::fetch(received, vec![(item, Destination::sink(Kept::default()))]);
+        wait(&fetch);
+        wait_gone(&dir);
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `fetch_one`: an item that isn't one of this drop's files (its name not the staged file's) ends
+    /// with a source error, its folder's callback told too, and nothing is moved.
+    #[test]
+    fn an_item_that_isnt_one_of_the_drops_files_ends_with_a_source_error() {
+        let stage = fresh("linux-stranger");
+        let received = saved(&stage, &[("a.mp4", b"a")]);
+        let stranger = crate::testkit::item("other.mp4", None);
         let (tell, heard) = mpsc::channel();
         let into = stage.join("into");
-        // Canceled before its thread gets to the item: dropped at once.
-        let fetch = super::fetch(received, vec![(item, Destination::folder(&into, move |r| tell.send(r).unwrap()))]);
-        fetch.cancel();
+        let fetch =
+            super::fetch(received, vec![(stranger, Destination::folder(&into, move |r| tell.send(r).unwrap()))]);
+        assert!(matches!(heard.recv().unwrap(), Err(Error::Source(_))));
         wait(&fetch);
-        match heard.recv().unwrap() {
-            // (Or moved, if the thread got there first.)
-            Ok(p) => assert_eq!(p, into.join("a.mp4")),
-            Err(e) => assert!(matches!(e, Error::Canceled)),
+        assert!(!into.join("other.mp4").exists());
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `Fetch::cancel`: "every item not yet whole ends with `Error::Canceled`": held at its first
+    /// bytes, the item being read stops at its next, and the item after it never starts.
+    #[test]
+    fn a_cancel_stops_the_item_being_copied_and_the_one_after_it() {
+        struct Held {
+            first: mpsc::Sender<()>,
+            go: mpsc::Receiver<()>,
+            kept: Kept,
         }
+        impl Sink for Held {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+                if self.kept.given().0.is_empty() {
+                    self.first.send(()).unwrap();
+                    self.go.recv().unwrap();
+                }
+                self.kept.0.lock().unwrap().0.extend_from_slice(bytes);
+                Ok(())
+            }
+            fn finish(self: Box<Self>, result: Result<u64, Error>) {
+                Box::new(self.kept).finish(result)
+            }
+        }
+        let stage = fresh("linux-cancel");
+        let big = vec![7u8; CHUNK + 10];
+        let received = saved(&stage, &[("a.mp4", &big), ("b.mp4", b"b")]);
+        let items = received.offer().items.clone();
+        let (first, at_first) = mpsc::channel();
+        let (release, go) = mpsc::channel();
+        let (a, b) = (Kept::default(), Kept::default());
+        let fetch = super::fetch(
+            received,
+            vec![
+                (items[0].clone(), Destination::sink(Held { first, go, kept: a.clone() })),
+                (items[1].clone(), Destination::sink(b.clone())),
+            ],
+        );
+        at_first.recv().unwrap();
+        fetch.cancel();
+        release.send(()).unwrap();
+        wait(&fetch);
+        assert_eq!(a.given(), (vec![7u8; CHUNK], Some(Err("canceled".into()))), "one chunk given, the next refused");
+        assert_eq!(b.given(), (vec![], Some(Err("canceled".into()))));
+        std::fs::remove_dir_all(&stage).unwrap();
+    }
+
+    /// `fetch`: "into a folder, each file is moved (copied if the folder is on another disk)".
+    #[test]
+    fn a_file_for_a_folder_on_another_disk_is_copied_in_and_the_stage_goes() {
+        let other = std::path::Path::new("/dev/shm");
+        let stage = fresh("linux-other-disk");
+        let on_other_disk = |a: &Path, b: &Path| {
+            use std::os::unix::fs::MetadataExt;
+            a.metadata().unwrap().dev() != b.metadata().unwrap().dev()
+        };
+        assert!(
+            other.is_dir() && on_other_disk(other, &stage),
+            "this test needs /dev/shm on another disk than the temp folder"
+        );
+        let into = other.join(format!("dragndrop-target-linux-other-{}", std::process::id()));
+        let received = saved(&stage, &[("a.mp4", b"aaa")]);
+        let (dir, _) = received.stage.clone().unwrap();
+        let item = received.offer().items[0].clone();
+        let (tell, heard) = mpsc::channel();
+        let fetch = super::fetch(received, vec![(item, Destination::folder(&into, move |r| tell.send(r).unwrap()))]);
+        assert_eq!(heard.recv().unwrap().unwrap(), into.join("a.mp4"));
+        wait(&fetch);
+        assert_eq!(std::fs::read(into.join("a.mp4")).unwrap(), b"aaa");
+        assert_eq!(names(&into), ["a.mp4"], "no part file left");
+        wait_gone(&dir);
+        std::fs::remove_dir_all(&into).unwrap();
         std::fs::remove_dir_all(&stage).unwrap();
     }
 }

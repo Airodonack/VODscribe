@@ -77,42 +77,103 @@ pub(crate) mod tests {
         Item { name: name.into(), size, index }
     }
 
+    /// 0.7.2: "Drop in videos from zips and apps. A video dragged from a zip in File Explorer ...".
+    /// `items`: "a count, then that many FILEDESCRIPTORW records": a file's name is read from its
+    /// record.
     #[test]
-    fn the_name_comes_without_its_folder_and_the_size_if_said() {
+    fn a_files_name_is_read_from_its_record() {
+        let b = block(2, &[record("a b.mp4", 0, 0, 0), record("c.mkv", 0, 0, 0)]);
+        assert_eq!(items(&b), [named("a b.mp4", None, 0), named("c.mkv", None, 1)]);
+    }
+
+    /// `items`: "A file in a folder of the drag's comes as "folder\name"": the name is the last part,
+    /// whichever separator.
+    #[test]
+    fn a_file_in_a_folder_of_the_drag_is_named_without_the_folder() {
+        let b = block(2, &[record("clips\\a b.mp4", 0, 0, 0), record("clips/d.mp4", 0, 0, 0)]);
+        assert_eq!(items(&b), [named("a b.mp4", None, 0), named("d.mp4", None, 1)]);
+    }
+
+    /// `FD_FILESIZE`: "nFileSizeHigh and nFileSizeLow are valid": the size is both halves when the
+    /// record says so, and unknown when it doesn't.
+    #[test]
+    fn the_size_is_both_halves_when_the_record_says_so_and_unknown_otherwise() {
         let big = 5 << 32 | 7;
-        let b =
-            block(2, &[record("clips\\a b.mp4", FD_FILESIZE | FD_ATTRIBUTES, 0x80, big), record("c.mkv", 0, 0, 99)]);
-        assert_eq!(items(&b), [named("a b.mp4", Some(big), 0), named("c.mkv", None, 1)]);
+        let b = block(2, &[record("a.mp4", FD_FILESIZE, 0, big), record("b.mp4", 0, 0, 99)]);
+        assert_eq!(items(&b), [named("a.mp4", Some(big), 0), named("b.mp4", None, 1)]);
     }
 
+    /// `items`: "The files in descriptor block `block`, folders left out. Each keeps its place in the
+    /// block (FileContents' index), folders counted."
     #[test]
-    fn folders_and_nameless_records_are_left_out_but_counted() {
+    fn a_folder_is_left_out_but_counted_in_the_places() {
         let b = block(
-            3,
-            &[
-                record("clips", FD_ATTRIBUTES, FILE_ATTRIBUTE_DIRECTORY, 0),
-                record("", 0, 0, 0),
-                record("clips/d.mp4", FD_FILESIZE, 0, 3),
-            ],
+            2,
+            &[record("clips", FD_ATTRIBUTES, FILE_ATTRIBUTE_DIRECTORY, 0), record("clips/d.mp4", FD_FILESIZE, 0, 3)],
         );
-        assert_eq!(items(&b), [named("d.mp4", Some(3), 2)]);
+        assert_eq!(items(&b), [named("d.mp4", Some(3), 1)]);
     }
 
+    /// `FD_ATTRIBUTES`: "dwFileAttributes is valid": a file whose attributes are given, and aren't a
+    /// folder's, is a file.
     #[test]
-    fn a_short_or_overstated_block_is_read_only_as_far_as_it_goes() {
+    fn a_file_whose_attributes_are_given_is_kept() {
+        let b = block(1, &[record("a.mp4", FD_ATTRIBUTES, 0x80, 0)]);
+        assert_eq!(items(&b), [named("a.mp4", None, 0)]);
+    }
+
+    /// `item`: "unless it's a folder or has no name": a nameless record is left out, and counted.
+    #[test]
+    fn a_nameless_record_is_left_out_but_counted_in_the_places() {
+        let b = block(2, &[record("", 0, 0, 0), record("d.mp4", 0, 0, 0)]);
+        assert_eq!(items(&b), [named("d.mp4", None, 1)]);
+    }
+
+    /// `FD_ATTRIBUTES`: "dwFileAttributes is valid": without it the attributes aren't looked at, so
+    /// a record that doesn't say them is a file.
+    #[test]
+    fn attributes_a_record_doesnt_say_are_not_read() {
+        let b = block(1, &[record("a.mp4", 0, FILE_ATTRIBUTE_DIRECTORY, 0)]);
+        assert_eq!(items(&b), [named("a.mp4", None, 0)]);
+    }
+
+    /// Module doc: "a short or lying block can't be read past its end": nothing, or a short count's
+    /// worth, comes of a block with no room for its count.
+    #[test]
+    fn a_block_too_short_for_its_count_has_no_items() {
         assert_eq!(items(&[]), []);
         assert_eq!(items(&[1, 0]), []);
-        let one = record("e.mp4", 0, 0, 0);
-        assert_eq!(items(&block(9, std::slice::from_ref(&one))), [named("e.mp4", None, 0)], "a count past its end");
-        assert_eq!(items(&block(1, &[one[..RECORD - 1].to_vec()])), [], "a cut record");
-        assert_eq!(items(&block(0, &[one])), [], "none said");
     }
 
+    /// Module doc: "a short or lying block can't be read past its end": a count past the records
+    /// there are reads only those.
+    #[test]
+    fn a_count_past_the_records_there_are_reads_only_those() {
+        let one = record("e.mp4", 0, 0, 0);
+        assert_eq!(items(&block(9, std::slice::from_ref(&one))), [named("e.mp4", None, 0)]);
+    }
+
+    /// Module doc, as above: a cut record is left out, and a count of none reads none.
+    #[test]
+    fn a_cut_record_and_a_count_of_none_are_read_as_none() {
+        let one = record("e.mp4", 0, 0, 0);
+        assert_eq!(items(&block(1, &[one[..RECORD - 1].to_vec()])), []);
+        assert_eq!(items(&block(0, &[one])), []);
+    }
+
+    /// A count below the records there are reads only that many.
+    #[test]
+    fn a_count_below_the_records_there_are_reads_only_that_many() {
+        let b = block(1, &[record("a.mp4", 0, 0, 0), record("b.mp4", 0, 0, 0)]);
+        assert_eq!(items(&b), [named("a.mp4", None, 0)]);
+    }
+
+    /// `RECORD`: "MAX_PATH UTF-16 units": a name filling all of them, with no NUL, ends at the
+    /// record.
     #[test]
     fn a_name_filling_max_path_ends_at_the_record() {
         let long = "x".repeat(300);
         let mut r = record(&long, 0, 0, 0);
-        // No terminating zero at all.
         r[RECORD - 2..].copy_from_slice(&u16::from(b'y').to_le_bytes());
         let got = items(&block(1, &[r]));
         assert_eq!(got[0].name.len(), 260);
