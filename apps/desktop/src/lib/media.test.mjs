@@ -4,6 +4,9 @@ import { test } from "node:test";
 import {
   columns,
   cueAt,
+  DEFAULT_FPS,
+  elementSound,
+  PEAKS_RATE,
   edgeIndex,
   edgeShows,
   frameIndex,
@@ -264,4 +267,171 @@ test("a stretch of an edit's timeline starts where the piece it falls in plays i
 test("an edit's piece plays from its start to its end", () => {
   assert.deepEqual(playedSpans(2, 9), [[2, 9]]);
   assert.equal(playedLength({ start: 2, end: 9 }), 7);
+});
+
+/** media.ts `columns`: "Levels past the end of `levels` are 0"; no levels or no duration: silence. */
+test("a waveform with no levels, no length or no columns is silence", () => {
+  const levels = Uint8Array.from([255, 255, 255, 255]);
+  assert.deepEqual(Array.from(columns(levels, 0, 3)), [0, 0, 0], "no length");
+  assert.deepEqual(Array.from(columns(levels, Number.NaN, 2)), [0, 0]);
+  assert.equal(columns(levels, 2, 0).length, 0, "no columns");
+  assert.equal(columns(levels, 2, -3).length, 0, "negative columns");
+});
+
+/** media.ts `columns`: "each the loudest level (0 to 1) in its stretch of `duration` seconds". */
+test("a column's level is the loudest of its stretch, at the peaks' rate", () => {
+  assert.equal(PEAKS_RATE, 10, "ten levels a second");
+  // One second: ten levels, into two columns of five; the loudest is last in each.
+  const levels = Uint8Array.from([0, 0, 0, 0, 51, 0, 0, 0, 0, 255]);
+  assert.deepEqual(Array.from(columns(levels, 1, 2)), [0.2, 1].map(Math.fround));
+});
+
+/** media.ts `DEFAULT_FPS`: "The frame rate assumed until a player says (a site's player never does)". */
+test("until a player says its frame rate, 30 is assumed", () => {
+  assert.equal(DEFAULT_FPS, 30);
+});
+
+/** 0.4.1 (frame steps): a step before the start stays at the start, back from any frame in the first. */
+test("a step back from the first frame stays at the start", () => {
+  assert.equal(stepTime(0.01, -1, 30), 0);
+  assert.equal(stepTime(0, 0, 30), 0.25 / 30, "no step: a quarter into the frame it's in");
+});
+
+/**
+ * media.ts `tickStep`: "the first step that leaves room for a label"; the
+ * longest step when none does.
+ */
+test("a short video's ticks are a second apart, a very long one's the longest step", () => {
+  assert.equal(tickStep(1, 10_000), 1);
+  assert.equal(tickStep(1e9, 100), 14400);
+});
+
+/**
+ * media.ts `elementSound`: "A media element's volume control, muting by
+ * setting the volume to 0 and back: WebKit lets an element be unmuted
+ * (`muted = false`) only from a click, so a key (Shift+M) could mute but
+ * never unmute it."
+ */
+function sound(volume = 1) {
+  const el = { volume, muted: false };
+  const saved = /** @type {number[]} */ ([]);
+  const s = elementSound(
+    () => /** @type {any} */ (el),
+    (v) => saved.push(v),
+  );
+  return { el, saved, s };
+}
+
+test("muting sets the element's volume to 0 and unmuting puts it back, never touching `muted = true`", () => {
+  const { el, s } = sound(0.6);
+  s.setMuted(true);
+  assert.equal(el.volume, 0);
+  assert.equal(el.muted, false, "the element is never muted itself");
+  assert.equal(s.muted(), true);
+  assert.equal(s.get(), 0.6, "the bar still shows the level to come back to");
+  s.setMuted(false);
+  assert.equal(el.volume, 0.6);
+  assert.equal(s.muted(), false);
+  assert.equal(s.get(), 0.6);
+});
+
+test("muting while muted, or unmuting while not, changes nothing", () => {
+  const { el, s } = sound(0.6);
+  s.setMuted(false);
+  assert.equal(el.volume, 0.6);
+  s.setMuted(true);
+  el.volume = 0.3; // not the sound's doing: muting again must not take this as the level
+  s.setMuted(true);
+  s.setMuted(false);
+  assert.equal(el.volume, 0.6, "back to the level it was muted from");
+});
+
+test("a volume set is the element's, unmuted, and handed on to be saved", () => {
+  const { el, saved, s } = sound(1);
+  s.setMuted(true);
+  s.set(0.4);
+  assert.equal(el.volume, 0.4);
+  assert.equal(s.muted(), false, "a volume above 0 unmutes");
+  assert.equal(s.get(), 0.4);
+  assert.deepEqual(saved, [0.4]);
+});
+
+test("a volume set to 0 is a mute", () => {
+  const { el, saved, s } = sound(1);
+  s.set(0);
+  assert.equal(s.muted(), true);
+  assert.deepEqual(saved, [0]);
+  assert.equal(el.volume, 0);
+});
+
+test("a volume control with no element yet does nothing and reads full", () => {
+  const s = elementSound(() => undefined);
+  s.set(0.2);
+  s.setMuted(true);
+  assert.equal(s.muted(), false);
+  assert.equal(s.get(), 1);
+});
+
+/** media.ts `columns`: more columns than levels still read the level at each. */
+test("with more columns than levels, each column reads the level it falls on", () => {
+  const levels = Uint8Array.from({ length: 20 }, (_, i) => i);
+  const out = columns(levels, 2, 40);
+  assert.equal(out[2], Math.fround(1 / 255));
+  assert.equal(out[3], Math.fround(1 / 255));
+  assert.equal(out[4], Math.fround(2 / 255));
+});
+
+/** media.ts `waveformGaps`: a request that's ready, or whose audio is here, is heard in all of it; "less than a level apart: no gap". */
+test("a ready stretch is heard in full, and a gap of a level is a gap", () => {
+  /** @param {number} start @param {number} end @param {import("./api").Stretch["status"]} status @returns {import("./api").Stretch} */
+  const stretch = (start, end, status) => ({
+    id: 0,
+    vod_id: 1,
+    start,
+    end,
+    status,
+    progress: 0,
+    reached: null,
+    error: null,
+    model: null,
+    audio: false,
+  });
+  assert.deepEqual(waveformGaps([stretch(2, 3, "ready")], 4), [
+    { start: 0, end: 2 },
+    { start: 3, end: 4 },
+  ]);
+  assert.deepEqual(waveformGaps([stretch(0.1, 1, "done")], 1), [{ start: 0, end: 0.1 }]);
+  assert.deepEqual(waveformGaps([], 0.1), [{ start: 0, end: 0.1 }]);
+  assert.deepEqual(waveformGaps([stretch(0.09, 1, "done")], 1), []);
+  assert.deepEqual(waveformGaps([stretch(0, 1, "done")], 1.09), []);
+});
+
+/** media.ts `stretchIn`: a time before the start is in none. */
+test("a time before the start is in no stretch", () => {
+  assert.equal(stretchIn([2], 5, -1), undefined);
+});
+
+/** media.ts `playedSpans`: "nothing if it's a sliver under 0.04 s". */
+test("a piece of exactly 0.04 s plays", () => {
+  assert.deepEqual(playedSpans(0, 0.04), [[0, 0.04]]);
+});
+
+test("a stretch starting where a piece's played time ends is in the next piece", () => {
+  const pieces = [
+    { vod_id: 1, start: 0, end: 10 },
+    { vod_id: 2, start: 100, end: 105 },
+  ];
+  const found = inEdit(pieces, 10 - 1e-6, 11);
+  assert.equal(found?.vodId, 2);
+  assert.equal(found?.start, 100);
+});
+
+test("an unmuting set unmutes the element itself", () => {
+  const el = { volume: 0, muted: true };
+  const s = elementSound(() => /** @type {any} */ (el));
+  s.set(0.5);
+  assert.equal(el.muted, false);
+  s.setMuted(true);
+  s.setMuted(false);
+  assert.equal(el.muted, false);
 });

@@ -148,3 +148,13 @@ test("a frame reloaded while playing (the bridge) is waited on afresh", () => {
   clock.now += WAIT_MS;
   assert.equal(start.refused(), true, "the reloaded frame refused autoplay, and nothing says so");
 });
+
+/** startWatch.ts `refused`: "Loading or buffering isn't a refusal, however long it takes." */
+test("buffering after loading isn't a refusal, however long", () => {
+  const { clock, start } = watch();
+  start.play();
+  start.heard("Ready");
+  start.heard("Buffering");
+  clock.now = 10 * WAIT_MS;
+  assert.equal(start.refused(), false);
+});
