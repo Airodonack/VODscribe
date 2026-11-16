@@ -8,6 +8,7 @@ import {
   requestDetail,
   showsProgress,
   shownGaps,
+  statusLabel,
   transcribeChoices,
   transcribeRest,
   transcribeStretchOf,
@@ -260,4 +261,106 @@ test("what's left within half a second of the start or of a request's edge isn't
     [100, null, null],
   ]);
   assert.deepEqual(spans(gaps([stretch(0, 599.8, "queued")], 600)), [[0, 599.8, "queued"]]);
+});
+
+/**
+ * stretches.ts `statusLabel`: "A request's status in words, as a VOD's row and
+ * the transcript's rows say it; none for done or nothing asked"; e2e
+ * transcribe-stretch.mjs (`AT_WORK`): "Waiting to download", "Downloading",
+ * "Waiting to transcribe", "Transcribing".
+ */
+test("a request's status is said in words, and a done one or none asked says nothing", () => {
+  assert.deepEqual(statusLabel, {
+    queued: "Waiting to download",
+    downloading: "Downloading",
+    ready: "Waiting to transcribe",
+    transcribing: "Transcribing",
+    paused: "Paused",
+    done: "",
+    error: "Failed",
+    none: "",
+  });
+});
+
+/**
+ * stretches.ts `requestDetail`: "the stretch's range, its times put as
+ * `format` says, unless it's all of it"; 0.6.0: "a part waiting or being
+ * transcribed says how far it is".
+ */
+test("a row's range is said for any stretch but all of the VOD, and for one from the start that ends", () => {
+  assert.equal(requestDetail({ start: 0, end: 600 }, 3600, 0, formatTime), " · 0:00–10:00");
+  assert.equal(requestDetail({ start: 0, end: null }, null, 0, formatTime), "", "all of it, its length unknown");
+  assert.equal(requestDetail({ start: 10, end: null }, 3600, 0, formatTime), " · 0:10–1:00:00", "to the VOD's end");
+  assert.equal(requestDetail(null, 3600, 3, formatTime), " · 3 more waiting", "nothing shown, others waiting");
+});
+
+/**
+ * 0.6.0: "Hold Transcribe to start at the playhead. Pick 5 minutes, 15
+ * minutes, an hour, to the end, or the whole VOD"; stretches.ts
+ * `transcribeStretchOf`: "a length in seconds from where it opened, on to the
+ * end, or all of it from the start".
+ */
+test("a length asks for that long from the playhead, to the end for the rest, the whole VOD for all of it", () => {
+  /** @param {string} key @param {number} from @param {number | null} duration */
+  const asks = (key, from, duration) => {
+    // The menu far from the end offers all five; the choice is asked for at `from`.
+    const choice = transcribeChoices(600, 100000).find((c) => c.key === key);
+    assert.ok(choice, key);
+    return transcribeStretchOf(choice, from, duration);
+  };
+  assert.deepEqual(asks("300", 600, 7200), { start: 600, end: 900 });
+  assert.deepEqual(asks("900", 600, 7200), { start: 600, end: 1500 });
+  assert.deepEqual(asks("3600", 600, 7200), { start: 600, end: 4200 });
+  assert.deepEqual(asks("end", 600, 7200), { start: 600, end: null });
+  assert.deepEqual(asks("whole", 600, 7200), { start: 0, end: null }, "from the start, wherever the playhead is");
+  assert.deepEqual(asks("300", 600, null), { start: 600, end: 900 }, "a length not known reaches nothing");
+  assert.deepEqual(asks("3600", 6000, 7200), { start: 6000, end: null }, "an hour past the end is to it");
+});
+
+/**
+ * stretches.ts `gaps`, `shownGaps`: "once some is [transcribed or asked for],
+ * even with no lines, so the rest can be asked for"; 0.6.0: "a part waiting or
+ * being transcribed says how far it is, with Stop".
+ */
+test("a request over part of a VOD shows all its gaps, the parts not asked for too", () => {
+  const found = shownGaps([stretch(0, 100, "queued")], 600, "none", 0);
+  assert.deepEqual(spans(found), [
+    [0, 100, "queued"],
+    [100, null, null],
+  ]);
+});
+
+/** stretches.ts `gaps`, `covered`: "(null: unknown)": a length of 0, as a site or ffmpeg may give, isn't known either. */
+test("a VOD whose length is 0 is of a length not known", () => {
+  assert.deepEqual(spans(gaps([], 0)), [[0, null, null]]);
+  assert.deepEqual(spans(gaps([stretch(0, 60)], 0)), [[60, null, null]]);
+});
+
+/** 0.6.0: "Pick 5 minutes, 15 minutes, an hour, to the end, or the whole VOD", in that order, each in words. */
+test("the Transcribe menu offers 5 minutes, 15 minutes, an hour, to the end and the whole VOD, each with words", () => {
+  const menu = transcribeChoices(600, 7200);
+  assert.deepEqual(
+    menu.map((c) => [c.key, c.length ?? null, c.whole ?? false]),
+    [
+      ["300", 300, false],
+      ["900", 900, false],
+      ["3600", 3600, false],
+      ["end", null, false],
+      ["whole", null, true],
+    ],
+  );
+  assert.ok(menu.every((c) => c.label.length > 0));
+  assert.equal(new Set(menu.map((c) => c.label)).size, menu.length, "no two say the same");
+});
+
+/** 0.7.1 Fixes: "The Transcribe menu lists each stretch once": a length ending exactly at the VOD's end is to the end. */
+test("a length that ends exactly at the VOD's end is not offered beside to the end", () => {
+  assert.deepEqual(
+    transcribeChoices(300, 600).map((c) => c.key),
+    ["end", "whole"],
+  );
+  assert.deepEqual(transcribeStretchOf({ key: "300", label: "5 min", length: 300 }, 300, 600), {
+    start: 300,
+    end: null,
+  });
 });
