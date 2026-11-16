@@ -869,6 +869,27 @@ fn the_filters_window_is_at_most_an_hour_too() {
     assert_eq!(find(&db, "clutch within:2h").query.error.as_deref(), Some(TOO_WIDE));
 }
 
+/// A window of no time finds nothing, typed or the filter's, in what was
+/// said and in chat alike, and isn't refused: decided for 0.7.4, since no
+/// text fits in no time.
+#[test]
+fn a_window_of_no_time_finds_nothing() {
+    let mut db = library();
+    let v = vod(&db, "a", "s");
+    say(&mut db, v, 0.0, "a clutch play");
+    chat(&mut db, v, 1.0, "bob", "clutch");
+    assert_eq!(find(&db, "clutch").hits.len(), 2);
+    for text in ["clutch within:0", "\"clutch\" \"play\" within:0s", "from:bob within:0", "in:chat clutch within:0:00"]
+    {
+        let r = find(&db, text);
+        assert_eq!((r.hits.len(), r.query.error, r.query.within), (0, None, Some(0.0)), "{text}");
+    }
+    let filter = |within| SearchFilter { within: Some(within), ..Default::default() };
+    let r = db.search("clutch", &filter(0.0), 500).unwrap();
+    assert_eq!((r.hits.len(), r.query.error), (0, None), "the filter's");
+    assert_eq!(db.search("clutch within:20", &filter(0.0), 500).unwrap().hits.len(), 2, "the typed one wins");
+}
+
 // An edit's chat.
 
 /// An edit's chat is each piece's VOD's chat where that piece plays, its

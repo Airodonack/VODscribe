@@ -3,7 +3,9 @@
 // together: a change there is made here too, and query.test.mjs runs
 // query.rs's tests against this file (same cases, same trees), so
 // `node --test apps/site/src/lib/tauri/query.test.mjs` catches a drift.
-// No imports, so Node can test it directly.
+// Its one import is the tokenizer's table, so Node can test it directly.
+
+import { FOLDS, SEPARATORS } from "./unicode61.ts";
 
 /** How far apart a match's pieces may be when `within:` isn't typed, in seconds. */
 export const DEFAULT_WITHIN = 20;
@@ -78,14 +80,49 @@ export interface QueryInfo {
 /** A query that can't be run: the message says what to fix. */
 export class QueryError extends Error {}
 
-/** Lowercased alphanumeric runs with accents removed, like the app's `terms`. */
+/** The terms the search index makes of `text`, as the app's `terms`
+ *  (crates/core transcript.rs): SQLite's `unicode61 remove_diacritics 2`
+ *  tokenizer, character by character, so lowercase, accents off Latin
+ *  letters, and every other script as written. */
 export function terms(text: string): string[] {
-  return text
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
+  const out: string[] = [];
+  let term = "";
+  for (const c of text) {
+    const f = fold(c);
+    if (f !== null) term += f;
+    else if (term !== "") {
+      out.push(term);
+      term = "";
+    }
+  }
+  if (term !== "") out.push(term);
+  return out;
+}
+
+/** What a character is in a word ("" where it's left out, a combining
+ *  accent), or null where it parts words. */
+function fold(c: string): string | null {
+  const n = c.codePointAt(0)!;
+  if (n < 0x80) return /[0-9A-Za-z]/.test(c) ? c.toLowerCase() : null;
+  const s = startingAtOrBefore(SEPARATORS, 2, n);
+  if (s >= 0 && n <= SEPARATORS[s + 1]) return null;
+  const r = startingAtOrBefore(FOLDS, 5, n);
+  if (r < 0 || n > FOLDS[r + 1] || (n - FOLDS[r]) % FOLDS[r + 2] !== 0) return c;
+  const becomes = FOLDS[r + 3] + ((n - FOLDS[r]) / FOLDS[r + 2]) * FOLDS[r + 4];
+  return becomes === 0 ? "" : String.fromCodePoint(becomes);
+}
+
+/** Where in `table`, entries of `size` numbers in order of their first,
+ *  the last entry whose first is `n` or less starts; -1 for none. */
+function startingAtOrBefore(table: readonly number[], size: number, n: number): number {
+  let lo = 0;
+  let hi = table.length / size;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (table[mid * size] <= n) lo = mid + 1;
+    else hi = mid;
+  }
+  return (lo - 1) * size;
 }
 
 /** Whether a search's last term matches as a prefix: once it's two characters
@@ -536,7 +573,8 @@ export function parse(text: string): Query {
     if (node.kind === "filter" && node.value !== "") {
       if (node.key === "within") {
         const s = seconds(node.value);
-        if (s === null || !(s > 0)) error = "within: takes a length of time, such as within:20s, 2m or 1h.";
+        // No time, within:0, is a window too: the search finds nothing in it.
+        if (s === null) error = "within: takes a length of time, such as within:20s, 2m or 1h.";
         else if (s > MOST_WITHIN) error = TOO_WIDE;
         else query.within = s;
       } else {

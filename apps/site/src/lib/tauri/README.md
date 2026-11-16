@@ -6,6 +6,7 @@
 - `backend.ts`: the app's commands, answered from `static/demo` or a VOD page's annotations.
 - `search.ts`: a port of the app's phrase search.
 - `query.ts`: a port of the app's query parser; keep it in step with `crates/core/src/query.rs`.
+- `unicode61.ts`: the search index's tokenizer, character by character, for `query.ts`'s terms; written by `scripts/unicode61.py`.
 - `annotations.ts`: the VOD a VOD page has open, for the backend to answer from.
 - `annotated.ts`: a VOD's annotations turned into the demo's shapes.
 - `event.ts`: `@tauri-apps/api/event`; on a VOD page it says when the chat arrives.

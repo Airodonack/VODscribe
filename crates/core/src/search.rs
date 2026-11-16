@@ -117,7 +117,7 @@ impl Db {
             Ok(c) => c,
             Err(e) => return Ok(none(QueryInfo { error: Some(e), ..info })),
         };
-        let within = parsed.within.or(filter.within.filter(|&w| w > 0.0)).unwrap_or(DEFAULT_WITHIN);
+        let within = parsed.within.or(filter.within).unwrap_or(DEFAULT_WITHIN);
         // The filter's names, as `from:` takes them: "a, b" is either.
         let from = crate::query::names(filter.from.as_deref().unwrap_or(""));
         // Nothing typed but a name in the filter: what `from:` typed alone lists.
@@ -138,6 +138,10 @@ impl Db {
                 continue;
             }
             ran = true;
+            // No text fits in a window of no time.
+            if within <= 0.0 {
+                continue;
+            }
             let (speech, chat) = match c.sources {
                 Some(s) => (s.audio, s.chat),
                 None => (filter.speech, filter.chat),

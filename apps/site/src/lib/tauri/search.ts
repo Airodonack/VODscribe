@@ -569,7 +569,7 @@ export function searchLibrary(vods: LibraryVod[], query: string, filter: Filter,
     if (e instanceof QueryError) return none({ ...info, error: e.message });
     throw e;
   }
-  const within = parsed.within ?? (filter.within != null && filter.within > 0 ? filter.within : null) ?? DEFAULT_WITHIN;
+  const within = parsed.within ?? filter.within ?? DEFAULT_WITHIN;
   // The filter's names, as `from:` takes them: "a, b" is either.
   const from = names(filter.from ?? "");
   // Nothing typed but a name in the filter: what `from:` typed alone lists.
@@ -584,6 +584,8 @@ export function searchLibrary(vods: LibraryVod[], query: string, filter: Filter,
     // Exclusions alone have nothing to leave things out of.
     if (c.pieces.length === 0 && !filtered(c)) continue;
     ran = true;
+    // No text fits in a window of no time.
+    if (within <= 0) continue;
     const speech = c.sources ? c.sources.audio : filter.speech !== false;
     const chat = c.sources ? c.sources.chat : filter.chat !== false;
     if (speech) found.push(...lib.speech(c, vodId, within, limit));

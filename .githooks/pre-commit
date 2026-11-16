@@ -1,8 +1,9 @@
 #!/bin/sh
 # Refuses a commit whose Rust or frontend code isn't formatted, a workflow
 # file that doesn't parse, a staged CHANGELOG.md whose unreleased entry is
-# out of shape, or a staged source file whose comments cite a private plan,
-# the owner or code by line number.
+# out of shape, a staged source file whose comments cite a private plan,
+# the owner or code by line number, or a tokenizer table that isn't what
+# scripts/unicode61.py writes.
 # Enable once per clone: git config core.hooksPath .githooks
 # Fix with: cargo fmt --all && pnpm format
 root=$(git rev-parse --show-toplevel)
@@ -24,5 +25,9 @@ fi
 # The staged source files, as staged.
 if git diff --cached --name-only --diff-filter=d | grep -qE '^(crates|apps|tests)/'; then
   python3 -I scripts/citations-check.py --staged >&2 || ok=1
+fi
+# The app's and the demo's tokenizer tables, one written from the other.
+if git diff --cached --name-only | grep -qE '^(scripts/unicode61\.py|crates/core/src/transcript/unicode61\.rs|apps/site/src/lib/tauri/unicode61\.ts)$'; then
+  python3 -I scripts/unicode61.py --check >/dev/null || ok=1
 fi
 exit $ok

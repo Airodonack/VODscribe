@@ -1,9 +1,11 @@
 // The demo's search (search.ts) against the app's: its phrase search and
 // highlighting against the Rust's cases (crates/core/tests/phrase-search.json),
-// and the library search against the core's search tests, below.
+// its terms against the core's tests of them and SQLite's own tokenizer, and
+// the library search against the core's search tests, below.
 // node --test apps/site/src/lib/tauri/search.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { MOST_WITHIN, TOO_WIDE } from "./query.ts";
 import { authorSuggestions, findPhrase, highlight, lastIsPrefix, searchLibrary, terms } from "./search.ts";
@@ -25,6 +27,88 @@ for (const c of cases) {
     assert.equal(marked, c.marked);
   });
 }
+
+// The terms (`terms`) against the app's own tests of them, case for case:
+// crates/core transcript/tests.rs, its tests of `terms`. Like those, they
+// ask SQLite's tokenizer, here Node's SQLite, the same `unicode61
+// remove_diacritics 2` as the library's index.
+
+/** A search index with SQLite's tokenizer, and the terms it makes of a text. */
+function tokenizer() {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`CREATE VIRTUAL TABLE t USING fts5 (text, tokenize = 'unicode61 remove_diacritics 2');
+           CREATE VIRTUAL TABLE v USING fts5vocab (t, 'instance');`);
+  return db;
+}
+
+/** The texts among `texts` whose terms aren't the ones the index makes of
+ *  them, each with both. @param {string[]} texts */
+function unlikeTheIndex(texts) {
+  const db = tokenizer();
+  const differ = [];
+  for (const text of texts) {
+    db.exec("DELETE FROM t");
+    db.prepare("INSERT INTO t (text) VALUES (?)").run(text);
+    const indexed = db
+      .prepare("SELECT term FROM v ORDER BY offset")
+      .all()
+      .map((r) => r.term);
+    if (JSON.stringify(terms(text)) !== JSON.stringify(indexed))
+      differ.push(`${text}: ${JSON.stringify(terms(text))}, the index ${JSON.stringify(indexed)}`);
+  }
+  return differ;
+}
+
+test("terms are the ones the search index makes", () => {
+  assert.deepEqual(terms("Don't CAFÉ!"), ["don", "t", "cafe"]);
+  assert.deepEqual(
+    unlikeTheIndex([
+      "Don't CAFÉ!",
+      "Le café était fermé.",
+      "an e-sports team, launched in 2026",
+      "Ångström naïve façade Ørsted crème brûlée",
+      "ÉCOLE Ça ŞEHİR ĞÜÇ",
+      'under_score dot.ted slash/ed (brackets) "quotes"',
+      "Straße ŒUVRE Кириллица",
+      "x1 2b 3.5 4,000 #5 @six 🚀🚀",
+    ]),
+    [],
+  );
+});
+
+test("terms are the ones the search index makes in every script", () => {
+  assert.deepEqual(
+    unlikeTheIndex(["Ελληνικά", "한국어 방송", "ガンダム だよ", "the 🦅 landed", "e\u0301te\u0301 a \u0301 b"]),
+    [],
+  );
+});
+
+test("every character is what the search index makes of it", () => {
+  const db = tokenizer();
+  const every = function* () {
+    for (let c = 0; c <= 0x10ffff; c++) if (c < 0xd800 || c >= 0xe000) yield c;
+  };
+  const insert = db.prepare("INSERT INTO t (rowid, text) VALUES (?, ?)");
+  db.exec("BEGIN");
+  for (const c of every()) insert.run(c, `z${String.fromCodePoint(c)}z`);
+  db.exec("COMMIT");
+  /** @type {Map<number, string[]>} */
+  const indexed = new Map();
+  for (const r of db.prepare("SELECT doc, term FROM v ORDER BY doc, offset").iterate()) {
+    const doc = Number(r.doc);
+    indexed.set(doc, [...(indexed.get(doc) ?? []), String(r.term)]);
+  }
+  const differ = [];
+  for (const c of every()) {
+    const made = terms(`z${String.fromCodePoint(c)}z`);
+    const want = indexed.get(c) ?? [];
+    if (JSON.stringify(made) !== JSON.stringify(want) && differ.length < 20)
+      differ.push(
+        `U+${c.toString(16).toUpperCase().padStart(4, "0")}: ${JSON.stringify(made)}, the index ${JSON.stringify(want)}`,
+      );
+  }
+  assert.deepEqual(differ, []);
+});
 
 // The search over a library (`searchLibrary`, `authorSuggestions`) against
 // the app's own tests of it, case for case: crates/core db/tests/search.rs
@@ -490,9 +574,54 @@ test("the filter's window is at most an hour too", () => {
   assert.equal(db.find("clutch within:2h").query.error, TOO_WIDE);
 });
 
+test("a window of no time finds nothing", () => {
+  const db = library();
+  const v = db.vod("s");
+  db.say(v, 0, "a clutch play");
+  db.chat(v, 1, "bob", "clutch");
+  assert.equal(db.find("clutch").hits.length, 2);
+  for (const q of ["clutch within:0", '"clutch" "play" within:0s', "from:bob within:0", "in:chat clutch within:0:00"]) {
+    const r = db.find(q);
+    assert.deepEqual([r.hits.length, r.query.error, r.query.within], [0, null, 0], q);
+  }
+  const r = db.find("clutch", { within: 0 });
+  assert.deepEqual([r.hits.length, r.query.error], [0, null], "the filter's");
+  assert.equal(db.find("clutch within:20", { within: 0 }).hits.length, 2, "the typed one wins");
+});
+
 test("the rarest word is looked up", () => {
   const db = library();
   const v = db.vod("s");
   for (let i = 0; i < 20; i++) db.say(v, i * 30, i === 7 ? "the the zebra" : "the the the");
   assert.equal(db.find("the zeb").hits[0].time, 210.3);
+});
+
+// Words in every script against crates/core db/tests/search_scripts.rs.
+
+test("words in every script are found as written", () => {
+  const db = library();
+  const v = db.vod("s");
+  const said = ["오늘 한국어 방송.", "Τα ελληνικά μου.", "これ ガンダム です.", "the 🦅 landed.", "Le café ferme."];
+  said.forEach((text, i) => {
+    db.say(v, i * 10, text);
+    db.chat(v, i * 10 + 5, "v", text);
+  });
+  const missed = [];
+  for (const [query, at] of /** @type {const} */ ([
+    ["한국어", 0],
+    ["ελληνικά", 10],
+    ["ガンダム", 20],
+    ["🦅", 30],
+    ["cafe", 40],
+  ])) {
+    // Each is the second word of its line, and chat wrote it 5 s in.
+    for (const [speech, time, where] of /** @type {const} */ ([
+      [true, at + 0.3, "speech"],
+      [false, at + 5, "chat"],
+    ])) {
+      const hits = db.find(query, { speech, chat: !speech }).hits.map((h) => h.time);
+      if (JSON.stringify(hits) !== JSON.stringify([time])) missed.push(`${query} in ${where}: ${JSON.stringify(hits)}`);
+    }
+  }
+  assert.deepEqual(missed, []);
 });

@@ -374,6 +374,16 @@ fn names_reads_the_from_whom_controls_text() {
     assert_eq!(names("\"Some One\",bob"), ["Some One", "bob"]);
 }
 
+/// Decided for 0.7.4: an empty name between commas is no one, as the comma
+/// left at the end while typing `from:a,`.
+#[test]
+fn an_empty_name_between_commas_is_no_one() {
+    assert_eq!(only("from:a, hi").from, ["a"]);
+    assert_eq!(only("from:Ada,,Bob").from, ["Ada", "Bob"]);
+    assert!(only("from:,").from.is_empty());
+    assert_eq!(names(" Ada ,  Some One,"), ["Ada", "Some One"]);
+}
+
 /// "`in:chat` / `in:audio`" (query.rs, the module's doc); 0.6.0: "`in:chat` or
 /// `in:audio`"; Conjunction.sources: "Typed
 /// `in:`, which takes the place of the filter's sources" (query.rs `Conjunction::sources`).
@@ -390,6 +400,14 @@ fn in_chat_or_in_audio_chooses_the_sources() {
 #[test]
 fn in_takes_only_audio_or_chat() {
     assert!(error("in:video").contains("in:audio"));
+}
+
+/// Decided for 0.7.4: keys, and a time's units, are read in any case, so
+/// `FROM:Bob` is `from:Bob` and `1H` is an hour.
+#[test]
+fn keys_and_a_times_units_are_read_in_any_case() {
+    assert_eq!(tree("FROM:Bob"), filter(Key::From, "Bob"));
+    assert_eq!(seconds("1H"), Some(3600.0));
 }
 
 /// Decided for 0.6.0: `within:20`, `within:20s`, `within:2m` and
@@ -441,6 +459,17 @@ fn within_is_at_most_an_hour() {
 #[test]
 fn a_within_that_is_not_a_length_of_time_says_so() {
     assert!(error("within:soon").contains("within:"));
+}
+
+/// Decided for 0.7.4: a window of no time is a window, not a mistake: the
+/// search runs and finds nothing, since no text fits in no time (what it
+/// finds is search's, db/tests/search.rs).
+#[test]
+fn a_window_of_no_time_is_a_window() {
+    for text in ["gg within:0", "gg within:0s", "gg within:0:00", "gg within:0.0m"] {
+        assert_eq!(parse(text).unwrap().within, Some(0.0), "{text}");
+    }
+    assert_eq!(info("gg within:0").within, Some(0.0), "shown in the filter's control");
 }
 
 /// 0.6.0: "`after:1:20:00` or `before:2h`
@@ -711,43 +740,20 @@ fn seconds_reads_nothing_else_as_a_time() {
     }
 }
 
-// Unstated: no source states these. They are kept as the tests before
-// these had them, until it is decided whether they are specs.
-
-/// Unstated: keys, and a time's units, are read in any case.
+/// Decided for 0.7.4: a time's numbers may have decimals, so `1.5m` is 90
+/// seconds.
 #[test]
-fn unstated_keys_and_units_in_any_case() {
-    assert_eq!(tree("FROM:Bob"), filter(Key::From, "Bob"));
-    assert_eq!(seconds("1H"), Some(3600.0));
-}
-
-/// Unstated: a time's numbers may have decimals.
-#[test]
-fn unstated_a_time_may_have_decimals() {
+fn a_time_may_have_decimals() {
     assert_eq!(seconds("1.5m"), Some(90.0));
+    assert_eq!(seconds("0.5"), Some(0.5));
 }
 
-/// Unstated: a comma with no name after it names no one (while
-/// typing `from:a,`).
+/// Decided for 0.7.4: a time too large to be finite is no time, and as a
+/// window is refused as `within:` is when it isn't a length of time.
 #[test]
-fn unstated_an_empty_name_between_commas_is_no_one() {
-    assert_eq!(only("from:a, hi").from, ["a"]);
-    assert!(only("from:,").from.is_empty());
-    assert_eq!(names(" Ada ,  Some One,"), ["Ada", "Some One"]);
-}
-
-/// Unstated: a time too large to be finite is not a time, nor a
-/// window.
-#[test]
-fn unstated_a_time_too_large_to_be_finite_is_none() {
+fn a_time_too_large_to_be_finite_is_no_time() {
     let huge = format!("1{}", "0".repeat(305));
     assert_eq!(seconds(&format!("{huge}h")), None);
     assert_eq!(seconds(&format!("{huge}:00:00")), None);
     assert!(error(&format!("within:{huge}h")).contains("within:"));
-}
-
-/// Unstated: a window of no time is refused.
-#[test]
-fn unstated_a_window_of_no_time_is_refused() {
-    assert!(error("within:0").contains("within:"));
 }

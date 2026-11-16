@@ -62,6 +62,8 @@ jobs:
       # Comments cite no private plan, no owner, and no code by line number.
       - run: python3 -I scripts/citations-check.py
       - run: python3 -I scripts/test_citations_check.py
+      # The demo's tokenizer table is the app's: scripts/unicode61.py writes both.
+      - run: python3 -I scripts/unicode61.py --check
 
       - run: pnpm install --frozen-lockfile
       # The workflow files parse as workflows (after pnpm install: the checker needs the yaml package; a dropped indent ran no Checks job at all once).

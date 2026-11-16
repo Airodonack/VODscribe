@@ -686,7 +686,8 @@ pub fn parse(text: &str) -> Result<Query, String> {
                 && !value.is_empty()
             {
                 if *key == Key::Within {
-                    match seconds(value).filter(|&s| s > 0.0) {
+                    // No time, within:0, is a window too: the search finds nothing in it.
+                    match seconds(value) {
                         Some(s) if s > MOST_WITHIN => error = Some(TOO_WIDE.into()),
                         Some(s) => query.within = Some(s),
                         None => error = Some("within: takes a length of time, such as within:20s, 2m or 1h.".into()),
