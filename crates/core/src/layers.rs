@@ -117,35 +117,4 @@ pub fn save(path: &Path, timeline: &Timeline) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn saves_and_falls_back_to_the_defaults() {
-        let dir = crate::TempDir::new("layers");
-        let path = dir.join("layers.json");
-        let fresh = Timeline { layers: defaults(), events: Vec::new(), marks: MarkSources::default() };
-        assert_eq!(load(&path), fresh, "nothing saved yet");
-        let mut mine = fresh.clone();
-        mine.layers[0].channel = Some(Channel { platform: "kick".into(), channel: "Barky".into() });
-        let emote = Some("https://files.kick.com/emotes/1/fullsize".into());
-        mine.layers[0].terms.push(Term { text: "barkylol".into(), emote });
-        mine.events = vec![Kind::Sub, Kind::Tip];
-        save(&path, &mine).unwrap();
-        assert_eq!(load(&path), mine);
-        mine.marks = MarkSources { user: false, imported: true };
-        save(&path, &mine).unwrap();
-        assert_eq!(load(&path).marks, mine.marks, "whose marks are shown sticks");
-        save(&path, &Timeline { layers: Vec::new(), events: Vec::new(), marks: MarkSources::default() }).unwrap();
-        assert!(load(&path).layers.is_empty(), "deleting every layer sticks");
-        fs::write(&path, "{").unwrap();
-        assert_eq!(load(&path), fresh);
-        // Before event toggles, the file was just the layers.
-        fs::write(&path, serde_json::to_string(&defaults()[..1]).unwrap()).unwrap();
-        let old = Timeline { layers: defaults()[..1].to_vec(), events: Vec::new(), marks: MarkSources::default() };
-        assert_eq!(load(&path), old);
-        // As 0.6.0 wrote it: no word of marks, so both are shown.
-        fs::write(&path, r#"{"layers": [], "events": ["sub"]}"#).unwrap();
-        assert_eq!(load(&path).marks, MarkSources { user: true, imported: true });
-    }
-}
+mod tests;

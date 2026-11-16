@@ -251,3 +251,6 @@ pub(crate) async fn chat_matches(
 ) -> CmdResult<Vec<Vec<(i64, f64)>>> {
     crate::with_reads(app, move |db| terms.iter().map(|t| db.chat_matches(vod_id, t)).collect()).await
 }
+
+#[cfg(test)]
+mod tests;
