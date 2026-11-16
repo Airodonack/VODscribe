@@ -135,3 +135,61 @@ test("between: a moment moved on from that fails says nothing; the newest is ask
     ["a", "b"],
   );
 });
+
+// latest.ts header: "What comes back is shown, unless something newer is wanted by then".
+test("a moment wanted again after its answer is asked for again, and the old answer is let go once the new one shows", async () => {
+  const w = watched();
+  w.l.want("a");
+  await w.answer(0, "A1");
+  w.l.want("a");
+  await w.answer(1, "A2");
+  assert.deepEqual(w.shown, ["A1", "A2"]);
+  assert.deepEqual(w.freed, ["A1"]);
+});
+
+// latest.ts `Latest.free`, `Latest.failed`: both are optional.
+test("with nothing to free and nothing told of failures, answers still show and a failure goes quietly", async () => {
+  const r = requests();
+  /** @type {string[]} */
+  const shown = [];
+  const l = latest({ fetch: r.fetch, got: (v) => shown.push(v) });
+  l.want("a");
+  await r.answer(0, "A");
+  l.want("b");
+  await r.answer(1, "B");
+  l.want("c");
+  r.asked[2].reject(new Error("no"));
+  await new Promise((done) => setTimeout(done));
+  l.want("d");
+  await r.answer(3, "D");
+  l.want("e");
+  l.want("f");
+  await r.answer(4, "E");
+  l.clear();
+  assert.deepEqual(shown, ["A", "B", "D"]);
+});
+
+// latest.ts header: "What comes back is shown": the first answer has nothing before it to let go of.
+test("a first answer is shown and not told as a failure", async () => {
+  const r = requests();
+  /** @type {string[]} */
+  const failed = [];
+  const l = latest({ fetch: r.fetch, got() {}, free() {}, failed: (_e, arg) => failed.push(arg) });
+  l.want("a");
+  await r.answer(0, "A");
+  assert.deepEqual(failed, []);
+  assert.equal(r.asked.length, 1);
+});
+
+// latest.ts `Latest.free`: optional, and its absence is no failure of the answer shown.
+test("an answer replacing another is shown and not told as a failure when there is nothing to free", async () => {
+  const r = requests();
+  /** @type {string[]} */
+  const failed = [];
+  const l = latest({ fetch: r.fetch, got() {}, failed: (_e, arg) => failed.push(arg) });
+  l.want("a");
+  await r.answer(0, "A");
+  l.want("b");
+  await r.answer(1, "B");
+  assert.deepEqual(failed, []);
+});

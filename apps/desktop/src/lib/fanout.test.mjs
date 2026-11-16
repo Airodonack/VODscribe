@@ -79,3 +79,17 @@ test("fanned: one listener a name, an unlisten drops only its subscriber", async
   emit("vod", 3);
   assert.deepEqual(told, [["page", 2]]);
 });
+
+// fanout.ts `fanned`: every name has its own listener and subscribers.
+test("fanned: an event is told only to the subscribers of its name", async () => {
+  const { listen, settle, emit } = tauriLike();
+  const on = fanned(listen);
+  /** @type {string[]} */
+  const told = [];
+  const a = on("vod", () => told.push("vod"));
+  const b = on("job", () => told.push("job"));
+  settle();
+  await Promise.all([a, b]);
+  emit("job", 1);
+  assert.deepEqual(told, ["job"]);
+});

@@ -3,6 +3,7 @@
 Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The website builds the same files with stand-ins for the shell.
 
 - `*.test.mjs`: unit tests of the module of the same name, run with `node --test`; `modules.test.mjs` checks that no two module names differ only in case.
+- `shellFake.mjs`: loads the stores (`.svelte.ts`) under node with Tauri's `invoke` and `listen` faked, for the tests of `nav.svelte.ts` and `adder.svelte.ts`.
 - [`logos`](logos): the emote providers' logos.
 
 ## The window

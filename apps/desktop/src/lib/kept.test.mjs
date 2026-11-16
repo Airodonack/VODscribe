@@ -42,3 +42,64 @@ test("of several, only those not kept are read, together", async () => {
   assert.deepEqual(await keptEach(200, ["b", "c", "a"], read), ["w1", "w1", "w0"]);
   assert.deepEqual(asked, [[0, 1], [1]]);
 });
+
+// kept.ts `readsOf`: "VOD `vodId`'s reads, made the most recent (the oldest beyond KEEP let go)."
+test("a VOD read again is the most recent, so it isn't the one let go", async () => {
+  let reads = 0;
+  const read = () => Promise.resolve(++reads);
+  for (let id = 300; id < 300 + KEEP; id++) await kept(id, "lines", read);
+  await kept(300, "lines", read);
+  await kept(400, "lines", read);
+  const before = reads;
+  assert.equal(await kept(300, "lines", read), 1, "300 was read again, so it stayed");
+  assert.equal(reads, before);
+  await kept(301, "lines", read);
+  assert.equal(reads, before + 1, "301, the oldest, was let go");
+});
+
+// kept.ts header: "A read that fails isn't kept." keptEach: the batch's failure is each key's.
+test("of several read together, a failure isn't kept for any of them", async () => {
+  let reads = 0;
+  /** @param {number[]} missing @returns {Promise<string[]>} */
+  const read = (missing) =>
+    ++reads === 1 ? Promise.reject(new Error("no")) : Promise.resolve(missing.map((i) => `v${i}`));
+  await assert.rejects(keptEach(500, ["a", "b"], read));
+  assert.deepEqual(await keptEach(500, ["a", "b"], read), ["v0", "v1"]);
+});
+
+// kept.ts `forget`: "whose key `which` picks"; a VOD's other reads stay.
+test("forgetting picks the reads by key and leaves the VOD's others kept", async () => {
+  let reads = 0;
+  const read = () => Promise.resolve(++reads);
+  await kept(600, "lines", read);
+  await kept(600, "marks", read);
+  forget(600, (key) => key === "marks");
+  assert.equal(await kept(600, "lines", read), 1);
+  assert.equal(await kept(600, "marks", read), 3);
+});
+
+// kept.ts `keptEach`: of several, "those not kept read together": none missing, none read.
+test("of several all kept, nothing is read", async () => {
+  /** @type {number[][]} */
+  const asked = [];
+  /** @param {number[]} missing */
+  const read = (missing) => (asked.push(missing), Promise.resolve(missing.map((i) => `w${i}`)));
+  await keptEach(700, ["a"], read);
+  await keptEach(700, ["a"], read);
+  assert.deepEqual(asked, [[0]]);
+});
+
+// kept.ts header: "A read that fails isn't kept": a failure of a read let go of meanwhile leaves the newer read kept.
+test("a read that fails after a newer one was kept doesn't let the newer go", async () => {
+  /** @type {(e: Error) => void} */
+  let fail = () => {};
+  const old = new Promise((_, reject) => (fail = reject));
+  const first = kept(800, "lines", () => old);
+  forget(800);
+  let reads = 0;
+  assert.equal(await kept(800, "lines", () => Promise.resolve(++reads)), 1);
+  fail(new Error("late"));
+  await assert.rejects(first);
+  assert.equal(await kept(800, "lines", () => Promise.resolve(++reads)), 1, "kept still");
+  assert.equal(reads, 1);
+});
