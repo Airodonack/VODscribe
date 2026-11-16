@@ -22,6 +22,7 @@ const groups = [
 /** What's pinned with the view's top at `y`. @type {(y: number) => import("./pinned").Pinned} */
 const at = (y) => pinnedAt(offsets, dividers, groups, y);
 
+// Source: pinned.ts `groupSpans`.
 test("a group goes on over its named lines, and ends at a head, a line no one is named for, or a row that isn't a line", () => {
   const head = { name: "A", start: 0 };
   assert.deepEqual(
@@ -35,10 +36,12 @@ test("a group goes on over its named lines, and ends at a head, a line no one is
   assert.deepEqual(groupSpans([null, null], [false, true]), []);
 });
 
+// Source: pinned.ts `pinnedAt` ("A divider is pinned once its top is above the view's").
 test("at the very top, nothing is pinned: the headings are where they are", () => {
   assert.deepEqual(at(0), { chapter: -1, group: -1, chapterTop: 0, speakerTop: 0, height: 0 });
 });
 
+// Source: pinned.ts header ("the chapter's over the speaker's"); 0.7.0 ("The speaker and chapter stay in view.").
 test("once a heading is off the top, its chapter and speaker are pinned, the speaker under the divider", () => {
   // Row 1's middle at the top: the divider and the head over row 0 are above.
   assert.deepEqual(at(60), { chapter: 0, group: 0, chapterTop: 0, speakerTop: 30, height: 50 });
@@ -49,6 +52,7 @@ test("once a heading is off the top, its chapter and speaker are pinned, the spe
   assert.equal(at(91).group, 1);
 });
 
+// Source: pinned.ts header ("pushes the pinned one out by as much as they'd overlap").
 test("the next speaker's head pushes the pinned one up by as much as they'd overlap, then takes its place", () => {
   // Row 3 (the next head) starts at 120; the pinned head's bottom is at y + 50.
   assert.equal(at(70).speakerTop, 30);
@@ -64,6 +68,7 @@ test("the next speaker's head pushes the pinned one up by as much as they'd over
   assert.equal(next.speakerTop, 30);
 });
 
+// Source: pinned.ts `groupSpans` and `pinnedAt` ("until their lines end there").
 test("a line no one is named for pushes the speaker out, and none is pinned over it", () => {
   // Row 5 (unnamed) starts at 200: the second group ends there.
   assert.equal(at(150).speakerTop, 30);
@@ -74,6 +79,7 @@ test("a line no one is named for pushes the speaker out, and none is pinned over
   assert.equal(over.height, 30);
 });
 
+// Source: pinned.ts `groupSpans` ("where the transcript names anyone, any line").
 test("where anyone is named, a stretch no one is named for is Unknown's: its own group, pinned over it", () => {
   // The same rows, as lines: row 5 no one's, so in a transcript naming
   // others it heads a group of its own (transcriptGroups.ts), pinned as theirs are.
@@ -99,6 +105,7 @@ test("where anyone is named, a stretch no one is named for is Unknown's: its own
   assert.equal(over.speakerTop, 240 - 215 - SPEAKER);
 });
 
+// Source: pinned.ts header ("a new chapter pushes out both").
 test("a new chapter pushes out both the pinned divider and the speaker under it", () => {
   // The first chapter's rows with a group to its end, here: row 6's divider starts at 240.
   const spans = [
@@ -128,6 +135,7 @@ test("a new chapter pushes out both the pinned divider and the speaker under it"
   });
 });
 
+// Source: pinned.ts `pinnedAt`.
 test("an ungrouped stretch's chapter is pinned alone; without chapters, a speaker alone", () => {
   assert.deepEqual(at(210), { chapter: 0, group: -1, chapterTop: 0, speakerTop: 0, height: 30 });
   // Pushed out by the next chapter, alone: 10 px into row 6's divider.
@@ -140,6 +148,7 @@ test("an ungrouped stretch's chapter is pinned alone; without chapters, a speake
   assert.equal(pinnedAt(offsets, [], [], 110).height, 0);
 });
 
+// Source: pinned.ts `reserveAt`.
 test("a row brought into view goes below what's pinned with it at the top", () => {
   // Inside a group: the divider and the head.
   assert.equal(reserveAt(1, dividers, groups), 50);
@@ -151,4 +160,90 @@ test("a row brought into view goes below what's pinned with it at the top", () =
   assert.equal(reserveAt(6, dividers, groups), 0);
   assert.equal(reserveAt(0, dividers, groups), 0);
   assert.equal(reserveAt(2, [], []), 0);
+});
+
+// Source for the tests below: pinned.ts's header ("a copy of the heading stays
+// at the top, the chapter's over the speaker's"; "The next heading coming up
+// pushes the pinned one out by as much as they'd overlap") and the doc
+// comments of `groupSpans`, `pinnedAt` and `reserveAt`.
+
+test("a view with fewer than two offsets, a list with nothing in it, pins nothing", () => {
+  assert.deepEqual(pinnedAt([], dividers, groups, 10), {
+    chapter: -1,
+    group: -1,
+    chapterTop: 0,
+    speakerTop: 0,
+    height: 0,
+  });
+  assert.deepEqual(pinnedAt([0], dividers, groups, 10), {
+    chapter: -1,
+    group: -1,
+    chapterTop: 0,
+    speakerTop: 0,
+    height: 0,
+  });
+});
+
+test("a divider is pinned only once its top is above the view's, not at it", () => {
+  assert.equal(at(0).chapter, -1);
+  assert.equal(at(0.5).chapter, 0);
+});
+
+test("a group is never pinned under another chapter's divider than its own", () => {
+  // Past row 6's divider, with the speaker of row 3 to 5 above it: the third's is pinned, not the second's.
+  assert.equal(at(245).chapter, 1);
+  assert.equal(at(245).group, 2);
+  // A group whose head is before the chapter's divider isn't pinned under it.
+  const crossing = [{ row: 3, end: 8, height: SPEAKER }];
+  assert.equal(pinnedAt(offsets, dividers, crossing, 260).group, -1);
+});
+
+test("a group whose end is above the bottom of what's pinned isn't pinned", () => {
+  // The group of rows 3 to 5 ends at 200; with the view's top at 190 the divider's bottom (220) is past it.
+  assert.equal(at(190).group, -1);
+  assert.equal(at(190).chapter, 0);
+});
+
+test("a row ending a group exactly where the next begins is not within it", () => {
+  // Row 5 is the group's end (rows 3 up to 5): no head to reserve for.
+  assert.equal(reserveAt(5, dividers, groups), 30);
+  assert.equal(reserveAt(4, dividers, groups), 50);
+  assert.equal(reserveAt(9, dividers, groups), 50);
+});
+
+test("a row before any chapter reserves only its group's head", () => {
+  assert.equal(reserveAt(1, [], groups), 20);
+  assert.equal(reserveAt(0, [], groups), 0);
+});
+
+test("no heads, no groups", () => {
+  assert.deepEqual(groupSpans([], []), []);
+});
+
+test("in a list of one row, its divider is pinned once the view is past its top", () => {
+  assert.deepEqual(pinnedAt([0, 40], [{ row: 0, height: 30 }], [], 10), {
+    chapter: 0,
+    group: -1,
+    chapterTop: 0,
+    speakerTop: 0,
+    height: 30,
+  });
+});
+
+test("a speaker's group ending exactly at the bottom of the pinned divider is no longer pinned", () => {
+  // Rows 3 to 5 end at 200: the view's top at 170 puts the divider's bottom there.
+  assert.equal(at(170).group, -1);
+  assert.equal(at(169).group, 1);
+});
+
+test("a group running on past the next divider is pushed out with it, not carried below", () => {
+  const long = [{ row: 0, end: 10, height: SPEAKER }];
+  // The divider at 240 is 15 px in: both are 15 px up from where they rest.
+  assert.deepEqual(pinnedAt(offsets, dividers, long, 225), {
+    chapter: 0,
+    group: 0,
+    chapterTop: -35,
+    speakerTop: -5,
+    height: 15,
+  });
 });
