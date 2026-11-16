@@ -83,7 +83,10 @@ fn file_host() -> (String, Arc<Mutex<Vec<String>>>) {
     }))
 }
 
-/// The decision table, with the requests counted: absent, there and never
+/// CHANGELOG.md, 0.7.0: "Your library is checked for annotations privately. At every start VODscribe downloads one
+/// small list of every VOD with annotations, again only when it has changed, and checks your library against it on
+/// your computer, so the file host never learns which VODs you have and is asked about one only when the list has
+/// it"; `annotations_filter.rs` `judge`. The decision table, with the requests counted: absent, there and never
 /// imported, imported in the version published, imported in an older one.
 #[test]
 fn only_the_vods_the_set_has_are_asked_about_once() {
@@ -128,10 +131,10 @@ fn only_the_vods_the_set_has_are_asked_about_once() {
     );
 }
 
-/// A second check (the library's "Check all VODs for VODscriptions",
-/// pressed during or after the one at start) counts what the first
-/// found, from the answers kept, without asking about it again: a VOD
-/// whose gift is showing is found, one marked as having newer
+/// `annotations_filter.rs` `Checked` ("found by this check, or known from an earlier answer (their gift is
+/// showing)"), `Judged::Found` and `Judged::Newer` ("not asked again"). A second check (the library's "Check all
+/// VODs for VODscriptions", pressed during or after the one at start) counts what the first found, from the answers
+/// kept, without asking about it again: a VOD whose gift is showing is found, one marked as having newer
 /// annotations is newer.
 #[test]
 fn a_second_check_counts_what_the_first_found_without_asking_again() {
@@ -153,10 +156,10 @@ fn a_second_check_counts_what_the_first_found_without_asking_again() {
     );
 }
 
-/// A VOD whose imported annotations were taken down (the file host said
-/// 404 when its row was checked) and published again later in another
-/// version: the check asks about it and finds it newer. Published again
-/// in the version imported, it isn't asked about.
+/// `annotations_filter.rs` `judge` ("in it, imported in version V and last seen in V, or in none since (the file
+/// host said none was published): asked only when the set hasn't V"). A VOD whose imported annotations were taken
+/// down (the file host said 404 when its row was checked) and published again later in another version: the check
+/// asks about it and finds it newer. Published again in the version imported, it isn't asked about.
 #[test]
 fn annotations_taken_down_and_published_again_are_found_newer() {
     for (published, asked_about) in [(MD5_B, true), (MD5_A, false)] {
@@ -184,8 +187,10 @@ fn annotations_taken_down_and_published_again_are_found_newer() {
     }
 }
 
-/// A set that says "probably" when the file host says no, or says the same
-/// version: the answer is kept, nothing is offered.
+/// `annotations_filter.rs`'s module doc ("Only a VOD the set says is probably there is asked about, with one HEAD
+/// request"); `Checked::confirmed` ("HEAD requests made, one per VOD the set had that wasn't known already"). A set
+/// that says "probably" when the file host says no, or says the same version: the answer is kept, nothing is
+/// offered.
 #[test]
 fn a_false_positive_costs_one_request_and_offers_nothing() {
     let lib = Library::new();
@@ -209,6 +214,8 @@ fn a_false_positive_costs_one_request_and_offers_nothing() {
     assert!(db.annotations_offer(same).unwrap().up_to_date);
 }
 
+/// CHANGELOG.md, 0.7.0: "With asking turned off in Settings › Privacy, nothing is downloaded or asked";
+/// `annotations_filter.rs` `check_library` ("Nothing at all when the user turned asking off").
 #[test]
 fn with_asking_turned_off_nothing_is_fetched() {
     let lib = Library::new();
@@ -220,8 +227,10 @@ fn with_asking_turned_off_nothing_is_fetched() {
     assert!(asked.lock().unwrap().is_empty() && changed.is_empty());
 }
 
-/// Every check asks for the set (startup's, and the library's "Check for
-/// annotations"): no day has to pass between two.
+/// CHANGELOG.md, 0.7.0: "Check all VODs for annotations checks everything. Right-click any VOD from a site in the
+/// library and pick it when you hear annotations just went up"; `check_library` ("fetching it again if it
+/// changed"). Every check asks for the set (startup's, and the library's "Check for annotations"): no day has to
+/// pass between two.
 #[test]
 fn every_check_asks_for_the_set_and_a_new_one_is_used() {
     let lib = Library::new();
@@ -257,9 +266,10 @@ fn every_check_asks_for_the_set_and_a_new_one_is_used() {
     );
 }
 
-/// Asking turned off while a check waits for another (the library's
-/// "Check for a VODscription" pressed during the one at start): it asks the
-/// file host nothing, not even for the set, and says asking is off.
+/// `annotations_filter.rs` `CHECKING` ("One check at a time: a second waits, then finds the first's answers
+/// kept") and `check_at` ("Turned off while it waited for another check: nothing is asked, not even the set").
+/// Asking turned off while a check waits for another (the library's "Check for a VODscription" pressed during the
+/// one at start): it asks the file host nothing, not even for the set, and says asking is off.
 #[test]
 fn a_check_waiting_for_another_asks_nothing_once_asking_is_turned_off() {
     let lib = Library::new();
@@ -303,6 +313,8 @@ fn a_check_waiting_for_another_asks_nothing_once_asking_is_turned_off() {
     );
 }
 
+/// `annotations_filter.rs` `check_library` ("A failure to reach the file host is an error"); `db.rs`
+/// `Availability::Unknown` ("Never asked, or the asking failed (offline, an error)").
 #[test]
 fn offline_is_an_error_that_changes_nothing() {
     let lib = Library::new();
@@ -315,7 +327,8 @@ fn offline_is_an_error_that_changes_nothing() {
     assert_eq!(lib.db.lock().unwrap().vod(there).unwrap().unwrap().annotations, Availability::Unknown);
 }
 
-/// No set published (yet): nothing asked, and a set kept from before is dropped.
+/// `annotations_filter.rs` `Fetched::Missing` ("None published (404, 403, 410)"): nothing asked, and a set kept
+/// from before is dropped.
 #[test]
 fn no_set_published_asks_nothing_more() {
     let lib = Library::new();
@@ -329,9 +342,8 @@ fn no_set_published_asks_nothing_more() {
     assert!(!lib.cache().exists());
 }
 
-/// A set that says yes to (nearly) every key: whether broken or made to,
-/// it would have the app ask about every VOD in the library, which is
-/// what the set is there to keep from the file host. It's refused.
+/// `annotations_filter.rs`'s module doc ("A set whose bits would say yes to more than `MAX_FALSE_POSITIVES` of the
+/// keys not in it ... is refused: broken or made that way, it would have the app ask about most of the library").
 #[test]
 fn a_set_that_says_yes_to_everything_is_refused() {
     let lib = Library::new();
@@ -362,9 +374,9 @@ fn a_set_that_says_yes_to_everything_is_refused() {
     assert!(Filter::parse(&Filter::of(&keys).to_bytes()).is_ok());
 }
 
-/// Asking turned off during the pause between two VODs' requests: the
-/// second isn't asked about. (The check is held at the pause's end, and
-/// the switch turned off then, so the order is certain.)
+/// `annotations_filter.rs` `check_at` ("Turned off while the check went on (the pause included): nothing more is
+/// asked"). Asking turned off during the pause between two VODs' requests: the second isn't asked about. (The
+/// check is held at the pause's end, and the switch turned off then, so the order is certain.)
 #[test]
 fn asking_turned_off_during_the_pause_asks_nothing_more() {
     let lib = Library::new();
@@ -388,8 +400,8 @@ fn asking_turned_off_during_the_pause_asks_nothing_more() {
     );
 }
 
-/// A VOD taken out of the library while a check goes on (it waits
-/// between two requests) isn't asked about after.
+/// `annotations_filter.rs` `check_at` ("Taken out of the library meanwhile: not asked about"). A VOD taken out of
+/// the library while a check goes on (it waits between two requests) isn't asked about after.
 #[test]
 fn a_vod_removed_during_a_check_isnt_asked_about() {
     let lib = Library::new();
@@ -412,8 +424,9 @@ fn a_vod_removed_during_a_check_isnt_asked_about() {
     assert_eq!(changed, [first]);
 }
 
-/// A VOD imported in `"<md5>"` and last seen as `W/"<MD5>"` (the host
-/// compressed its answer) is imported in the version it was seen in.
+/// `annotations_filter.rs` `same_version` ("the file host gives `W/"<md5>"` when it compresses its answer and
+/// `"<md5>"` when it doesn't, for the same file"). A VOD imported in `"<md5>"` and last seen as `W/"<MD5>"` is
+/// imported in the version it was seen in.
 #[test]
 fn a_version_seen_weak_or_in_capitals_is_the_one_imported() {
     let vod = Candidate {
@@ -432,7 +445,8 @@ fn a_version_seen_weak_or_in_capitals_is_the_one_imported() {
     assert_eq!(judge(&other, &vod), Judged::Ask);
 }
 
-/// The set's VODs are the library's listed ones, of the sites that publish.
+/// `annotations.rs` `can_be_published` ("Twitch's, YouTube's and Kick's, the only ones the file host holds. The
+/// file host is never asked of others"): the set's VODs are the library's, of the sites that publish.
 #[test]
 fn a_vod_of_another_site_is_never_asked_about() {
     let filter = Filter::of(&["dailymotion:x1", "youtube:x1"]);
@@ -446,4 +460,187 @@ fn a_vod_of_another_site_is_never_asked_about() {
     };
     assert_eq!(judge(&filter, &vod("dailymotion")), Judged::Skip);
     assert_eq!(judge(&filter, &vod("youtube")), Judged::Ask);
+}
+
+/// `annotations_filter.rs` `check_library` ("A failure to reach the file host is an error; what was answered before
+/// it is kept"): the first VOD's answer stays on it, and the page heard of it, when asking about the second fails.
+#[test]
+fn a_failure_part_way_keeps_what_was_answered_before_it() {
+    let lib = Library::new();
+    lib.ask(true);
+    let there = lib.add("there", None);
+    let newer = lib.add("newer", Some(&format!("\"{MD5_A}\"")));
+    let set = published();
+    let (base, asked) = host(Arc::new(move |req: &str| {
+        let line = req.lines().next().unwrap_or("");
+        match line {
+            l if l.contains("filter.bin") => (format!("HTTP/1.1 200 OK\r\nETag: \"{MD5_A}\""), set.clone()),
+            l if l.contains("/there.json") => (format!("HTTP/1.1 200 OK\r\nETag: \"{MD5_A}\""), Vec::new()),
+            _ => ("HTTP/1.1 503 Service Unavailable".into(), Vec::new()),
+        }
+    }));
+    let (checked, changed) = lib.check(&base);
+    assert!(checked.is_err(), "the second VOD's question failed");
+    assert_eq!(asked.lock().unwrap().len(), 3, "the set, then both VODs");
+    assert_eq!(changed, [there]);
+    let db = lib.db.lock().unwrap();
+    assert_eq!(db.vod(there).unwrap().unwrap().annotations, Availability::Available, "the first answer kept");
+    let second = db.vod(newer).unwrap().unwrap();
+    assert!(!second.annotations_newer, "nothing known of the second");
+}
+
+/// `annotations_filter.rs` `PAUSE` ("The pause between two VODs' HEAD requests in one check, so a library with many
+/// VODs newly published never asks in a burst") and `check_library`, which keeps it: the check through the app's
+/// own way in, on the kit's network, waits `PAUSE` between two VODs' requests; and held at each pause's end, it
+/// has made one request more each time, none before the first VOD's.
+#[test]
+fn a_check_pauses_between_two_vods_requests_and_never_before_the_first() {
+    let lib = Library::new();
+    let paths = crate::Paths::new(lib.dir.join("data"));
+    paths.ensure().unwrap();
+    Settings { ask_for_annotations: true, ..Settings::default() }.save(&paths.settings()).unwrap();
+    lib.add("pausea00001", None);
+    lib.add("pauseb00001", None);
+    let net = crate::testkit::Net::new();
+    net.public("dl.vodscribe.com");
+    let set = Filter::of(&[exists_key("youtube", "pausea00001"), exists_key("youtube", "pauseb00001")]).to_bytes();
+    net.serves("https://dl.vodscribe.com/annotations/filter.bin", set);
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let at = heads.clone();
+    for id in ["pausea00001", "pauseb00001"] {
+        let at = at.clone();
+        net.replies(&format!("https://dl.vodscribe.com/annotations/youtube/{id}.json"), move |asked| {
+            at.lock().unwrap().push(std::time::Instant::now());
+            (asked.method == "HEAD").then(|| crate::testkit::Reply::status(404))
+        });
+    }
+    let checked = check_library(&lib.db, &paths, |_| {}).unwrap();
+    assert_eq!(checked.confirmed, 2);
+    let heads = heads.lock().unwrap();
+    assert_eq!(heads.len(), 2);
+    assert!(heads[1] - heads[0] >= PAUSE, "asked {:?} apart", heads[1] - heads[0]);
+    drop(heads);
+
+    // Three VODs asked about: held at each pause's end, one request more each time.
+    let lib = Library::new();
+    lib.ask(true);
+    for id in ["there", "same", "newer"] {
+        lib.add(id, None);
+    }
+    let (base, asked) = file_host();
+    let heads = || asked.lock().unwrap().iter().filter(|l| l.starts_with("HEAD")).count();
+    let first = Gate::new();
+    hold_at(At::CheckPause, &lib.settings(), &first);
+    let checked = std::thread::scope(|s| {
+        let checking = s.spawn(|| check_at(&base, &lib.db, &lib.settings(), &lib.cache(), Duration::ZERO, |_| {}));
+        first.reached();
+        assert_eq!(heads(), 1, "the first VOD's request, then the pause");
+        let second = Gate::new();
+        hold_at(At::CheckPause, &lib.settings(), &second);
+        first.open();
+        second.reached();
+        assert_eq!(heads(), 2, "the second VOD's request, then the pause");
+        second.open();
+        checking.join().unwrap()
+    });
+    assert_eq!(checked.unwrap().confirmed, 3);
+    assert_eq!(heads(), 3);
+}
+
+/// `annotations_filter.rs` `load_kept` ("None if there's none that reads (then the next fetch asks for it
+/// whole)"): a kept set that no longer reads isn't named to the file host, and the set it sends is used.
+#[test]
+fn a_kept_set_that_no_longer_reads_is_asked_for_whole() {
+    let lib = Library::new();
+    lib.ask(true);
+    let there = lib.add("there", None);
+    keep(&lib.cache(), b"not a set", Some(&format!("\"{MD5_A}\""))).unwrap();
+    let (base, asked) = file_host();
+    let (checked, _) = lib.check(&base);
+    assert_eq!(checked.unwrap().found, [there]);
+    assert_eq!(
+        *asked.lock().unwrap(),
+        ["GET /annotations/filter.bin HTTP/1.1", "HEAD /annotations/youtube/there.json HTTP/1.1"]
+    );
+    assert_eq!(std::fs::read(lib.cache()).unwrap(), published(), "the set sent is kept in its place");
+}
+
+/// `annotations_filter.rs` `annotations_candidates` and `check_at` ("Taken out of the library meanwhile: not asked
+/// about"): a VOD taken out of the library before a check is no VOD of the library's, and isn't asked about.
+#[test]
+fn a_vod_taken_out_of_the_library_is_not_asked_about() {
+    let lib = Library::new();
+    lib.ask(true);
+    let there = lib.add("there", None);
+    lib.db.lock().unwrap().remove_entry(there).unwrap();
+    let (base, asked) = file_host();
+    let (checked, changed) = lib.check(&base);
+    assert_eq!(checked.unwrap(), Checked { asked: true, ..Checked::default() });
+    assert_eq!(*asked.lock().unwrap(), ["GET /annotations/filter.bin HTTP/1.1"]);
+    assert!(changed.is_empty());
+}
+
+/// An empty set of `bytes` bytes in all, its header included.
+fn set_of_bytes(bytes: usize) -> Vec<u8> {
+    let data = vec![0; bytes - HEADER_BYTES];
+    Filter { bits: data.len() as u64 * 8, hashes: HASHES, items: 0, data }.to_bytes()
+}
+
+/// Checks the library against a set of `bytes` bytes, a set the app takes but for its size: whether it was read
+/// (and kept), having asked for nothing more.
+fn checked_with_a_set_of(bytes: usize) -> bool {
+    let lib = Library::new();
+    lib.ask(true);
+    lib.add("there", None);
+    let set = set_of_bytes(bytes);
+    assert!(Filter::parse(&set).is_ok(), "a set the app takes but for its size");
+    let (base, asked) = host(Arc::new(move |_: &str| (format!("HTTP/1.1 200 OK\r\nETag: \"{MD5_A}\""), set.clone())));
+    let (checked, _) = lib.check(&base);
+    assert_eq!(*asked.lock().unwrap(), ["GET /annotations/filter.bin HTTP/1.1"], "{bytes} bytes");
+    assert_eq!(lib.cache().exists(), checked.is_ok(), "kept only when read: {bytes} bytes");
+    checked.is_ok()
+}
+
+/// `annotations_filter.rs` `MAX_FILTER_BYTES` ("The largest set read: 16 MB holds well over ten million VODs"): a
+/// set under that size is read; one larger is refused, nothing more is asked and nothing is kept.
+#[test]
+fn a_set_larger_than_the_app_reads_is_refused_and_nothing_is_asked() {
+    assert!(checked_with_a_set_of(MAX_FILTER_BYTES as usize - 1));
+    assert!(!checked_with_a_set_of(MAX_FILTER_BYTES as usize + 1));
+}
+
+/// The largest published file the app reads (`annotations.rs` `MAX_FILE_BYTES`, private there).
+const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+
+/// YouTube VOD `id`'s published file, padded to `bytes` bytes, on the kit's network; whether `download` read it.
+fn downloaded_of(net: &crate::testkit::Net, id: &str, bytes: usize) -> Result<()> {
+    let mut json = serde_json::to_string(&crate::annotations::tests::file("youtube", id)).unwrap();
+    json.push_str(&" ".repeat(bytes - json.len()));
+    net.serves(&format!("https://dl.vodscribe.com/annotations/youtube/{id}.json"), json);
+    let (read, _) = annotations::download("youtube", id)?;
+    assert_eq!(read.source.id, id);
+    Ok(())
+}
+
+/// `annotations.rs` `MAX_FILE_BYTES` ("The largest published file read: a long VOD's is a few megabytes") and
+/// `download`: a published file under that size is read; one larger is refused, saying the VODscription couldn't
+/// be got.
+#[test]
+fn a_published_file_larger_than_the_app_reads_is_refused() {
+    let net = crate::testkit::Net::new();
+    net.public("dl.vodscribe.com");
+    downloaded_of(&net, "underlimit1", MAX_FILE_BYTES - 1).unwrap();
+    let err = downloaded_of(&net, "pastlimit01", MAX_FILE_BYTES + 1).unwrap_err();
+    assert!(format!("{err:#}").starts_with("Couldn't get the annotations for this VOD"), "{err:#}");
+}
+
+/// `MAX_FILTER_BYTES` ("The largest set read") and `annotations.rs` `MAX_FILE_BYTES` ("The largest published file
+/// read"): a set, or a published file, of exactly that size is read.
+#[test]
+#[ignore = "disagreement: a set or a published file of exactly the largest size read is refused"]
+fn a_set_or_a_published_file_of_exactly_the_largest_size_is_read() {
+    assert!(checked_with_a_set_of(MAX_FILTER_BYTES as usize), "the set");
+    let net = crate::testkit::Net::new();
+    net.public("dl.vodscribe.com");
+    downloaded_of(&net, "atlimit0001", MAX_FILE_BYTES).unwrap();
 }

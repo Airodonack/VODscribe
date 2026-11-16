@@ -345,19 +345,4 @@ pub(crate) async fn streamer_index(app: AppHandle) -> CmdResult<Option<serde_jso
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// One ask per VOD at a time: a second claim meanwhile gets none and
-    /// leaves the first's alone; once it ends, the next is claimed.
-    #[test]
-    fn one_ask_per_vod_at_a_time() {
-        let first = Asking::claim(-7).expect("the first claim");
-        assert!(Asking::claim(-7).is_none(), "a second claim while the first is held");
-        assert!(ASKING.lock().unwrap().contains(&-7), "the second claim left the first's");
-        let other = Asking::claim(-8).expect("another VOD's");
-        drop(first);
-        assert!(Asking::claim(-7).is_some(), "claimed again once the first ended");
-        drop(other);
-    }
-}
+mod tests;
