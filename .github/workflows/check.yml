@@ -205,6 +205,7 @@ jobs:
       - if: runner.os != 'Linux'
         run: cargo test --locked -p vodscribe-core
       - run: cargo test --locked -p vodscribe
-      - run: cargo test --locked -p vodscribe --features e2e
+      # The tests' build also takes a site's player over (embed.rs's specs).
+      - run: cargo test --locked -p vodscribe --features e2e,embed-takeover
       - run: cargo test --locked -p dragndrop-target --features fake
       - run: cargo test --locked -p dragndrop-source

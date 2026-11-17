@@ -39,10 +39,13 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `player.rs`: the app's own player, driven by the page.
 - `screen.rs`: the native surface the player draws on.
 - `embed.rs`, `embed_shim.js`: a site's video drawn in the app's player under the site's; the `embed-takeover` feature only.
+- [`embed`](embed): its tests.
 - `embed_shim.test.mjs`: the shim's tests, in a stand-in of YouTube's embed frame.
 - `app_server.rs`: serves the page from `http://localhost` in release builds, since YouTube's and Twitch's players need an http page.
+- [`app_server`](app_server): its tests.
 - `media.rs`: serves local files to the page's `<video>`.
 - `loopback.rs`: what those local servers share; they answer on loopback only.
+- [`loopback`](loopback): its tests.
 - `page.rs`: sends the page its events, from any thread.
 - `webview.rs`: the window's WebKitGTK view on Linux.
 - `receive.rs`: files dropped with no path, written into the library.
