@@ -24,6 +24,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `footage.rs`: where a stretch plays from, and the downloads of sections edits need.
 - [`footage`](footage): its tests.
 - `videos.rs`: downloading a VOD's whole video on request.
+- [`videos`](videos): its tests.
 - `storyboards.rs`: keyframe pictures of the footage on this computer.
 - [`storyboards`](storyboards): their tests.
 - `thumbnails.rs`: VOD thumbnails for the page.
