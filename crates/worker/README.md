@@ -4,3 +4,4 @@ The transcription process. It transcribes one stretch of one audio file and prin
 
 - `Cargo.toml`: the crate; its default `static` feature is the CPU build, and `shared` links the shared library for the GPU.
 - [`src`](src): the code.
+- [`tests`](tests): the worker process run as the app runs it.

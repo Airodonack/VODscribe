@@ -177,3 +177,6 @@ pub fn remove_others(models_root: &Path, keep: &[&ModelSpec]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
