@@ -12,7 +12,7 @@ import { inOrder, jobLine, summary, waitingIds, waitingJobs } from "./jobs.ts";
 /** @type {(kind: import("./api").Job["kind"], id: number, running?: boolean, progress?: number | null) => import("./api").Job} */
 const job = (kind, id, running = false, progress = null) => ({ kind, id, label: `${kind} ${id}`, running, progress });
 
-/** The ids of `jobs`, in their order. */
+/** The ids of `jobs`, in their order. @type {(jobs: { id: number }[]) => number[]} */
 const ids = (jobs) => jobs.map((j) => j.id);
 
 /** jobs.ts `summary`: "empty with no jobs". */
