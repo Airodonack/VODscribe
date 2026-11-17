@@ -77,7 +77,13 @@ fn the_addon_downloading_is_a_job_and_cancel_throws_away_what_it_had() {
     let recorded = app.net.records(&host(&addon));
     app.net.let_go();
     app.invoke("install_gpu_pack", json!({})).unwrap();
-    eventually("installed", || installed(&app));
+    // Both installs' ends heard, the canceled one's and this one's, and
+    // each null, so one that failed says why (setup.rs `Install::spawn`:
+    // "emits `done_event` with an error message, or null when it finished
+    // or was canceled").
+    eventually("both installs' ends told", || app.heard("gpu-done").len() == 2);
+    assert_eq!(app.heard("gpu-done"), [Value::Null, Value::Null], "an install failed");
+    assert!(installed(&app));
     assert!(asked(&recorded).iter().all(|(_, range)| range.is_none()), "carried on from a canceled download");
 }
 
