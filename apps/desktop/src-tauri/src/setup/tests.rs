@@ -15,6 +15,8 @@ use crate::testkit::TestApp;
 
 mod first_run;
 mod gpu_add_on;
+mod settings;
+mod storage;
 
 /// The test's app, with the hosts setup and the GPU add-on download from
 /// the fake's too (GitHub for yt-dlp, ffmpeg, Deno and ONNX Runtime, PyPI
