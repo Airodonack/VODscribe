@@ -619,7 +619,6 @@ fn a_streamer_card_or_index_larger_than_the_app_reads_is_refused() {
 /// read (`MAX_CARD_BYTES`: "The largest streamer card read"; `MAX_INDEX_BYTES`:
 /// "The largest index of streamers' accounts read").
 #[test]
-#[ignore = "disagreement: a streamer card or index of exactly the largest size read is refused"]
 fn a_streamer_card_or_index_of_exactly_the_largest_size_is_read() {
     let _turn = shared_links();
     let app = TestApp::new();

@@ -637,7 +637,6 @@ fn a_published_file_larger_than_the_app_reads_is_refused() {
 /// `MAX_FILTER_BYTES` ("The largest set read") and `annotations.rs` `MAX_FILE_BYTES` ("The largest published file
 /// read"): a set, or a published file, of exactly that size is read.
 #[test]
-#[ignore = "disagreement: a set or a published file of exactly the largest size read is refused"]
 fn a_set_or_a_published_file_of_exactly_the_largest_size_is_read() {
     assert!(checked_with_a_set_of(MAX_FILTER_BYTES as usize), "the set");
     let net = crate::testkit::Net::new();

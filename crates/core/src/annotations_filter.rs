@@ -239,7 +239,7 @@ fn fetch(base: &str, etag: Option<&str>) -> Result<Fetched> {
             let bytes = response
                 .body_mut()
                 .with_config()
-                .limit(MAX_FILTER_BYTES)
+                .limit(MAX_FILTER_BYTES + 1) // ureq refuses a body of the limit's size, so one more lets the largest through
                 .read_to_vec()
                 .context("get the annotations filter")?;
             Ok(Fetched::New { bytes, etag })

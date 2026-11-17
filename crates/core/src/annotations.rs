@@ -662,7 +662,7 @@ fn download_from(base: &str, platform: &str, id: &str) -> Result<(Annotations, O
     let json = response
         .body_mut()
         .with_config()
-        .limit(MAX_FILE_BYTES)
+        .limit(MAX_FILE_BYTES + 1) // ureq refuses a body of the limit's size, so one more lets the largest through
         .read_to_string()
         .context("Couldn't get the annotations for this VOD")?;
     let annotations = parse(&json)?;
@@ -698,7 +698,7 @@ fn fetch_json(url: &str, limit: u64) -> Result<Option<serde_json::Value>> {
         Err(e) => return Err(e).context("ask the file host"),
     };
     let json =
-        response.body_mut().with_config().limit(limit).read_to_string().context("read the file host's answer")?;
+        response.body_mut().with_config().limit(limit + 1).read_to_string().context("read the file host's answer")?;
     Ok(Some(serde_json::from_str(&json).context("read the file host's answer")?))
 }
 
