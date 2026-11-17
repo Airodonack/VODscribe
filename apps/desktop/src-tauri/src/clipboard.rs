@@ -316,7 +316,7 @@ pub(crate) async fn paste_items(
         if let Some(file) = &held[of].file {
             state.clips.copy_file(id, file.clone());
         }
-        state.clips.queue(id);
+        state.clips.queue(&db, id);
         clips.extend(db.clip(id).map_err(err)?);
     }
     let view = match onto {

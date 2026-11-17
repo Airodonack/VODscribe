@@ -54,13 +54,13 @@ fn held_pack(app: &TestApp) -> (Gate, Heard) {
 fn the_add_on_says_what_it_would_download() {
     let app = app();
     let expected = json!({
-        "supported": gpu::supported(),
+        "supported": gpu::supported(&app.paths().gpu_pack()),
         "installed": false,
         "installing": false,
         "progress": null,
         "gpu": null,
         "min_free_mb": gpu::MIN_FREE_MB,
-        "download_bytes": gpu::download_size() + GPU_MODEL.total_bytes(),
+        "download_bytes": gpu::download_size(&app.paths().gpu_pack()) + GPU_MODEL.total_bytes(),
     });
     let mut status = status(&app);
     // Whether this build has the GPU worker beside it is the build's.
@@ -82,7 +82,7 @@ fn the_add_on_downloads_only_whats_missing() {
     std::fs::write(app.paths().gpu_pack().join("installed"), "1").unwrap();
     assert_eq!(
         (&status(&app)["installed"], &status(&app)["download_bytes"]),
-        (&json!(false), &json!(gpu::download_size()))
+        (&json!(false), &json!(gpu::download_size(&app.paths().gpu_pack())))
     );
 }
 
@@ -145,16 +145,18 @@ fn settings_opened_mid_install_shows_its_progress() {
 fn the_pack_and_model_download_as_one() {
     let _turn = turn();
     let app = app();
-    if !gpu::supported() {
+    if !gpu::supported(&app.paths().gpu_pack()) {
         return;
     }
     app.net.serves("https://github.com/k2-fsa/sherpa-onnx/", b"x".to_vec());
     let (progress, done) = (Heard::of(&app, "gpu-progress"), Heard::of(&app, "gpu-done"));
     ask(&app, "install_gpu_pack").unwrap();
     let error = done.first();
-    assert!(error.as_str().is_some_and(|e| e.contains("A download was damaged or changed on the way")), "{error}");
+    // Shorter than its pin: not whole (core net.rs `download_resumable`: "A body that ends before the file
+    // does keeps what came").
+    assert!(error.as_str().is_some_and(|e| e.contains("A download ended before it was whole.")), "{error}");
     let first = &progress.all()[0];
-    let total = gpu::download_size() + GPU_MODEL.total_bytes();
+    let total = gpu::download_size(&app.paths().gpu_pack()) + GPU_MODEL.total_bytes();
     assert_eq!(
         (&first["done"], &first["total"], &first["part"], &first["parts"]),
         (&json!(1), &json!(total), &json!(1), &json!(10))
@@ -169,7 +171,7 @@ fn the_pack_and_model_download_as_one() {
 fn a_canceled_install_starts_its_pack_over() {
     let _turn = turn();
     let app = app();
-    if !gpu::supported() {
+    if !gpu::supported(&app.paths().gpu_pack()) {
         return;
     }
     let (asked, done) = held_pack(&app);
@@ -181,10 +183,12 @@ fn a_canceled_install_starts_its_pack_over() {
     assert_eq!(status(&app)["installing"], json!(false));
 }
 
-/// A canceled install keeps the model's files it finished (CHANGELOG.md,
-/// 0.1.3: "Tools and model files that finished stay").
+/// A canceled install throws away what the add-on had downloaded, the
+/// model's files it finished too: asked again, it starts over (setup.rs
+/// `settle_addon`: "Canceled, what it had downloaded goes, so asking again
+/// starts over."). Before, model files that finished stayed (0.1.3).
 #[test]
-fn a_canceled_install_keeps_the_model_files_it_finished() {
+fn a_canceled_install_throws_away_the_model_files_it_finished() {
     let _turn = turn();
     let app = app();
     let (asked, _, done) = held_model(&app);
@@ -192,9 +196,7 @@ fn a_canceled_install_keeps_the_model_files_it_finished() {
     asked.open();
     assert_eq!(done.first(), Value::Null);
     let staging = app.paths().models().join(format!(".{}.partial", GPU_MODEL.id));
-    for file in &GPU_MODEL.files[..4] {
-        assert_eq!(std::fs::metadata(staging.join(file.name)).unwrap().len(), file.size, "{}", file.name);
-    }
+    assert!(!staging.exists(), "what it had downloaded was kept");
 }
 
 /// Installed again while it installs, the add-on ends once, with the
@@ -273,6 +275,6 @@ fn removing_the_add_on_takes_its_pack_and_model() {
     assert!(!app.paths().gpu_pack().exists() && !app.paths().gpu_model_dir().exists());
     let status = status(&app);
     assert_eq!(status["installed"], json!(false));
-    assert_eq!(status["download_bytes"], json!(gpu::download_size() + GPU_MODEL.total_bytes()));
+    assert_eq!(status["download_bytes"], json!(gpu::download_size(&app.paths().gpu_pack()) + GPU_MODEL.total_bytes()));
     ask(&app, "remove_gpu_pack").unwrap();
 }

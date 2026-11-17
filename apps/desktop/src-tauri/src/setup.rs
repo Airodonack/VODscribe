@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{Manager, State};
+use vodscribe_core::asked::Queue;
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::{ClipCodec, Settings};
@@ -122,7 +123,7 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
 /// A long download's flags: `held` while it's under way (one at a time) and
 /// `cancel`, which `cancel()` sets to stop it. Canceling isn't an error: the
 /// done event carries null. Tools and model files that finished stay; the GPU
-/// pack starts over, since its parts are only kept together.
+/// add-on's canceled download goes (`settle_addon`).
 pub(crate) struct Install {
     /// `FREE`, `INSTALLING`, or `CLAIMED`: held by something other than an
     /// install (a yt-dlp update, the add-on being removed), so no done event
@@ -131,6 +132,12 @@ pub(crate) struct Install {
     cancel: Arc<AtomicBool>,
     /// The latest progress event's payload while running (see `Reporter`).
     last: Arc<Mutex<Option<serde_json::Value>>>,
+    /// Listed with the jobs (`job_list`), which are told as it begins, goes
+    /// on and ends: the GPU add-on's.
+    listed: bool,
+    /// Its thread, for a test's quit to stop as the process's end does (`end`).
+    #[cfg(test)]
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 /// Sends a running install's progress events, keeping the latest, so a panel
@@ -144,6 +151,8 @@ pub(crate) struct Reporter {
     app: AppHandle,
     event: &'static str,
     last: Arc<Mutex<Option<serde_json::Value>>>,
+    /// Tells the jobs list too, as it sends (`Install::listed`).
+    listed: bool,
     /// When the last event went out, and its step.
     sent: Mutex<Option<(Instant, Option<String>)>>,
 }
@@ -152,7 +161,7 @@ impl Reporter {
     const INTERVAL: Duration = Duration::from_millis(250);
 
     pub(crate) fn new(app: AppHandle, event: &'static str, last: Arc<Mutex<Option<serde_json::Value>>>) -> Self {
-        Reporter { app, event, last, sent: Mutex::new(None) }
+        Reporter { app, event, last, listed: false, sent: Mutex::new(None) }
     }
 
     pub(crate) fn send(&self, payload: impl Serialize) {
@@ -167,6 +176,9 @@ impl Reporter {
         if due {
             *sent = Some((Instant::now(), step));
             crate::page::emit(&self.app, self.event, value);
+            if self.listed {
+                crate::job_list::changed(&self.app);
+            }
         }
     }
 }
@@ -181,6 +193,30 @@ impl Install {
             held: Arc::new(AtomicU8::new(FREE)),
             cancel: Arc::new(AtomicBool::new(false)),
             last: Arc::new(Mutex::new(None)),
+            listed: false,
+            #[cfg(test)]
+            thread: Mutex::default(),
+        }
+    }
+
+    /// One listed with the jobs (`listed`): the GPU add-on's.
+    pub(crate) fn listed() -> Self {
+        Self { listed: true, ..Self::new() }
+    }
+
+    /// Whether an install (not a claim) is under way.
+    pub(crate) fn installing(&self) -> bool {
+        self.held.load(Ordering::Relaxed) == INSTALLING
+    }
+
+    /// Stops the install under way, if one is, and waits for its thread to
+    /// end: for a test's app, whose quit stops it as the process's end
+    /// stops the real one's (lib.rs `quit`), and whose end waits for it.
+    #[cfg(test)]
+    pub(crate) fn end(&self) {
+        self.cancel();
+        if let Some(thread) = self.thread.lock().unwrap().take() {
+            let _ = thread.join();
         }
     }
 
@@ -223,15 +259,27 @@ impl Install {
             Err(_) => return Ok(()),
         }
         *self.last.lock().unwrap() = None;
-        let (held, cancel, last) = (self.held.clone(), self.cancel.clone(), self.last.clone());
-        std::thread::spawn(move || {
-            let report = Reporter::new(app.clone(), progress_event, last.clone());
+        let (held, cancel, last, listed) = (self.held.clone(), self.cancel.clone(), self.last.clone(), self.listed);
+        if listed {
+            crate::job_list::changed(&app);
+        }
+        let thread = std::thread::spawn(move || {
+            let report = Reporter { listed, ..Reporter::new(app.clone(), progress_event, last.clone()) };
             let result = install(&app, &cancel, &report);
             *last.lock().unwrap() = None;
             held.store(FREE, Ordering::Relaxed);
             let error = result.err().filter(|e| !vodscribe_core::is_canceled(e)).map(err);
             crate::page::emit(&app, done_event, error);
+            if listed {
+                crate::job_list::changed(&app);
+            }
         });
+        #[cfg(test)]
+        {
+            *self.thread.lock().unwrap() = Some(thread);
+        }
+        #[cfg(not(test))]
+        drop(thread);
         Ok(())
     }
 }
@@ -338,7 +386,7 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
     let bin = state.paths.bin();
     let gpu = tauri::async_runtime::spawn_blocking(move || gpu::detect(&bin)).await.map_err(err)?;
     Ok(GpuStatus {
-        supported: gpu::supported(),
+        supported: gpu::supported(&pack),
         installed: gpu::is_installed(&pack) && model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL),
         installing: state.gpu.running(),
         progress: state.gpu.progress(),
@@ -346,7 +394,7 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
         gpu,
         min_free_mb: gpu::MIN_FREE_MB,
         // Only what's missing, such as just the pack after an update changes it.
-        download_bytes: if gpu::is_installed(&pack) { 0 } else { gpu::download_size() }
+        download_bytes: if gpu::is_installed(&pack) { 0 } else { gpu::download_size(&pack) }
             + if model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL) {
                 0
             } else {
@@ -358,39 +406,105 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
 /// Downloads the GPU pack and model. Progress arrives as `gpu-progress` events
 /// (`Progress`) and completion as `gpu-done` (an error message or null).
 #[tauri::command]
-pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub(crate) async fn install_gpu_pack(app: AppHandle) -> CmdResult<()> {
+    start_addon(&app)
+}
+
+/// Starts the GPU add-on's install, a job of its own beside the clips'
+/// (listed with the jobs: `job_list`), its place kept in the library
+/// (`Db::ask`) for a start after a quit to carry it on (`resume_addon`).
+/// It carries on from what an earlier install had (`gpu::install`,
+/// `model::install`). How it ends is `settle_addon`'s.
+fn start_addon(app: &AppHandle) -> CmdResult<()> {
+    let state = app.state::<AppState>();
     let paths = state.paths.clone();
     let busy = "The GPU add-on is being removed or repaired. Try again in a moment.";
-    state.gpu.spawn(app, "gpu-progress", "gpu-done", busy, move |_, cancel, report| {
-        let progress = |p: Progress| report.send(p);
-        // One count of bytes and of files across the pack and the model, so the
-        // bar only moves forward and the files read "(1 of 10)" to "(10 of 10)".
-        let pack_needed = !gpu::is_installed(&paths.gpu_pack());
-        let (pack_total, pack_parts) = if pack_needed { (gpu::download_size(), gpu::download_parts()) } else { (0, 0) };
-        // The model counts only if it's missing too; install returns at once if not.
-        let (model_total, model_parts) = if model::is_installed(&paths.gpu_model_dir(), &model::GPU_MODEL) {
-            (0, 0)
-        } else {
-            (model::GPU_MODEL.total_bytes(), model::GPU_MODEL.files.len())
-        };
-        let total_bytes = pack_total + model_total;
-        let total = Some(total_bytes);
-        let parts = pack_parts + model_parts;
-        if pack_needed {
-            gpu::install(&paths.gpu_pack(), cancel, |p| progress(Progress { total, parts, ..p }))?;
-        }
-        model::install(&paths.models(), &model::GPU_MODEL, cancel, |p| {
-            progress(Progress { done: pack_total + p.done, total, part: pack_parts + p.part, parts, ..p })
-        })?;
-        progress(Progress {
-            done: total_bytes,
-            total,
-            part: parts,
-            parts,
-            ..Progress::step("Every file matches its SHA‑256")
-        });
-        Ok(())
+    state.gpu.spawn(app.clone(), "gpu-progress", "gpu-done", busy, move |app, cancel, report| {
+        app.state::<AppState>().db.lock().unwrap().keep_place(Queue::Addon, 0);
+        let result = install_addon(&paths, cancel, |p| report.send(p));
+        settle_addon(app, &paths, &result);
+        result
     })
+}
+
+/// The GPU add-on's downloads: the pack, then the model, with one count of
+/// bytes and of files across them, so the bar only moves forward and the
+/// files read "(1 of 10)" to "(10 of 10)".
+fn install_addon(
+    paths: &vodscribe_core::Paths,
+    cancel: &AtomicBool,
+    progress: impl Fn(Progress),
+) -> anyhow::Result<()> {
+    let pack = paths.gpu_pack();
+    let pack_needed = !gpu::is_installed(&pack);
+    let (pack_total, pack_parts) =
+        if pack_needed { (gpu::download_size(&pack), gpu::download_parts(&pack)) } else { (0, 0) };
+    // The model counts only if it's missing too; install returns at once if not.
+    let (model_total, model_parts) = if model::is_installed(&paths.gpu_model_dir(), &model::GPU_MODEL) {
+        (0, 0)
+    } else {
+        (model::GPU_MODEL.total_bytes(), model::GPU_MODEL.files.len())
+    };
+    let total_bytes = pack_total + model_total;
+    let total = Some(total_bytes);
+    let parts = pack_parts + model_parts;
+    if pack_needed {
+        gpu::install(&pack, cancel, |p| progress(Progress { total, parts, ..p }))?;
+    }
+    model::install(&paths.models(), &model::GPU_MODEL, cancel, |p| {
+        progress(Progress { done: pack_total + p.done, total, part: pack_parts + p.part, parts, ..p })
+    })?;
+    progress(Progress {
+        done: total_bytes,
+        total,
+        part: parts,
+        parts,
+        ..Progress::step("Every file matches its SHA‑256")
+    });
+    Ok(())
+}
+
+/// What the GPU add-on's install leaves as it ends (`result`). Stopped by
+/// a quit (the library's writes stopped first), all of it stays, its place
+/// too, for the next start to carry on (`resume_addon`). Canceled, what it
+/// had downloaded goes, so asking again starts over. Done or failed, its
+/// place goes: a failed one isn't started again at the next start, as a
+/// video's download isn't; the files that matched stay, for asking again
+/// to carry on from.
+fn settle_addon(app: &AppHandle, paths: &vodscribe_core::Paths, result: &anyhow::Result<()>) {
+    let state = app.state::<AppState>();
+    if state.db.lock().unwrap().writes_stopped() {
+        return;
+    }
+    // Deleted with the library let go: the files are big. A quit meanwhile
+    // finds them gone, as Cancel asked.
+    if result.as_ref().is_err_and(vodscribe_core::is_canceled) {
+        let discarded = gpu::discard(&paths.gpu_pack()).and(model::discard(&paths.models(), &model::GPU_MODEL));
+        if let Err(e) = discarded {
+            eprintln!("the GPU add-on's download, canceled: {e:#}");
+        }
+    }
+    let _ = state.db.lock().unwrap().forget_asked(Queue::Addon, 0);
+}
+
+/// At start: the GPU add-on's install a quit stopped carries on, if it was
+/// under way (its place is in the library), there's a pack for this
+/// platform, and the pack or its model is still missing; otherwise its
+/// place goes (`Db::in_asked_order`).
+pub(crate) fn resume_addon(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let pack = state.paths.gpu_pack();
+    let missing = !gpu::is_installed(&pack) || !model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL);
+    let resumed = {
+        let db = state.db.lock().unwrap();
+        let wanted = gpu::supported(&pack) && missing && db.is_asked(Queue::Addon, 0).unwrap_or(false);
+        db.ordered_as_asked(Queue::Addon, if wanted { vec![0] } else { Vec::new() }, |&job| job)
+    };
+    if !resumed.is_empty()
+        && let Err(e) = start_addon(app)
+    {
+        eprintln!("the GPU add-on's download couldn't carry on: {e}");
+    }
 }
 
 /// Stops setup's downloads; what already finished stays installed.
@@ -400,7 +514,7 @@ pub(crate) async fn cancel_setup(state: State<'_, AppState>) -> CmdResult<()> {
     Ok(())
 }
 
-/// Stops the GPU add-on's download.
+/// Stops the GPU add-on's download; what it had goes (`settle_addon`).
 #[tauri::command]
 pub(crate) async fn cancel_gpu_install(state: State<'_, AppState>) -> CmdResult<()> {
     state.gpu.cancel();
@@ -425,7 +539,7 @@ pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()>
     }
     drop(db);
     gpu::uninstall(&state.paths.gpu_pack()).map_err(err)?;
-    gpu::uninstall(&state.paths.gpu_model_dir()).map_err(err)
+    model::uninstall(&state.paths.models(), &model::GPU_MODEL).map_err(err)
 }
 
 /// Bytes of the videos kept from sites without embeds (`Paths::media`).

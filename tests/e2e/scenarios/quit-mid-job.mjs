@@ -1,6 +1,7 @@
-// Quitting while a file transcribes: nothing the app started goes on after
-// it, nor the app itself, and at the next start the transcription carries
-// on to the end.
+// Quitting while a file transcribes, another asked after it: nothing the
+// app started goes on after it, nor the app itself, and at the next start
+// the transcription carries on to the end, before the one asked after it
+// (they carry on in the order asked).
 //
 // Under WebDriver (Linux) the driver ends the app's process from outside
 // when the session closes, so its own quit never runs: there, this checks
@@ -13,13 +14,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { appLine } from "../lib/dump.mjs";
-import { longSpeech } from "../lib/fixtures.mjs";
+import { landedTwice, longSpeech } from "../lib/fixtures.mjs";
 import { leftovers } from "../lib/procs.mjs";
 
 export default {
   name: "quit-mid-job",
   async run(app, ctx) {
     const file = longSpeech(path.join(ctx.out, "fixtures"));
+    const after = landedTwice(path.join(ctx.out, "fixtures"));
     await app.toLibrary();
     const [added] = await app.addFiles([file]);
     await app.click(`.vod[data-key="${added.id}"] .actions button[aria-label="Transcribe"]`);
@@ -27,7 +29,7 @@ export default {
     const vod = await until(
       "the transcription to be under way",
       async () => {
-        const [v] = await app.invoke("list_vods");
+        const v = (await app.invoke("list_vods")).find((v) => v.id === added.id);
         const now = v ? v.status : "not in the library yet";
         if (now !== seen) ctx.log((seen = now));
         // Finished or failed: no use waiting on.
@@ -40,8 +42,11 @@ export default {
     if (vod.status === "done") throw new Error("it finished before the test could quit: make the file longer");
     // A few seconds in, so the worker is at work (its progress comes as events, not in list_vods).
     await sleep(3000);
-    const [still] = await app.invoke("list_vods");
+    const still = (await app.invoke("list_vods")).find((v) => v.id === added.id);
     if (still.status !== "transcribing") throw new Error(`3 s in, it's ${still.status}: make the file longer`);
+    // Another asked after it, waiting its turn.
+    const [next] = await app.addFiles([after]);
+    await app.invoke("transcribe_stretch", { vodId: next.id, start: 0, end: null });
     ctx.log("quitting while it transcribes");
     // The app's own process too (its binary): a quit that hangs is told
     // apart from a worker left behind, and when it ended is in the log.
@@ -61,8 +66,11 @@ export default {
     const done = await until(
       "the transcription to finish",
       async () => {
-        const [v] = await app.invoke("list_vods");
+        const vods = await app.invoke("list_vods");
+        const [v, w] = [added, next].map((a) => vods.find((v) => v.id === a.id));
         if (v?.status === "error") throw new Error(`after the restart it failed: ${v.error}`);
+        if (v?.status !== "done" && (w?.status === "transcribing" || w?.status === "done"))
+          throw new Error("after the restart the one asked after it went first");
         return v?.status === "done" && v;
       },
       30 * MINUTE,

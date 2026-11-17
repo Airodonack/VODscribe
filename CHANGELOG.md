@@ -7,6 +7,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Delete video works during a transcription. The transcription stops first, in Delete all videos too.
 - Removing a VOD ends its transcription. As with Delete video, what's transcribed so far is kept, even where an edit uses it.
 - Unfinished work resumes after a restart. Video downloads carry on where a quit or a crash stopped them, edits being rendered and the footage they need start again, and files received whole from other apps are added.
+- Unfinished work resumes in the order asked. Resume and Retry put a job last.
+- The GPU add-on carries on after a restart. It shows in the jobs list with Cancel.
 - Fixes:
   - Marks can't go past the end. A cut, chapter or highlight placed or moved past the end of a video is refused, as one before its start already was.
   - Closing the player no longer stalls. Closing a VOD or switching to another while a timeline thumbnail loaded froze the window briefly, about a quarter second on some videos.

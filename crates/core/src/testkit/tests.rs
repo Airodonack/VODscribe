@@ -441,7 +441,7 @@ fn recorded_answers_stand_for_the_network() {
     assert!(net::is_client_error(&err), "{err:#}");
     assert!(net::get_bytes("https://kit-test.example/x", 3, &never()).is_err(), "longer than allowed");
     drop(net);
-    assert!(super::net::answer("https://kit-test.example/x").is_none(), "gone with its test");
+    assert!(super::net::answer("https://kit-test.example/x", &[]).is_none(), "gone with its test");
 }
 
 #[test]
@@ -1124,4 +1124,93 @@ fn a_tests_path_is_all_the_app_finds_on_it() {
     // Let go of with its folder: the computer's PATH again.
     super::tools::let_go(&dir);
     assert_eq!(super::tools::path_of(&bin), None);
+}
+
+/// The fake network honours `Range` as a file server does (`Reply::ranged`):
+/// asked from a byte, it sends the rest (206); a server that doesn't
+/// (`Net::serves_whole`) sends all of it; and the requests are kept as
+/// they came (`Net::records`).
+#[test]
+fn the_fake_network_sends_the_rest_of_a_file_from_the_byte_asked() {
+    let (net, never) = (Net::new(), never());
+    let recorded = net.records("https://kit-range.example/");
+    net.serves("https://kit-range.example/file", "0123456789").serves_whole("https://kit-range.example/whole", "0123");
+    let read = |body: net::Body| {
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut { body }, &mut out).unwrap();
+        out
+    };
+    let rest = net::get_from("https://kit-range.example/file", 6, &never).unwrap();
+    assert!(rest.ranged);
+    assert_eq!(read(rest), "6789");
+    let all = net::get_from("https://kit-range.example/file", 0, &never).unwrap();
+    assert!(!all.ranged);
+    assert_eq!(read(all), "0123456789");
+    let whole = net::get_from("https://kit-range.example/whole", 2, &never).unwrap();
+    assert!(!whole.ranged, "a server without ranges sends the whole file");
+    assert_eq!(read(whole), "0123");
+    assert!(net::get_from("https://kit-range.example/file", 10, &never).is_err(), "past its end: 416");
+    let asked: Vec<Option<String>> =
+        recorded.requests().iter().map(|r| r.header("Range").map(str::to_string)).collect();
+    assert_eq!(asked, [Some("bytes=6-".into()), None, Some("bytes=2-".into()), Some("bytes=10-".into())]);
+}
+
+/// A file held partway (`Net::holds_partway`) sends its bytes up to the
+/// one held at, then waits at the gate; a cancel then ends the read, and
+/// opened, the rest comes. Asked from a byte past the hold, it isn't held.
+#[test]
+fn a_file_held_partway_waits_there_for_its_gate() {
+    let net = Net::new();
+    let file: Vec<u8> = (0..=255).collect();
+    let gate = Gate::new();
+    net.serves("https://kit-partway.example/file", file.clone()).holds_partway(
+        "https://kit-partway.example/",
+        100,
+        &gate,
+    );
+    let cancel = AtomicBool::new(false);
+    let mut body = net::get_from("https://kit-partway.example/file", 0, &cancel).unwrap();
+    let mut first = vec![0u8; 100];
+    std::io::Read::read_exact(&mut body, &mut first).unwrap();
+    assert_eq!(first, file[..100]);
+    gate.reached();
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(std::io::Read::read(&mut body, &mut [0u8; 8]).is_err(), "held, a cancel ends the read");
+    let never = never();
+    let mut again = net::get_from("https://kit-partway.example/file", 0, &never).unwrap();
+    gate.open();
+    let mut all = Vec::new();
+    std::io::Read::read_to_end(&mut again, &mut all).unwrap();
+    assert_eq!(all, file, "let go, the rest comes");
+    let mut past = Vec::new();
+    let mut rest = net::get_from("https://kit-partway.example/file", 200, &never).unwrap();
+    std::io::Read::read_to_end(&mut rest, &mut past).unwrap();
+    assert_eq!(past, file[200..]);
+}
+
+/// The fake add-on (`Addon`) is the pack for the folder it's at, and only
+/// that one (`gpu::platform`'s seam): small files, each pinned by its size
+/// and SHA-256 as the real ones are, which `gpu::install` downloads from
+/// the fake network and unpacks to the libraries the pack keeps.
+#[test]
+fn the_fake_addon_is_the_pack_for_its_folder_and_installs_as_one() {
+    let dir = TempDir::new("kit-addon");
+    let pack = dir.join("gpu");
+    let addon = Addon::at(&pack);
+    assert_eq!(crate::gpu::download_parts(&pack), 5);
+    let sizes: u64 = addon.files().iter().map(|(_, b)| b.len() as u64).sum();
+    assert_eq!(crate::gpu::download_size(&pack), sizes);
+    assert_ne!(crate::gpu::download_size(&dir.join("other")), sizes, "another folder's is the real pack");
+    let net = Net::new();
+    addon.served_by(&net);
+    crate::gpu::install(&pack, &never(), |_| {}).unwrap();
+    assert!(crate::gpu::is_installed(&pack));
+    let mut names: Vec<String> = std::fs::read_dir(crate::gpu::lib_dir(&pack))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let mut want = Addon::libraries();
+    want.sort();
+    assert_eq!(names, want);
 }

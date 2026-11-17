@@ -1,8 +1,8 @@
 //! The list of jobs the library shows (Jobs.svelte): the clips' queue (clips
 //! cut and edits rendered, one at a time: `clips::Cutter`), then the
 //! erasures of removed VODs (`vods::Sweeper`), which run beside it, then the
-//! files dropped on the window being received (`receive`), each with how far
-//! it is. Sent whole as `jobs` whenever it changes, by a thread of
+//! files dropped on the window being received (`receive`), then the GPU
+//! add-on's download (`setup::start_addon`), each with how far it is. Sent whole as `jobs` whenever it changes, by a thread of
 //! its own: the queues (`Jobs::watch`) and the progress of what's running
 //! only send it word, so nothing that changes a queue while holding the
 //! library's lock waits on the list's reads.
@@ -29,6 +29,8 @@ pub(crate) enum Kind {
     Erase,
     /// A file dropped on the window, received from the app it came from.
     Receive,
+    /// The GPU add-on, downloading.
+    Addon,
 }
 
 /// A queue whose running job reports its progress.
@@ -174,7 +176,21 @@ fn listed(app: &AppHandle) -> Vec<Job> {
     let out = |id| state.clips.is_out(id);
     let mut jobs = arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out));
     jobs.extend(receiving(&state));
+    jobs.extend(addon(&state));
     jobs
+}
+
+/// The GPU add-on's download, as a job, while it's under way: how far it
+/// is by bytes across its files.
+fn addon(state: &AppState) -> Option<Job> {
+    if !state.gpu.installing() {
+        return None;
+    }
+    let progress = state.gpu.progress().and_then(|p| {
+        let total = p["total"].as_f64().filter(|t| *t > 0.0)?;
+        Some((p["done"].as_f64()? / total).clamp(0.0, 1.0))
+    });
+    Some(Job { kind: Kind::Addon, id: 0, label: "GPU add-on".into(), running: true, progress })
 }
 
 /// The files being received, as jobs: each running.
@@ -239,17 +255,24 @@ pub(crate) async fn list_jobs(app: AppHandle) -> CmdResult<Vec<Job>> {
     tauri::async_runtime::spawn_blocking(move || listed(&app)).await.map_err(crate::err)
 }
 
-/// Puts the clips and edits waiting in the order of `ids`, as dragged in the list.
+/// Puts the clips and edits waiting in the order of `ids`, as dragged in
+/// the list, and keeps that order for a start after a quit.
 #[tauri::command]
 pub(crate) async fn reorder_jobs(app: AppHandle, ids: Vec<i64>) -> CmdResult<()> {
     app.state::<AppState>().clips.reorder(&ids);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        state.clips.keep_order(&state.db.lock().unwrap());
+    })
+    .await
+    .map_err(crate::err)
 }
 
 /// Cancels a job from the list: a clip or edit is taken out of the queue or
 /// stopped (`Cutter::cancel_job`); an erasure is stopped, what's left of the
 /// VOD erased at the next start (`Sweeper::cancel`); a file being received
-/// stops, and what came of it goes (`Receives::cancel`).
+/// stops, and what came of it goes (`Receives::cancel`); the GPU add-on's
+/// download stops, and what it had goes (`setup::settle_addon`).
 #[tauri::command]
 pub(crate) async fn cancel_job(app: AppHandle, kind: Kind, id: i64) -> CmdResult<()> {
     let state = app.state::<AppState>();
@@ -261,6 +284,7 @@ pub(crate) async fn cancel_job(app: AppHandle, kind: Kind, id: i64) -> CmdResult
                 changed(&app);
             }
         }
+        Kind::Addon => state.gpu.cancel(),
     }
     Ok(())
 }

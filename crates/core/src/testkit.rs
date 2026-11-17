@@ -16,10 +16,13 @@
 //!   the answer to each request, by `net::get` and by the HTTP clients
 //!   (`net::agent`); the sites' own APIs answered as they answer (`sites`);
 //! - media files (`Media`): what the fake programs write and read, in place
-//!   of video.
+//!   of video;
+//! - the GPU add-on's pack (`Addon`): small files a test serves, in place
+//!   of the real pack's downloads (`gpu::platform`).
 //!
 //! README.md beside this file says how a test uses them.
 
+pub mod addon;
 pub mod ffmpeg;
 pub mod library;
 pub mod media;
@@ -33,10 +36,11 @@ pub mod yt_dlp;
 #[cfg(test)]
 mod tests;
 
+pub use addon::Addon;
 pub use ffmpeg::Ffmpeg;
 pub use library::{Library, Released, at_version, back_to, format_of, newer, old_column, said};
 pub use media::Media;
-pub use net::{Net, Reply, Request};
+pub use net::{Net, Recorded, Reply, Request};
 pub use nvidia_smi::NvidiaSmi;
 pub use tools::Gate;
 pub use worker::Worker;

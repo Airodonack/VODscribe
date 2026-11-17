@@ -187,7 +187,10 @@ pub(crate) fn take_up(app: &crate::AppHandle) {
         return;
     }
     let Ok(entries) = std::fs::read_dir(incoming) else { return };
-    for entry in entries.flatten() {
+    // In the order they arrived (when each was last written), not the folder's.
+    let mut entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+    entries.sort_by_key(|e| (e.metadata().and_then(|m| m.modified()).ok(), e.file_name()));
+    for entry in entries {
         let (name, path) = (entry.file_name().to_string_lossy().into_owned(), entry.path());
         // (An entry's type is its own: a link's isn't its target's.)
         let file = entry.file_type().is_ok_and(|t| t.is_file());

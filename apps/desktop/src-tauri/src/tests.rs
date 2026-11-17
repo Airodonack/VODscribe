@@ -1,5 +1,7 @@
 //! The specs of the app's root: how it starts and what its window may load.
 
+mod addon;
+mod resume;
 mod start;
 
 #[test]

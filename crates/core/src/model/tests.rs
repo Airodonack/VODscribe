@@ -1,14 +1,16 @@
 //! The specs of the speech models' files: which are installed, how one is
-//! downloaded and checked, and which are removed. A spec each, named as it
+//! downloaded and checked, how a stopped one carries on, and which are
+//! removed. A spec each, named as it
 //! is said. Models here are small made-up ones, served by the fake network
 //! at the address the real ones are fetched from.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use sha2::{Digest, Sha256};
 
 use super::*;
+use crate::testkit::Gate;
 use crate::testkit::net::{Net, Reply};
 use crate::{TempDir, is_canceled};
 
@@ -131,9 +133,10 @@ fn an_installed_model_s_files_are_not_hashed_again() {
 }
 
 /// A file that arrives changed is refused and thrown away, and no model is
-/// left installed (`net.rs` `download_verified`: "Nothing appears at `dest`
-/// unless it matches"; the message: "A download was damaged or changed on
-/// the way").
+/// left installed (`net.rs` `download_resumable`: "Its size and SHA-256 are
+/// checked over the whole file before it's renamed to `dest`, so nothing at
+/// `dest` was ever unchecked"; the message: "A download was damaged or
+/// changed on the way").
 #[test]
 fn a_file_that_does_not_match_its_hash_is_thrown_away() {
     let (root, net) = (TempDir::new("model-damaged"), Net::new());
@@ -144,7 +147,9 @@ fn a_file_that_does_not_match_its_hash_is_thrown_away() {
     let err = install(&root, spec, &never(), |_| {}).unwrap_err();
     assert!(format!("{err:#}").contains("damaged or changed"), "{err:#}");
     assert!(!root.join(spec.id).exists(), "no model installed");
-    assert!(!root.join(format!(".{}.partial", spec.id)).join("tokens.txt").exists(), "the damaged file isn't kept");
+    let staging = root.join(format!(".{}.partial", spec.id));
+    assert!(!staging.join("tokens.txt").exists(), "the damaged file isn't kept");
+    assert!(!net::part_of(&staging.join("tokens.txt")).exists(), "nor what it had of it");
 }
 
 /// A canceled install ends as a cancel, keeps the files that finished, and
@@ -197,6 +202,64 @@ fn files_an_earlier_attempt_finished_are_not_downloaded_again() {
     let dir = install(&root, spec, &never(), |_| {}).unwrap();
     assert_eq!(fs::read(dir.join("encoder.int8.onnx")).unwrap(), b"the encoder");
     assert!(is_installed(&dir, spec));
+}
+
+/// Stopped partway through a file, the next install keeps the files it
+/// finished and asks for the rest of that one from the byte it had
+/// (`model.rs` `install`: "the file it was downloading carries on from the
+/// bytes it had (`net::download_resumable`)").
+#[test]
+fn a_model_install_stopped_partway_carries_on_from_the_bytes_it_had() {
+    let root = TempDir::new("model-carries-on");
+    let base = "https://model-carries-on.example/models";
+    let (a, b): (Vec<u8>, Vec<u8>) = (vec![1u8; 3_000], (0..9_000u32).map(|n| n as u8).collect());
+    let spec = model("carries-on", &[("a.onnx", &a), ("b.weights", &b)]);
+    let net = Net::new();
+    let asked = net.records(base);
+    net.serves(&format!("{base}/{}/a.onnx", spec.id), a.clone());
+    net.serves(&format!("{base}/{}/b.weights", spec.id), b.clone());
+    let gate = Gate::new();
+    net.holds_partway(&format!("{base}/{}/b.weights", spec.id), 5_000, &gate);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicU64::new(0));
+    let (stop, dir, seen) = (cancel.clone(), root.to_path_buf(), done.clone());
+    let first =
+        std::thread::spawn(move || install_from(base, &dir, spec, &stop, |p| seen.store(p.done, Ordering::Relaxed)));
+    gate.reached();
+    // What came before the gate written: the first file and 5000 bytes of the second.
+    crate::testkit::eventually("8000 bytes in", || done.load(Ordering::Relaxed) >= 8_000);
+    cancel.store(true, Ordering::Relaxed);
+    assert!(is_canceled(&first.join().unwrap().unwrap_err()));
+    net.let_go();
+    let dest = install_from(base, &root, spec, &never(), |_| {}).unwrap();
+    assert!(is_installed(&dest, spec));
+    assert_eq!(fs::read(dest.join("b.weights")).unwrap(), b);
+    let ranges: Vec<(String, Option<String>)> = asked
+        .requests()
+        .into_iter()
+        .map(|r| (r.url.rsplit('/').next().unwrap().to_string(), r.header("Range").map(String::from)))
+        .collect();
+    assert_eq!(
+        ranges,
+        [("a.onnx".into(), None), ("b.weights".into(), None), ("b.weights".into(), Some("bytes=5000-".into()))]
+    );
+}
+
+/// What an install had goes with Cancel's discard, and removing the model
+/// takes the installed files too (`model.rs` `discard`: "Deletes what an
+/// install of `spec` had downloaded so far (Cancel's)."; `uninstall`:
+/// "Removes `spec`'s files, installed or on their way").
+#[test]
+fn discarding_or_removing_a_model_deletes_its_files() {
+    let root = TempDir::new("model-discard");
+    let spec = model("discarded", FILES);
+    fs::create_dir_all(staging_dir(&root, spec)).unwrap();
+    discard(&root, spec).unwrap();
+    assert!(!staging_dir(&root, spec).exists());
+    fs::create_dir_all(model_dir(&root, spec)).unwrap();
+    fs::create_dir_all(staging_dir(&root, spec)).unwrap();
+    uninstall(&root, spec).unwrap();
+    assert!(!staging_dir(&root, spec).exists() && !model_dir(&root, spec).exists());
 }
 
 /// Removing the others deletes the model folders not kept, such as the

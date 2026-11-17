@@ -844,3 +844,28 @@ fn an_app_finds_only_the_programs_its_test_gives_it() {
     let gpu = app.invoke("gpu_status", json!({})).unwrap()["gpu"].clone();
     assert_eq!(gpu, json!({ "name": "NVIDIA GeForce RTX 4070", "total_mb": 12282, "free_mb": 11000 }));
 }
+
+/// The app's quit stops the GPU add-on's download as the process's end
+/// stops the real one's, its thread ended once `quit` returns and the
+/// library's writes stopped first (`stop_tracked`): what it had stays, as
+/// after a real quit, and it's still asked for (setup.rs `settle_addon`).
+/// The fake pack is the test's, at the app's folder (`TestApp::addon`).
+#[test]
+fn the_apps_quit_stops_the_addons_download_as_the_process_end_does() {
+    let app = TestApp::new();
+    let addon = app.addon();
+    addon.served_by(&app.net);
+    let gate = Gate::new();
+    app.net.holds_partway(&addon.files()[0].0, 700, &gate);
+    app.invoke("install_gpu_pack", json!({})).unwrap();
+    gate.reached();
+    // What came before the gate written (`gpu_status`'s progress, sent once it is).
+    let had = || app.invoke("gpu_status", json!({})).unwrap()["progress"]["done"].as_u64();
+    vodscribe_core::testkit::eventually("700 bytes in", || had() == Some(700));
+    let pack = app.paths().gpu_pack();
+    let folder = app.quit();
+    let part = vodscribe_core::net::part_of(&vodscribe_core::gpu::staging_dir(&pack).join("part-1.download"));
+    assert_eq!(std::fs::metadata(&part).map(|m| m.len()).ok(), Some(700), "what it had went");
+    let db = vodscribe_core::db::Db::open_in(&folder.paths()).unwrap();
+    assert!(db.is_asked(vodscribe_core::asked::Queue::Addon, 0).unwrap(), "no longer asked for");
+}

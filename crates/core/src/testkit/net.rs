@@ -3,8 +3,10 @@
 //!
 //! - `net::public_url`'s lookup of a link's host (`resolve`), so a link with
 //!   a site's name needs no real lookup;
-//! - `net::get` and `net::get_bytes` (thumbnails, emotes, Kick's playlists,
-//!   yt-dlp's checksums), answered in place of a request (`answer`);
+//! - `net::get`, `net::get_from` and `net::get_bytes` (thumbnails, emotes,
+//!   Kick's playlists, yt-dlp's checksums, the GPU add-on's downloads),
+//!   answered in place of a request (`answer`), its `Range` honoured and its
+//!   body held partway where a test says (`Net::holds_partway`);
 //! - the HTTP clients (`net::agent`, and the file host's in `annotations`),
 //!   built on `Connector` and `Resolver`: a request to a link that's the
 //!   fake's goes over a connection to the fake, which reads it as a site
@@ -84,11 +86,19 @@ enum What {
     Hold(String, Gate),
     /// Requests to links starting with the prefix get this answer.
     Answer(String, Answer),
+    /// GETs of links starting with the prefix (`net::get_from`) send the
+    /// file up to this byte, then wait at the gate for the rest.
+    Partway(String, u64, Gate),
+    /// Requests to links starting with the prefix are kept, as asked.
+    Record(String, Arc<Mutex<Vec<Request>>>),
 }
 
 #[derive(Clone)]
 enum Answer {
+    /// The file, or the part of it a `Range` asks for (`Reply::ranged`).
     Body(Arc<Vec<u8>>),
+    /// The whole file, whatever is asked, as a server without ranges sends it.
+    Whole(Arc<Vec<u8>>),
     Status(u16),
     /// Answers what it knows; None for a request that isn't its own.
     Replies(Arc<Replier>),
@@ -141,6 +151,22 @@ impl Reply {
     /// `status` (404, 429, 500…), with no body.
     pub fn status(status: u16) -> Self {
         Reply { status, headers: Vec::new(), body: Vec::new() }
+    }
+
+    /// `file` as a server that honours ranges answers `request`: the part
+    /// its `Range: bytes=<from>-[<to>]` asks for (206, with its
+    /// `Content-Range`), a range past its end refused (416), or all of it
+    /// (200) for a request that asks for none.
+    pub fn ranged(file: &[u8], request: &Request) -> Self {
+        let Some((from, to)) = request.header("Range").and_then(|r| parse_range(r, file.len())) else {
+            return Self::body(file.to_vec());
+        };
+        if from >= file.len() || to < from {
+            return Self::status(416).with_header("Content-Range", &format!("bytes */{}", file.len()));
+        }
+        let to = to.min(file.len() - 1);
+        Reply { status: 206, headers: Vec::new(), body: file[from..=to].to_vec() }
+            .with_header("Content-Range", &format!("bytes {from}-{to}/{}", file.len()))
     }
 
     /// The same, with header `name` set to `value` (an `ETag`, say).
@@ -198,6 +224,28 @@ impl Net {
         self.add(What::Answer(prefix.into(), Answer::Body(Arc::new(body.into()))))
     }
 
+    /// Links starting with `prefix` answer `body` whole, whatever range is
+    /// asked: a server that doesn't honour ranges.
+    pub fn serves_whole(&self, prefix: &str, body: impl Into<Vec<u8>>) -> &Self {
+        self.add(What::Answer(prefix.into(), Answer::Whole(Arc::new(body.into()))))
+    }
+
+    /// GETs of links starting with `prefix` send their file up to byte `at`
+    /// (of the file, wherever the answer starts), then wait at `gate` for
+    /// the rest, as a download that's partway when the test acts. Let go
+    /// when this is dropped (`let_go`).
+    pub fn holds_partway(&self, prefix: &str, at: u64, gate: &Gate) -> &Self {
+        self.add(What::Partway(prefix.into(), at, gate.clone()))
+    }
+
+    /// The requests to links starting with `prefix` from now, kept as each
+    /// came (`Recorded::requests`).
+    pub fn records(&self, prefix: &str) -> Recorded {
+        let recorded = Recorded::default();
+        self.add(What::Record(prefix.into(), recorded.0.clone()));
+        recorded
+    }
+
     /// Links starting with `prefix` answer HTTP `status` (404, 403, 500…)
     /// with no body.
     pub fn answers(&self, prefix: &str, status: u16) -> &Self {
@@ -223,7 +271,7 @@ impl Net {
     /// for what it asked.
     pub fn let_go(&self) {
         rules().retain(|r| match &r.what {
-            What::Hold(_, gate) if r.owner == self.owner => {
+            What::Hold(_, gate) | What::Partway(_, _, gate) if r.owner == self.owner => {
                 gate.open();
                 false
             }
@@ -249,7 +297,9 @@ impl Rule {
     fn prefix(&self) -> Option<&str> {
         match &self.what {
             What::Host(..) => None,
-            What::Hold(prefix, _) | What::Answer(prefix, _) => Some(prefix),
+            What::Hold(prefix, _) | What::Answer(prefix, _) | What::Partway(prefix, ..) | What::Record(prefix, _) => {
+                Some(prefix)
+            }
         }
     }
 }
@@ -282,7 +332,7 @@ fn faked(url: &str) -> bool {
     rules().iter().any(|r| match &r.what {
         What::Host(h, _) => *h == host,
         What::Answer(prefix, _) => url.starts_with(prefix.as_str()),
-        What::Hold(..) => false,
+        What::Hold(..) | What::Partway(..) | What::Record(..) => false,
     })
 }
 
@@ -291,6 +341,13 @@ fn faked(url: &str) -> bool {
 /// fake's. None for one that isn't (`faked`).
 fn respond(request: &Request) -> Option<Reply> {
     let url = request.url.as_str();
+    for rule in rules().iter() {
+        if let What::Record(prefix, kept) = &rule.what
+            && url.starts_with(prefix.as_str())
+        {
+            kept.lock().unwrap().push(request.clone());
+        }
+    }
     let holds: Vec<Gate> = rules()
         .iter()
         .filter_map(|r| match &r.what {
@@ -312,7 +369,8 @@ fn respond(request: &Request) -> Option<Reply> {
         .collect();
     for answer in answers {
         let reply = match answer {
-            Answer::Body(body) => Some(Reply::body(body.to_vec())),
+            Answer::Body(body) => Some(Reply::ranged(&body, request)),
+            Answer::Whole(body) => Some(Reply::body(body.to_vec())),
             Answer::Status(code) => Some(Reply::status(code)),
             Answer::Replies(reply) => reply(request),
         };
@@ -323,18 +381,67 @@ fn respond(request: &Request) -> Option<Reply> {
     faked(url).then(|| Reply::status(404))
 }
 
-/// The answer to a GET of `url`, if it's the fake's (`net::get`): its
-/// body, or a status that isn't success as `ureq` reports it.
-pub(crate) fn answer(url: &str) -> Option<Result<Vec<u8>, anyhow::Error>> {
+/// The requests a test keeps (`Net::records`).
+#[derive(Clone, Default)]
+pub struct Recorded(Arc<Mutex<Vec<Request>>>);
+
+impl Recorded {
+    /// The requests kept so far, in the order they came.
+    pub fn requests(&self) -> Vec<Request> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// The part of the file a `Range` header asks for, as first and last byte
+/// (`bytes=<from>-` to its end, `bytes=<from>-<to>`); None for a range of
+/// another kind.
+fn parse_range(range: &str, len: usize) -> Option<(usize, usize)> {
+    let (from, to) = range.trim().strip_prefix("bytes=")?.split_once('-')?;
+    let from = from.trim().parse().ok()?;
+    let to = match to.trim() {
+        "" => len.saturating_sub(1),
+        to => to.parse().ok()?,
+    };
+    Some((from, to))
+}
+
+/// A GET's answer from the fake (`net::get_from`).
+pub(crate) struct Answered {
+    pub(crate) status: u16,
+    pub(crate) body: Vec<u8>,
+    /// Where a 206's `Content-Range` says it starts in the file.
+    pub(crate) start: Option<u64>,
+    /// Where in `body` it waits, and the gate it waits at (`Net::holds_partway`).
+    pub(crate) hold: Option<(usize, Gate)>,
+}
+
+/// The answer to a GET of `url` with `headers`, if it's the fake's
+/// (`net::get_from`): its body (from where a `Range` asks), or a status that
+/// isn't success as `ureq` reports it.
+pub(crate) fn answer(url: &str, headers: &[(String, String)]) -> Option<Result<Answered, anyhow::Error>> {
     if !faked(url) {
         return None;
     }
-    let request = Request { method: "GET".into(), url: url.into(), headers: Vec::new(), body: Vec::new() };
+    let request = Request { method: "GET".into(), url: url.into(), headers: headers.to_vec(), body: Vec::new() };
     let reply = respond(&request)?;
-    Some(match reply.status {
-        200..=299 => Ok(reply.body),
-        code => Err(ureq::Error::StatusCode(code).into()),
-    })
+    if !(200..=299).contains(&reply.status) {
+        return Some(Err(ureq::Error::StatusCode(reply.status).into()));
+    }
+    // Where this answer starts in the file: a 206's `Content-Range`.
+    let start = reply
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("Content-Range"))
+        .and_then(|(_, v)| crate::net::range_start(v))
+        .filter(|_| reply.status == 206);
+    let from = start.unwrap_or(0);
+    let hold = rules().iter().find_map(|r| match &r.what {
+        What::Partway(prefix, at, gate) if url.starts_with(prefix.as_str()) => Some((*at, gate.clone())),
+        _ => None,
+    });
+    let len = reply.body.len() as u64;
+    let hold = hold.filter(|&(at, _)| at >= from && at < from + len).map(|(at, gate)| ((at - from) as usize, gate));
+    Some(Ok(Answered { status: reply.status, body: reply.body, start, hold }))
 }
 
 /// The HTTP clients' connections (`net::agent`): to the fake for a link

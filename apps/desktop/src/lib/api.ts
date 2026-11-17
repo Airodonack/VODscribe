@@ -334,10 +334,10 @@ export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
  *  being made, one at a time, or a removed VOD being erased, beside them,
  *  or a file dropped on the window being received. */
 export interface Job {
-  kind: "clip" | "edit" | "erase" | "receive";
-  /** The clip's or edit's id; the VOD's, for an erasure; the file's own, for one received. */
+  kind: "clip" | "edit" | "erase" | "receive" | "addon";
+  /** The clip's or edit's id; the VOD's, for an erasure; the file's own, for one received; 0 for the GPU add-on. */
   id: number;
-  /** The clip's or edit's title; the VOD's, for an erasure; the file's name. */
+  /** The clip's or edit's title; the VOD's, for an erasure; the file's name; "GPU add-on". */
   label: string;
   /** Begun: the one each queue is at. */
   running: boolean;

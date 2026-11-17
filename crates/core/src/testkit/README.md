@@ -8,7 +8,8 @@ Fakes for what's outside the app, and helpers to set up a library, so a unit or 
 - `nvidia_smi.rs`: a fake `nvidia-smi`: the graphics card the computer has, or none.
 - `worker.rs`: a fake transcription worker: the words it's told are said.
 - `media.rs`: the fake media files the fakes write and read, and the frames they decode.
-- `net.rs`: the network: where a name resolves, and each request's answer.
+- `net.rs`: the network: where a name resolves, and each request's answer, a range of a file and a body held partway among them.
+- `addon.rs`: the GPU add-on's pack, small, for a test to serve.
 - `sites.rs`: the sites' own APIs, answered as each site answers.
 - `library.rs`: a library in a folder of its own, VODs and words put in it, and a connection of its own beside the app's; older libraries: one at any format, one taken back to a format, and those releases left; and one a newer version changed.
 - `tests.rs`: the kit's own tests, each fake beside the real program where it's installed.
@@ -62,11 +63,12 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `drop_files(&[("Day 3.mp4", None)])` drops files with no path on the window (a video in a zip folder, a file promise), as the system's drop target hands them over: each the window takes is received, and the test gives its bytes (`give(&Media::video(60.0).to_bytes())`), then ends it `whole()`, `fails("why")` as its app, or drops it (canceled). `drop_paths(&[path])` and `drop_links(&[url])` drop files with paths and a browser's links: the page hears them as paths (`heard("tauri://drag-drop")`). On Linux, `drop_gives_nothing("why")` is a drop whose app saved nothing.
 - `lacks_yt_dlp()`: the computer has no yt-dlp, as before setup. A test's app finds none of the computer's programs on the PATH.
 - `nvidia_smi().shows("NVIDIA GeForce RTX 4070", 12282, 11000)`: the computer has that graphics card, with that much memory free (MB); without it, none.
+- `addon()` is the GPU add-on's pack for the app's library, small and faked, its GPU model installed: `addon.served_by(&app.net)` serves it, `app.net.holds_partway(url, 1_000, &gate)` holds a file after its first thousand bytes, and `app.net.records(prefix)` keeps the requests, their `Range` among them. Hold on to it across a quit, and serve it to the next start in `on_with` (`fakes.net`).
 - `takes_no_hard_links()` puts the library on a disk without hard links, as exFAT is.
 - `holds_copies(&gate)` holds a pasted clip's copy of its file at the gate once it's written, as a slow disk would.
 - `folder.holds_worker_start(&gate)`, before `TestApp::on(folder)`: that start's transcription waits at the gate while the other queues take up what was left, as on a busy start.
 - `holds_cut_ends(&gate)` holds a clip's cut at the gate once its encode is over, before the library records it: the moment a clip is made just as it's canceled.
-- `holds_erasures(&gate)` holds each erasure of a removed VOD between its parts, the library let go of; `holds_erasure_parts(&gate)` holds it in a part, the library still held.
+- `holds_erasures(&gate)` holds each erasure of a removed VOD between its parts, the library let go of; `holds_erasure_parts(&gate)` holds it in a part, the library still held. `folder.holds_erasures(&gate)`, before `TestApp::on(folder)`, holds those of that start.
 - `busy_till(vod.id, &gate)`: the VOD has work running that doesn't stop when told, till the gate opens. `holds_work_waits(&gate)` holds each wait for a VOD's work to stop (Remove's, Delete video's, an erasure's) each time it finds the work still running; move the clock past the wait meanwhile to have it run out.
 - `folder.holds_sweeps(&gate)`, before `TestApp::on(folder)`: that start's storyboards' sweep waits at the gate once it has read the library's VODs, before it goes through the storyboards, and `on` returns with it held, so a VOD can be added meanwhile.
 - `holds_gone_looks(&gate)` holds the forgetting of clips whose files went once it has looked at their files, before it takes the library.

@@ -4,6 +4,7 @@
 
 pub mod annotations;
 pub mod annotations_filter;
+pub mod asked;
 #[cfg(feature = "asr")]
 pub mod asr;
 pub mod audio;
@@ -46,6 +47,14 @@ pub mod word_emotes;
 pub mod youtube;
 
 use std::path::{Path, PathBuf};
+
+/// Removes folder `dir` and all in it; one that isn't there is no error.
+pub(crate) fn remove_folder(dir: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        r => r,
+    }
+}
 
 /// Where a download is, as the app shows it.
 #[derive(Clone, Copy, Debug, serde::Serialize)]

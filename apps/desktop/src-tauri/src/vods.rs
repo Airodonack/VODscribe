@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use serde::Serialize;
 use tauri::{Manager, State};
+use vodscribe_core::asked::Queue;
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod, give_way};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
@@ -316,9 +317,8 @@ fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) 
         }
         Ok((db.vod(vod.id)?.unwrap_or(vod), created))
     })?;
-    drop(db);
     if let Some(id) = left {
-        state.sweeper.left(id);
+        state.sweeper.left(&db, id);
     }
     Ok(added)
 }
@@ -497,11 +497,12 @@ pub(crate) async fn delete_vod(
         }
     }
     if !erased && !added_back {
+        let db = state.db.lock().unwrap();
         if delete_video {
             // Whatever uses it: with `anyway`, clips may still.
-            state.sweeper.removed_anyway(id);
-        } else if state.db.lock().unwrap().uses(id).map_err(err)? <= 0 {
-            state.sweeper.removed(id);
+            state.sweeper.removed_anyway(&db, id);
+        } else if db.uses(id).map_err(err)? <= 0 {
+            state.sweeper.removed(&db, id);
         }
     }
     if added_back {
@@ -659,7 +660,8 @@ impl Sweeper {
     }
 
     /// Starts erasing, with what was left from before: the sources nothing
-    /// uses, and those removed with their videos whose erasure didn't finish.
+    /// uses, and those removed with their videos whose erasure didn't
+    /// finish, in the order they were removed (`Db::in_asked_order`).
     pub(crate) fn run(&self, app: AppHandle) -> anyhow::Result<()> {
         let left = app.state::<AppState>().db.lock().unwrap().unused_sources()?;
         // Only tidying from before: a library that can't be read for it
@@ -668,6 +670,14 @@ impl Sweeper {
             eprintln!("erasures left unfinished: {e:#}");
             Vec::new()
         });
+        let sweeps = left.into_iter().map(|vod| Sweep { vod, kept: false, anyway: false });
+        let sweeps: Vec<Sweep> =
+            sweeps.chain(unfinished.into_iter().map(|vod| Sweep { vod, kept: true, anyway: true })).collect();
+        let sweeps = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            db.ordered_as_asked(Queue::Erase, sweeps, |s: &Sweep| s.vod)
+        };
         let news = app.clone();
         self.jobs.watch(move || crate::job_list::changed(&news));
         self.jobs.run("sweep", move |job, stop| {
@@ -675,30 +685,35 @@ impl Sweeper {
                 eprintln!("erasing unused VOD {}: {e:#}", job.vod);
             }
         })?;
-        for vod in left {
-            self.jobs.push_new(Sweep { vod, kept: false, anyway: false }, |j| j.vod == vod);
-        }
-        for vod in unfinished {
-            self.jobs.push_new(Sweep { vod, kept: true, anyway: true }, |j| j.vod == vod);
+        for sweep in sweeps {
+            self.jobs.push_new(sweep, |j| j.vod == sweep.vod);
         }
         Ok(())
     }
 
+    /// Queues `sweep` unless its VOD is waiting or being erased already,
+    /// its place kept in `db` for a start after a quit (`Db::ask`).
+    fn queue(&self, db: &Db, sweep: Sweep) {
+        if self.jobs.push_new(sweep, |j| j.vod == sweep.vod) {
+            db.keep_place(Queue::Erase, sweep.vod);
+        }
+    }
+
     /// VOD `id` was removed and nothing uses it: it's erased.
-    pub(crate) fn removed(&self, id: i64) {
-        self.jobs.push_new(Sweep { vod: id, kept: true, anyway: false }, |j| j.vod == id);
+    pub(crate) fn removed(&self, db: &Db, id: i64) {
+        self.queue(db, Sweep { vod: id, kept: true, anyway: false });
     }
 
     /// VOD `id` was removed with its video, its work still stopping
     /// (`delete_vod`): it's erased once that's stopped, whatever uses it.
-    pub(crate) fn removed_anyway(&self, id: i64) {
-        self.jobs.push_new(Sweep { vod: id, kept: true, anyway: true }, |j| j.vod == id);
+    pub(crate) fn removed_anyway(&self, db: &Db, id: i64) {
+        self.queue(db, Sweep { vod: id, kept: true, anyway: true });
     }
 
     /// VOD `id` was set aside by its add, its work still stopping
     /// (`add_to_library`): it's erased, row and all, once that's stopped.
-    pub(crate) fn left(&self, id: i64) {
-        self.jobs.push_new(Sweep { vod: id, kept: false, anyway: false }, |j| j.vod == id);
+    pub(crate) fn left(&self, db: &Db, id: i64) {
+        self.queue(db, Sweep { vod: id, kept: false, anyway: false });
     }
 
     /// Stops erasing VOD `id`, or takes it out of the queue: what's left of
@@ -896,8 +911,10 @@ pub(crate) fn forget_video(db: &Db, id: i64) -> anyhow::Result<()> {
 }
 
 /// Puts VOD `id`'s requests in one of `which` (paused, failed) back in their
-/// queues, at whichever stage each needs next. With no request at all and
-/// some of it not transcribed, asks for each part that isn't.
+/// queues, at whichever stage each needs next, at the back of the line, as
+/// anything asked for now (decided for 0.7.4: Resume and Retry go to the
+/// back, as a clip's Retry does). With no request at all and some of it
+/// not transcribed, asks for each part that isn't.
 pub(crate) fn requeue(db: &Db, id: i64, which: &[Status]) -> anyhow::Result<()> {
     let requests = db.requests(id)?;
     if requests.is_empty() {
@@ -913,7 +930,7 @@ pub(crate) fn requeue(db: &Db, id: i64, which: &[Status]) -> anyhow::Result<()> 
         let downloaded = whole || stretch.audio.as_ref().is_some_and(|p| Path::new(p).is_file());
         let progress = if stretch.status == Status::Paused { stretch.progress } else { 0.0 };
         let status = if downloaded { Status::Ready } else { Status::Queued };
-        db.set_stretch_status(stretch.id, status, progress, None)?;
+        db.requeue_request(stretch.id, status, progress)?;
     }
     Ok(())
 }

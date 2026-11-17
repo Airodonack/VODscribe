@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::Serialize;
 
+use crate::asked::Queue;
 use crate::db::{Db, Status, VOD_COLUMNS, Vod, vod_from_row};
 use crate::transcript::Segment;
 
@@ -234,8 +235,8 @@ impl Db {
     /// Asks for `start`..`end` of VOD `vod_id` (None: to its end) to be
     /// transcribed: a request at the back of the queue. The same stretch
     /// asked for again while it waits or runs is that request (Transcribe
-    /// pressed twice mustn't transcribe it twice); one paused or failed is
-    /// asked for anew.
+    /// pressed twice mustn't transcribe it twice), in its place in the line;
+    /// one paused or failed is asked for anew.
     pub fn request(&self, vod_id: i64, start: f64, end: Option<f64>) -> Result<Stretch> {
         let waiting: Option<i64> = self
             .conn
@@ -249,11 +250,15 @@ impl Db {
         if let Some(id) = waiting {
             return Ok(self.stretch(id)?.expect("just found"));
         }
-        self.conn.execute(
-            "INSERT INTO stretches (vod_id, start, end, status) VALUES (?1, ?2, ?3, 'queued')",
-            params![vod_id, start, end],
-        )?;
-        Ok(self.stretch(self.conn.last_insert_rowid())?.expect("just inserted"))
+        self.atomically(|db| {
+            db.conn.execute(
+                "INSERT INTO stretches (vod_id, start, end, status) VALUES (?1, ?2, ?3, 'queued')",
+                params![vod_id, start, end],
+            )?;
+            let id = db.conn.last_insert_rowid();
+            db.keep_place(Queue::Transcribe, id);
+            Ok(db.stretch(id)?.expect("just inserted"))
+        })
     }
 
     pub fn stretch(&self, id: i64) -> Result<Option<Stretch>> {
@@ -289,7 +294,9 @@ impl Db {
     }
 
     /// The first request asked for with `status`, of a VOD in the library's
-    /// list, with its VOD: the next one for that stage. Of files on this
+    /// list, with its VOD: the next one for that stage. First asked is when
+    /// it was last asked for (`asked`: Resume and Retry ask again); one with
+    /// no place there (an older version's) after, by id. Of files on this
     /// computer only, if `local_only`. Taking a VOD out of the list ends its
     /// requests; one left on it anyway isn't taken up.
     pub fn next_stretch(&self, status: Status, local_only: bool) -> Result<Option<(Vod, Stretch)>> {
@@ -297,9 +304,10 @@ impl Db {
             .conn
             .query_row(
                 "SELECT s.id FROM stretches s JOIN vod_order o ON o.vod_id = s.vod_id JOIN vods v ON v.id = s.vod_id
+                 LEFT JOIN asked a ON a.queue = ?3 AND a.job = s.id
                  WHERE s.status = ?1 AND (?2 = 0 OR v.source_path IS NOT NULL OR v.received_ext IS NOT NULL)
-                 ORDER BY s.id LIMIT 1",
-                params![status.as_str(), local_only],
+                 ORDER BY a.at IS NULL, a.at, s.id LIMIT 1",
+                params![status.as_str(), local_only, Queue::Transcribe.as_str()],
                 |r| r.get(0),
             )
             .optional()?;
@@ -316,13 +324,20 @@ impl Db {
     }
 
     /// Returns requests left mid-stage by a crash or quit to that stage's
-    /// queue. Transcription resumes from where it reached.
+    /// queue. Transcription resumes from where it reached, in the order the
+    /// requests were asked (`Db::in_asked_order`: those an older version
+    /// asked after, by id, and the places of requests gone forgotten).
     pub fn requeue_interrupted(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "UPDATE stretches SET status = 'queued' WHERE status = 'downloading';
-             UPDATE stretches SET status = 'ready' WHERE status = 'transcribing';",
-        )?;
-        Ok(())
+        self.atomically(|db| {
+            db.conn.execute_batch(
+                "UPDATE stretches SET status = 'queued' WHERE status = 'downloading';
+                 UPDATE stretches SET status = 'ready' WHERE status = 'transcribing';",
+            )?;
+            let mut stmt = db.conn.prepare("SELECT id FROM stretches WHERE status != 'done' ORDER BY id")?;
+            let requests: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            db.ordered_as_asked(Queue::Transcribe, requests, |&id| id);
+            Ok(())
+        })
     }
 
     /// Forgets every finished download, after the work dir has been cleared.
@@ -334,6 +349,18 @@ impl Db {
              UPDATE stretches SET status = 'queued', progress = 0 WHERE status = 'ready';",
         )?;
         Ok(())
+    }
+
+    /// Puts request `id` (paused or failed) back in its stage's queue at
+    /// `status`, `progress` along: at the back of the line, as anything
+    /// asked for now (decided for 0.7.4: Resume and Retry go to the back),
+    /// its place kept with it (`Db::keep_place`).
+    pub fn requeue_request(&self, id: i64, status: Status, progress: f64) -> Result<()> {
+        self.atomically(|db| {
+            db.set_stretch_status(id, status, progress, None)?;
+            db.keep_place(Queue::Transcribe, id);
+            Ok(())
+        })
     }
 
     pub fn set_stretch_status(&self, id: i64, status: Status, progress: f64, error: Option<&str>) -> Result<()> {

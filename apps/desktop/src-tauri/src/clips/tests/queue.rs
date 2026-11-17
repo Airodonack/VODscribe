@@ -150,11 +150,13 @@ fn several_clips_for_one_drag_are_made_in_their_order() {
             }
         })
         .unwrap();
-    cutter.queue_made(&[1], true);
+    // The library each keeps its place in (`Db::ask`).
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    cutter.queue_made(&db, &[1], true);
     assert_eq!(order.recv_timeout(Duration::from_secs(5)), Ok(1));
     // While 1 is being made: two for the clip bar, then two for a drag.
-    cutter.queue_made(&[2, 3], true);
-    cutter.queue_made(&[8, 9], false);
+    cutter.queue_made(&db, &[2, 3], true);
+    cutter.queue_made(&db, &[8, 9], false);
     go.send(()).unwrap();
     let next: Vec<_> = (0..4).map(|_| order.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
     assert_eq!(next, [8, 9, 2, 3], "the drag's in the order picked, then the rest as they were");

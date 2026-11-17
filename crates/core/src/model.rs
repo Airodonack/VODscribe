@@ -125,9 +125,28 @@ pub fn is_installed(dir: &Path, spec: &ModelSpec) -> bool {
     spec.files.iter().all(|f| fs::metadata(dir.join(f.name)).is_ok_and(|m| m.len() == f.size))
 }
 
+/// Where `install` gathers the model's files before moving them into place.
+fn staging_dir(models_root: &Path, spec: &ModelSpec) -> PathBuf {
+    models_root.join(format!(".{}.partial", spec.id))
+}
+
 /// Downloads the model's files, verifying each. Files finished by an earlier,
-/// interrupted attempt are kept.
+/// interrupted attempt are kept, and the file it was downloading carries on
+/// from the bytes it had (`net::download_resumable`): each is checked whole
+/// before it's renamed into the staging folder, and from then on trusted by
+/// its size.
 pub fn install(
+    models_root: &Path,
+    spec: &ModelSpec,
+    cancel: &AtomicBool,
+    on_progress: impl FnMut(Progress),
+) -> Result<PathBuf> {
+    install_from(&base_url(), models_root, spec, cancel, on_progress)
+}
+
+/// `install`, from the server at `base`.
+fn install_from(
+    base: &str,
     models_root: &Path,
     spec: &ModelSpec,
     cancel: &AtomicBool,
@@ -137,11 +156,10 @@ pub fn install(
     if is_installed(&dest, spec) {
         return Ok(dest);
     }
-    let staging = models_root.join(format!(".{}.partial", spec.id));
+    let staging = staging_dir(models_root, spec);
     fs::create_dir_all(&staging)?;
 
     let total = spec.total_bytes();
-    let base = base_url();
     let mut done = 0;
     let parts = spec.files.len();
     for (i, file) in spec.files.iter().enumerate() {
@@ -151,7 +169,7 @@ pub fn install(
         if !fs::metadata(&path).is_ok_and(|m| m.len() == size) {
             let url = format!("{}/{}/{}", base.trim_end_matches('/'), spec.id, file.name);
             let step = format!("Downloading {} · {}", spec.name, file.name);
-            net::download_verified(&url, &path, Some(size), file.sha256, cancel, |n| {
+            net::download_resumable(&url, &path, size, file.sha256, cancel, |n| {
                 on_progress(Progress::file(&step, n, Some(size)).within(done, Some(total), part, parts))
             })
             .with_context(|| format!("download {}", file.name))?;
@@ -164,6 +182,17 @@ pub fn install(
     let _ = fs::remove_dir_all(&dest);
     fs::rename(&staging, &dest)?;
     Ok(dest)
+}
+
+/// Deletes what an install of `spec` had downloaded so far (Cancel's).
+pub fn discard(models_root: &Path, spec: &ModelSpec) -> std::io::Result<()> {
+    crate::remove_folder(&staging_dir(models_root, spec))
+}
+
+/// Removes `spec`'s files, installed or on their way (`discard`).
+pub fn uninstall(models_root: &Path, spec: &ModelSpec) -> std::io::Result<()> {
+    discard(models_root, spec)?;
+    crate::remove_folder(&model_dir(models_root, spec))
 }
 
 /// Deletes model dirs that aren't in `keep`, such as the sherpa-onnx int8

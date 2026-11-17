@@ -605,8 +605,8 @@ fn undo_on_an_edits_clip_bar_goes_by_the_same_steps() {
 struct NoQueue;
 
 impl BarQueue for NoQueue {
-    fn remade(&self, _: i64) {}
-    fn added(&self, _: i64) {}
+    fn remade(&self, _: &Db, _: i64) {}
+    fn added(&self, _: &Db, _: i64) {}
     fn remove(&self, db: &Db, id: i64) -> Result<()> {
         db.delete_clip(id)
     }

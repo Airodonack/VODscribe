@@ -1630,3 +1630,88 @@ mod each_released_library_opens_with_every_row_it_kept {
         );
     }
 }
+
+/// The columns of each table at format `version` (`at_version`), by table.
+fn schema_at(version: usize) -> Vec<(String, Vec<String>)> {
+    let (_dir, path) = library("schema");
+    let conn = at_version(&path, version);
+    let mut stmt = conn
+        .prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .unwrap();
+    let tables: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().map(|t| t.unwrap()).collect();
+    tables
+        .into_iter()
+        .map(|table| {
+            let mut stmt = conn.prepare("SELECT name FROM pragma_table_info(?1)").unwrap();
+            let columns = stmt.query_map([&table], |r| r.get(0)).unwrap().map(|c| c.unwrap()).collect();
+            (table, columns)
+        })
+        .collect()
+}
+
+/// V47 only adds the table of when work was asked for (db.rs `MIGRATE_V47`:
+/// "Filled by nothing … An older version never reads it"): every table
+/// before it is as it was, so 0.7.3, which reads and writes the library's
+/// tables by their columns' names, loses nothing on a library this version
+/// opened.
+#[test]
+fn v47_adds_the_asked_table_and_changes_no_other() {
+    let before = schema_at(46);
+    let mut after = schema_at(47);
+    let asked = after.iter().position(|(t, _)| t == "asked").expect("no asked table");
+    assert_eq!(after.remove(asked).1, ["queue", "job", "at"]);
+    assert_eq!(after, before);
+}
+
+/// A library from before V47 has its work as it was and no places yet:
+/// the first start gives each unfinished job one in the order it always
+/// had (db.rs `MIGRATE_V47`; stretches.rs `requeue_interrupted`).
+#[test]
+fn a_library_from_before_v47_keeps_its_work_and_gets_places_at_the_start() {
+    let (_dir, path) = library("v47");
+    let (requests, shown) = {
+        let db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("a")).unwrap().0.id;
+        let requests: Vec<i64> =
+            [0.0, 100.0, 200.0].iter().map(|&at| db.request(vod, at, Some(at + 50.0)).unwrap().id).collect();
+        (requests, serde_json::to_value(db.vods().unwrap()).unwrap())
+    };
+    back_to(&path, 46);
+    let db = upgraded(&path);
+    assert_eq!(serde_json::to_value(db.vods().unwrap()).unwrap(), shown, "its VODs read otherwise");
+    assert!(db.asked(crate::asked::Queue::Transcribe).unwrap().is_empty(), "places from before");
+    db.requeue_interrupted().unwrap();
+    assert_eq!(db.asked(crate::asked::Queue::Transcribe).unwrap(), requests, "in the order they always had");
+}
+
+/// 0.7.3 on a library this version has opened, then this version again
+/// (asked.rs: "A row left over, or one missing (a job an older version
+/// asked), costs order at most, never work."): 0.7.3 carries on with a newer format (db.rs `open_inner`)
+/// and never reads the table, so what it asks has no place, and what it
+/// ends keeps one. Back on this version V47 doesn't run again; what 0.7.3
+/// asked comes after what has a place, and the places of what it ended go.
+#[test]
+fn a_library_back_and_forth_with_0_7_3_loses_no_work() {
+    use crate::asked::Queue;
+    let (_dir, path) = library("v47-and-back");
+    let (vod, first, second) = {
+        let db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("a")).unwrap().0.id;
+        let first = db.request(vod, 0.0, Some(50.0)).unwrap().id;
+        let second = db.request(vod, 100.0, Some(150.0)).unwrap().id;
+        (vod, first, second)
+    };
+    // 0.7.3, as it writes the library: a request ended, another asked.
+    let older = Connection::open(&path).unwrap();
+    older.execute("DELETE FROM stretches WHERE id = ?1", [first]).unwrap();
+    older
+        .execute("INSERT INTO stretches (vod_id, start, end, status) VALUES (?1, 300.0, 350.0, 'queued')", [vod])
+        .unwrap();
+    let third = older.last_insert_rowid();
+    drop(older);
+    let db = upgraded(&path);
+    let requests: Vec<i64> = db.requests(vod).unwrap().iter().map(|s| s.id).collect();
+    assert_eq!(requests, [second, third], "work lost");
+    db.requeue_interrupted().unwrap();
+    assert_eq!(db.asked(Queue::Transcribe).unwrap(), [second, third], "0.7.3's after; the ended one's place gone");
+}

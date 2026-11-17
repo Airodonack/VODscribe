@@ -54,7 +54,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `player-open.mjs`: a file opens on its picture before Play.
 - `player-picture.mjs`: what the app's own player shows, seen on the screen and clicked with the OS's mouse.
 - `player-seek.mjs`: a far seek while playing lands and stays.
-- `quit-mid-job.mjs`: quitting mid-transcription leaves nothing running, and it carries on at the next start.
+- `quit-mid-job.mjs`: quitting mid-transcription leaves nothing running, and it carries on at the next start, before one asked after it.
 - `readd-erasing.mjs`: a VOD removed and added again while it's being erased.
 - `readd-stuck.mjs`: a VOD removed and added again while its work won't stop.
 - `recovery.mjs`: a library that won't open starts the recovery screen.

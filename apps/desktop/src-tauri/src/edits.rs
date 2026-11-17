@@ -69,7 +69,7 @@ pub(crate) fn remake_snippet(app: &AppHandle, db: &Db, id: i64) {
     if db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok() {
         emit(app, db, id);
         // Once: changes made one after another remake it once, not once each.
-        state.clips.queue_once(id);
+        state.clips.queue_once(db, id);
     }
 }
 
@@ -448,8 +448,9 @@ pub(crate) async fn put_in_edit(
         Ok(())
     })?;
     let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
     for id in made {
-        state.clips.queue(id);
+        state.clips.queue(&db, id);
     }
     Ok(view)
 }
@@ -548,12 +549,10 @@ pub(crate) async fn render_edit_now(app: AppHandle, state: State<'_, AppState>, 
     }
     // Shown as rendering before it's queued: its render could otherwise end
     // first, and be shown as rendering after.
-    {
-        let db = state.db.lock().unwrap();
-        db.set_edit_render(id, ClipStatus::Cutting, None, None, None).map_err(err)?;
-        emit(&app, &db, id);
-    }
-    state.clips.queue_once(id);
+    let db = state.db.lock().unwrap();
+    db.set_edit_render(id, ClipStatus::Cutting, None, None, None).map_err(err)?;
+    emit(&app, &db, id);
+    state.clips.queue_once(&db, id);
     Ok(())
 }
 

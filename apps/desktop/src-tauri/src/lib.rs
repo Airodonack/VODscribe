@@ -73,7 +73,7 @@ struct AppState {
     worker: Worker,
     /// First-run setup's downloads.
     setup: setup::Install,
-    /// The GPU add-on's download.
+    /// The GPU add-on's download, listed with the jobs.
     gpu: setup::Install,
     media: media::MediaServer,
     chat: chats::ChatQueue,
@@ -314,7 +314,7 @@ fn manage_library(app: &AppHandle, paths: Paths, db: Db) -> anyhow::Result<std::
         searches,
         worker,
         setup: setup::Install::new(),
-        gpu: setup::Install::new(),
+        gpu: setup::Install::listed(),
         media,
         chat,
         clips: clips::Cutter::new(),
@@ -365,6 +365,8 @@ fn start_queues(app: &AppHandle, sections: &[(i64, f64, f64)]) {
     started("erasing removed VODs", state.sweeper.run(app.clone()));
     started("video downloads", state.videos.run(app.clone()));
     started("footage downloads", state.footage.run(app.clone(), sections.to_vec()));
+    // The GPU add-on's download, if a quit stopped it.
+    setup::resume_addon(app);
     // Beside its queue: the storyboards missing, of files changed since, or unfinished.
     started("the thumbnails shown when scrubbing", state.storyboards.run(app.clone()));
     // Files received whole from a drop, not yet added.

@@ -285,12 +285,11 @@ pub(crate) async fn player_open_edit(app: AppHandle, id: i64, at: f64, play: boo
 /// its stretches for the page. The footage missing is asked for.
 fn edit_timeline(app: &AppHandle, id: i64) -> anyhow::Result<(Timeline, Vec<PlannedStretch>)> {
     let state = app.state::<AppState>();
-    let missing = {
+    {
         let db = state.db.lock().unwrap();
         let pieces = crate::edits::pieces(app, &db, id)?;
-        crate::edits::missing(app, &db, &pieces)
-    };
-    state.footage.ask(missing);
+        state.footage.ask_for(&db, id, crate::edits::missing(app, &db, &pieces));
+    }
     clip_timeline(app, id)
 }
 

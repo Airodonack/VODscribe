@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{Manager, State};
+use vodscribe_core::asked::Queue;
 use vodscribe_core::db::{Db, Vod};
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
@@ -161,7 +162,8 @@ impl Videos {
 }
 
 /// The video downloads a quit (or a crash) stopped, carried on at the
-/// start, each at the height it was asked at (`Db::wanted_videos`): yt-dlp
+/// start in the order they were asked (`Db::in_asked_order`), each at the
+/// height it was asked at (`Db::wanted_videos`): yt-dlp
 /// carries on from the part files it left (`download`); a section of all
 /// of a VOD from a site without its own player starts again. Not one that
 /// transcribing all of it will download into the same file: the
@@ -170,10 +172,11 @@ fn left_unfinished(app: &AppHandle) -> Vec<(i64, u32)> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let Ok(wanted) = db.wanted_videos() else { return Vec::new() };
-    wanted
+    let left: Vec<(i64, u32)> = wanted
         .into_iter()
         .filter(|&(id, _)| db.vod(id).ok().flatten().is_some_and(|vod| !transcribing_all(&db, &vod).unwrap_or(true)))
-        .collect()
+        .collect();
+    db.ordered_as_asked(Queue::Video, left, |&(id, _)| id)
 }
 
 /// Downloads VOD `id`'s whole video, at most `height` tall, into
@@ -351,7 +354,12 @@ pub(crate) async fn keep_video(
         if !state.videos.0.push_new((id, height), queued) {
             return Ok(());
         }
-        db.set_video_wanted(id, Some(height)).map_err(err)?;
+        db.atomically(|db| {
+            db.set_video_wanted(id, Some(height))?;
+            db.keep_place(Queue::Video, id);
+            Ok(())
+        })
+        .map_err(err)?;
     }
     // As `download` begins: a site without its own player streams it, if it says how long it is.
     let streamed = pipeline::keeps_video(&vod.info.platform) && vod.info.duration.is_some_and(|d| d > 0.0);

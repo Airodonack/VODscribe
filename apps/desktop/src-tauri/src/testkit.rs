@@ -39,7 +39,7 @@ use tauri::Manager;
 use vodscribe_core::db::{Clip, ClipStatus, Db, Vod};
 use vodscribe_core::testkit::tools::{self as fakes, At, Fake, Run};
 use vodscribe_core::testkit::{
-    Ffmpeg, Gate, Media, Net, NvidiaSmi, TempDir, Worker, YtDlp, eventually, library, yt_dlp,
+    Addon, Ffmpeg, Gate, Media, Net, NvidiaSmi, TempDir, Worker, YtDlp, eventually, library, yt_dlp,
 };
 
 use crate::{AppHandle, AppState, CmdResult, Rt, WebviewWindow};
@@ -61,6 +61,8 @@ const EVENTS: &[&str] = &[
     "edit-removed",
     "footage",
     "footage-progress",
+    "gpu-done",
+    "gpu-progress",
     "history",
     "jobs",
     "player-time",
@@ -161,6 +163,13 @@ impl Folder {
         held().push((Held::WorkerStart, self.paths().clips(), gate.clone()));
     }
 
+    /// The next app started on it holds each erasure of a removed VOD
+    /// between its parts at `gate` (`TestApp::holds_erasures`), from its
+    /// start: the erasures left are taken up, the first held.
+    pub(crate) fn holds_erasures(&self, gate: &Gate) {
+        held().push((Held::BetweenParts, self.paths().clips(), gate.clone()));
+    }
+
     /// The next app started on it holds its storyboards' sweep
     /// (`storyboards::sweep`) at `gate` once it has read the library's
     /// VODs, before it goes through the storyboards: `TestApp::on` returns
@@ -186,6 +195,8 @@ impl Drop for TestApp {
         // end once it's closed, while the queues below are joined.
         if started {
             crate::player::close(self.handle());
+            // The GPU add-on's download ends too, its thread joined.
+            self.state().gpu.end();
         }
         self.ffmpeg.end();
         self.yt_dlp.end();
@@ -305,7 +316,7 @@ impl TestApp {
             for vod in db.vods().iter().flatten().filter(|v| v.info.platform != vodscribe_core::local::PLATFORM) {
                 yt_dlp.serves(details(vod));
             }
-            setup(&Fakes { ffmpeg: &ffmpeg });
+            setup(&Fakes { ffmpeg: &ffmpeg, yt_dlp: &yt_dlp, net: &net });
             chats = Some(crate::open_library(app.handle(), paths.clone(), db).unwrap());
             // The storyboards' sweep, which runs beside the start, has asked
             // for what's left, unless the test holds it (`Folder::holds_sweeps`).
@@ -515,6 +526,18 @@ impl TestApp {
     /// hearing nothing till told.
     pub(crate) fn worker(&self) -> &Worker {
         self.worker.get_or_init(|| fake_worker(&self.paths()))
+    }
+
+    /// The GPU add-on's pack for this library, faked (`Addon`), for the
+    /// test to serve (`Addon::served_by(&app.net)`), and the GPU speech
+    /// model it downloads after it installed, so an install of the add-on
+    /// is the pack's. Held by the test across the app's starts on the same
+    /// folder: a start that carries the install on is given it to serve
+    /// before it does (`on_with`, `addon.served_by(fakes.net)`).
+    pub(crate) fn addon(&self) -> Addon {
+        let addon = Addon::at(&self.paths.gpu_pack());
+        install_model(&self.paths.gpu_model_dir(), &vodscribe_core::model::GPU_MODEL);
+        addon
     }
 
     /// The computer has no yt-dlp: neither the app's own (the fake's file
@@ -852,6 +875,8 @@ pub(crate) type Giving = dragndrop_target::fake::Giving;
 /// The fakes a test tells what to do before a start runs (`TestApp::on_with`).
 pub(crate) struct Fakes<'a> {
     pub(crate) ffmpeg: &'a Ffmpeg,
+    pub(crate) yt_dlp: &'a YtDlp,
+    pub(crate) net: &'a Net,
 }
 
 /// How a test's app ends: the folder it works in, and the code it ended
@@ -866,6 +891,12 @@ struct Ending {
 /// run beside it (`tools::stop_tracked_in`).
 pub(crate) fn stop_tracked(app: &AppHandle) {
     fakes::stop_tracked_in(&app.state::<Ending>().root);
+    // The GPU add-on's download runs on a thread of the app's own, which
+    // the process's end would end: stopped here, the library's writes
+    // stopped already, as they are when the process ends.
+    if let Some(state) = app.try_state::<AppState>() {
+        state.gpu.end();
+    }
 }
 
 /// The test's app ends itself with `code` (`lib.rs`'s `exit`), as the real
@@ -960,31 +991,39 @@ fn fake_worker(paths: &vodscribe_core::Paths) -> Worker {
         let exe = std::env::current_exe().unwrap();
         fakes::fake(exe.with_file_name(format!("vodscribe-worker{}", std::env::consts::EXE_SUFFIX)), relay)
     });
-    install_model(&paths.model_dir());
+    install_model(&paths.model_dir(), &vodscribe_core::model::CPU_MODEL);
     let worker = Worker::at(paths.root.with_file_name("worker").join("vodscribe-worker"));
     routes().push((paths.model_dir(), worker.path().to_path_buf()));
     worker
 }
 
-/// The model the CPU worker reads, as installed (`model::is_installed`
-/// goes by each file's size): its files hard links to one set of empty
-/// files that size, made once in the system's temporary folder.
-fn install_model(dir: &Path) {
-    use vodscribe_core::model::{CPU_MODEL, is_installed};
-    static FILES: OnceLock<PathBuf> = OnceLock::new();
-    if is_installed(dir, &CPU_MODEL) {
+/// Model `spec` (the CPU worker's, the GPU add-on's) at `dir`, as
+/// installed (`model::is_installed` goes by each file's size): its files
+/// hard links to one set of empty files that size, made once for each
+/// model in the system's temporary folder.
+fn install_model(dir: &Path, spec: &'static vodscribe_core::model::ModelSpec) {
+    static FILES: Mutex<Vec<(&'static str, PathBuf)>> = Mutex::new(Vec::new());
+    if vodscribe_core::model::is_installed(dir, spec) {
         return;
     }
-    let files = FILES.get_or_init(|| {
-        let files = std::env::temp_dir().join(format!("vodscribe-test-model-{}", std::process::id()));
-        std::fs::create_dir_all(&files).unwrap();
-        for file in CPU_MODEL.files {
-            std::fs::File::create(files.join(file.name)).unwrap().set_len(file.size).unwrap();
+    let files = {
+        let mut made = FILES.lock().unwrap_or_else(|e| e.into_inner());
+        match made.iter().find(|(id, _)| *id == spec.id) {
+            Some((_, files)) => files.clone(),
+            None => {
+                let files =
+                    std::env::temp_dir().join(format!("vodscribe-test-model-{}-{}", spec.id, std::process::id()));
+                std::fs::create_dir_all(&files).unwrap();
+                for file in spec.files {
+                    std::fs::File::create(files.join(file.name)).unwrap().set_len(file.size).unwrap();
+                }
+                made.push((spec.id, files.clone()));
+                files
+            }
         }
-        files
-    });
+    };
     std::fs::create_dir_all(dir).unwrap();
-    for file in CPU_MODEL.files {
+    for file in spec.files {
         std::fs::hard_link(files.join(file.name), dir.join(file.name)).unwrap();
     }
 }

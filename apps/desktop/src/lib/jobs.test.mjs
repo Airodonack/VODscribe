@@ -3,8 +3,9 @@
 // CHANGELOG.md, 0.7.1: "A list shows what's being made." ("the clips and
 // edits being made, how far the current one is, and the VODs being erased
 // after you removed them") and "Waiting clips and edits can be reordered.",
-// and jobs.ts's doc comments. The list's own contents are desktop
-// job_list/tests.rs's.
+// 0.7.4: "The GPU add-on carries on after a restart. It shows in the jobs
+// list with Cancel.", and jobs.ts's doc comments. The list's own contents
+// are desktop job_list/tests.rs's.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inOrder, jobLine, summary, waitingIds, waitingJobs } from "./jobs.ts";
@@ -62,6 +63,15 @@ test("the line names clips, then edits, then erasures, then files received, apar
   );
 });
 
+/** jobs.ts `summary`: "then the GPU add-on ("... · Downloading the GPU add-on")". */
+test("the line names the GPU add-on being downloaded, last", () => {
+  assert.equal(summary([job("addon", 0, true)]), "Downloading the GPU add-on");
+  assert.equal(
+    summary([job("addon", 0, true), job("receive", 1, true), job("clip", 1, true)]),
+    "Making 1 clip · Receiving 1 file · Downloading the GPU add-on",
+  );
+});
+
 /** jobs.ts `jobLine`: "A job's line under its name: what it's doing and how far, or that it waits". */
 test("a job waiting says it waits, whatever it is", () => {
   for (const kind of /** @type {const} */ (["clip", "edit", "erase"])) assert.equal(jobLine(job(kind, 1)), "Waiting");
@@ -84,6 +94,12 @@ test("a job being made says how far it is in whole percent", () => {
   assert.equal(jobLine(job("erase", 5, true, 0.3)), "Erasing · 30%");
   assert.equal(jobLine(job("receive", 1, true, 0.5)), "Receiving · 50%");
   assert.equal(jobLine(job("clip", 1, true, 0)), "Making the clip · 0%", "begun and said it's at the start");
+});
+
+/** jobs.ts `jobLine`: "what it's doing and how far"; 0.7.4: "It shows in the jobs list". */
+test("the GPU add-on says it's downloading and how far", () => {
+  assert.equal(jobLine(job("addon", 0, true)), "Downloading…");
+  assert.equal(jobLine(job("addon", 0, true, 0.424)), "Downloading · 42%");
 });
 
 /** jobs.ts `waitingJobs`: "The clips and edits waiting, in their order: the ones that can be dragged". */

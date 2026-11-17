@@ -9,6 +9,8 @@ One module per subject.
 - `db.rs`: the library, one SQLite file with full-text indexes over transcripts and chat.
 - [`db`](db): its tests, the migrations' among them.
 - `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
+- `asked.rs`: the order work was asked in, so the queues carry on in it after a quit.
+- [`asked`](asked): its tests.
 - `transcript.rs`: words and lines as the model gives them.
 - [`transcript`](transcript): its tests, and the search index's tokenizer as a table.
 - `fetch.rs`: a VOD's details and audio through yt-dlp.
@@ -25,6 +27,7 @@ One module per subject.
 - `audio.rs`: decodes any media to 16 kHz mono with ffmpeg.
 - `asr.rs`: runs the speech model through sherpa-onnx.
 - `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
+- [`model`](model): its tests.
 - `gpu.rs`: the optional NVIDIA GPU add-on.
 - [`gpu`](gpu): its tests.
 - `deps.rs`: the pinned ffmpeg and Deno downloads.
@@ -32,7 +35,8 @@ One module per subject.
 - `tools.rs`: finds and updates yt-dlp and ffmpeg, asks ffmpeg which encoders it has, and starts programs.
 - [`tools`](tools): its tests.
 - `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
-- `net.rs`: downloads, with stall and cancel handling.
+- `net.rs`: downloads, with stall and cancel handling, carried on from the bytes they had.
+- [`net`](net): its tests of downloads carried on.
 - `query.rs`: the search box's language, parsed.
 - [`query`](query): its tests.
 - `search.rs`: a query run against what was said and what chat wrote.

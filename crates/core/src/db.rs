@@ -860,6 +860,17 @@ ALTER TABLE vods ADD COLUMN video_height INTEGER;";
 /// to be dropped after 0.8.0.
 const MIGRATE_V46: &str = "-- struck_to_splits";
 
+/// Version 47: when each job was asked for (`asked.rs`), so the queues
+/// carry on after a quit in the order they were asked: one counter across
+/// every queue, so jobs of two queues compare too. Filled by nothing: a
+/// start writes a place for each unfinished job that has none, after those
+/// that have one, in the order it always had (`Db::in_asked_order`), which
+/// is also how jobs an older version asked come back. An older version
+/// never reads it.
+const MIGRATE_V47: &str = "
+CREATE TABLE asked (queue TEXT NOT NULL, job INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (queue, job));
+CREATE INDEX asked_order ON asked (queue, at);";
+
 /// Version 39: no path to a file of the library's own is read from the
 /// library; each is built from its kind and its row's id (`Paths`), and the
 /// row keeps what can't be derived: the extension, which says too that the
@@ -1241,6 +1252,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     MIGRATE_V44,
     MIGRATE_V45,
     MIGRATE_V46,
+    MIGRATE_V47,
 ];
 
 /// How many copies of the library from before upgrades are kept.

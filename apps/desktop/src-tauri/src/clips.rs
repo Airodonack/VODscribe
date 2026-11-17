@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
+use vodscribe_core::asked::Queue;
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::{ClipEncoding, ClipQuality, Settings};
 use vodscribe_core::{clips, tools};
@@ -121,19 +122,21 @@ impl Cutter {
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
-    /// clips left unfinished when the app last stopped, then the edits left
-    /// rendering.
+    /// clips left unfinished when the app last stopped and the edits left
+    /// rendering, in the order they were asked (`Db::in_asked_order`: those
+    /// with no place, the clips then the edits, after).
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let removing = self.removing.clone();
         let canceled = self.canceled.clone();
         let copies = self.copies.clone();
         let news = app.clone();
         self.jobs.watch(move || crate::job_list::changed(&news));
-        let (unfinished, renders) = {
+        let unfinished = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
             tidy_at_start(&state.paths, &db)?;
-            (db.unfinished_clips()?, db.unfinished_renders()?)
+            let left: Vec<i64> = db.unfinished_clips()?.iter().map(|c| c.id).chain(db.unfinished_renders()?).collect();
+            db.ordered_as_asked(Queue::Render, left, |&id| id)
         };
         {
             // Pictures of clips no longer there (deleted with their VOD).
@@ -177,14 +180,19 @@ impl Cutter {
                 }
             },
         )?;
-        for id in unfinished.iter().map(|c| c.id).chain(renders) {
-            self.queue(id);
+        // In their places already.
+        for id in unfinished {
+            self.jobs.push(id);
         }
         Ok(())
     }
 
-    pub(crate) fn queue(&self, id: i64) {
+    /// Queues clip (or edit) `id` last, its place kept in `db` (`Db::keep_place`)
+    /// for a start after a quit; with the library held, as its state was
+    /// just written.
+    pub(crate) fn queue(&self, db: &Db, id: i64) {
         self.jobs.push(id);
+        db.keep_place(Queue::Render, id);
     }
 
     /// Whether no picture is being made again, or waits to be (`picture_again`).
@@ -210,26 +218,34 @@ impl Cutter {
     /// only to be dragged out of the window, first, ahead of those waiting,
     /// in their order, since the drag waits for their files (the one being
     /// made goes on: one encode at a time).
-    pub(crate) fn queue_made(&self, ids: &[i64], shown: bool) {
+    pub(crate) fn queue_made(&self, db: &Db, ids: &[i64], shown: bool) {
         if shown {
             for &id in ids {
-                self.queue(id);
+                self.queue(db, id);
             }
         } else {
             for &id in ids.iter().rev() {
-                self.queue_first(id);
+                self.queue_first(db, id);
             }
         }
     }
 
-    /// Queues clip `id` first, or moves it there if it's waiting.
-    pub(crate) fn queue_first(&self, id: i64) {
+    /// Queues clip `id` first, or moves it there if it's waiting: first in
+    /// `db` too.
+    pub(crate) fn queue_first(&self, db: &Db, id: i64) {
         self.jobs.push_front(id, |&j| j == id);
+        // Moved or added (not the one running, which it leaves).
+        if self.jobs.is_waiting(|&j| j == id) {
+            db.keep_place_first(Queue::Render, id);
+        }
     }
 
-    /// Queues clip `id` unless it's waiting already; once is enough.
-    pub(crate) fn queue_once(&self, id: i64) {
-        self.jobs.push_once(id, |&j| j == id);
+    /// Queues clip `id` unless it's waiting already; once is enough, and
+    /// it keeps its place.
+    pub(crate) fn queue_once(&self, db: &Db, id: i64) {
+        if self.jobs.push_once(id, |&j| j == id) {
+            db.keep_place(Queue::Render, id);
+        }
     }
 
     /// Whether clip `id` is waiting its turn.
@@ -261,8 +277,10 @@ impl Cutter {
     pub(crate) fn vod_removed(&self, db: &Db, vod_id: i64) {
         self.removing.lock().unwrap().remove(&vod_id);
         for clip in db.clips(vod_id).into_iter().flatten() {
-            if matches!(clip.status, ClipStatus::Waiting | ClipStatus::Cutting) {
-                self.jobs.push_new(clip.id, |&j| j == clip.id);
+            if matches!(clip.status, ClipStatus::Waiting | ClipStatus::Cutting)
+                && self.jobs.push_new(clip.id, |&j| j == clip.id)
+            {
+                db.keep_place(Queue::Render, clip.id);
             }
         }
     }
@@ -290,9 +308,22 @@ impl Cutter {
         }
     }
 
-    /// Puts the clips and edits waiting in the order of `ids` (dragged in the list of jobs).
+    /// Puts the clips and edits waiting in the order of `ids` (dragged in
+    /// the list of jobs), at once and in the order the drags came; the
+    /// library is told after (`keep_order`).
     pub(crate) fn reorder(&self, ids: &[i64]) {
         self.jobs.reorder(ids, |&j| j);
+    }
+
+    /// Keeps the order of the clips and edits waiting in `db`, as the queue
+    /// has it now (`Db::reorder_asked`), for a start after a quit: read
+    /// under the library's lock, so of two drags' writes, the last to have
+    /// it writes the queue as it is after both.
+    pub(crate) fn keep_order(&self, db: &Db) {
+        let (_, waiting) = self.jobs.snapshot();
+        if let Err(e) = db.reorder_asked(Queue::Render, &waiting) {
+            eprintln!("the clips' order, kept for the next start: {e:#}");
+        }
     }
 
     /// The clip or edit being made, if one is, and those waiting, in order.
@@ -619,7 +650,7 @@ pub(crate) fn status_once_made(app: &AppHandle, db: &Db, id: i64, made_of: &str)
     if db.made_of_now(id)? == made_of {
         return Ok(ClipStatus::Ready);
     }
-    app.state::<AppState>().clips.queue_once(id);
+    app.state::<AppState>().clips.queue_once(db, id);
     Ok(ClipStatus::Waiting)
 }
 
@@ -815,14 +846,11 @@ pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f6
 fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
     let now = Settings::load(&state.paths.settings()).clip_encoding();
-    let (made, queued) = {
-        let db = state.db.lock().unwrap();
-        let doc = Doc::Edit(edit_id);
-        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown, now).map_err(err)?;
-        history::changed(app, &db, doc);
-        made
-    };
-    state.clips.queue_made(&queued, shown);
+    let db = state.db.lock().unwrap();
+    let doc = Doc::Edit(edit_id);
+    let (made, queued) = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown, now).map_err(err)?;
+    history::changed(app, &db, doc);
+    state.clips.queue_made(&db, &queued, shown);
     Ok(made)
 }
 
@@ -1043,8 +1071,7 @@ fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool
     let now = Settings::load(&state.paths.settings()).clip_encoding();
     let db = state.db.lock().unwrap();
     let (made, queued) = make_clips_in(&db, &state.history, vod_id, ranges, shown, now, same).map_err(err)?;
-    drop(db);
-    state.clips.queue_made(&queued, shown);
+    state.clips.queue_made(&db, &queued, shown);
     Ok(made)
 }
 
@@ -1106,7 +1133,7 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
     // Made once, at its new range: one waiting keeps its place, and isn't
     // listed with the jobs as still waiting once made.
     state.clips.stop(id);
-    state.clips.queue_once(id);
+    state.clips.queue_once(&state.db.lock().unwrap(), id);
     Ok(clip)
 }
 
@@ -1642,10 +1669,13 @@ pub(crate) async fn drag_clip(
         }
     }
     // Those still to make go next, in their order: the drag waits for them.
-    let cutter = &app.state::<AppState>().clips;
-    for &id in ids.iter().rev() {
-        if cutter.is_waiting(id) {
-            cutter.queue_first(id);
+    let state = app.state::<AppState>();
+    {
+        let db = state.db.lock().unwrap();
+        for &id in ids.iter().rev() {
+            if state.clips.is_waiting(id) {
+                state.clips.queue_first(&db, id);
+            }
         }
     }
     // The picture the interface drew (the frame over its waveform), if it's a

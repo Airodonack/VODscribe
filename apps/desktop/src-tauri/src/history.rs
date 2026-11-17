@@ -274,9 +274,9 @@ impl Stacks {
 /// its `AppHandle`): a trait so the library's half can be checked alone.
 pub(crate) trait BarQueue {
     /// Clip `id` was made of what it was: its file is made again.
-    fn remade(&self, id: i64);
+    fn remade(&self, db: &Db, id: i64);
     /// Clip `id` was made anew: its file is made.
-    fn added(&self, id: i64);
+    fn added(&self, db: &Db, id: i64);
     /// Clip `id` is taken off, its file too unless it was dragged out.
     fn remove(&self, db: &Db, id: i64) -> Result<()>;
     /// The clip a cut holds off `doc`'s bar that is clip `id` made of
@@ -288,14 +288,14 @@ pub(crate) trait BarQueue {
 }
 
 impl BarQueue for AppHandle {
-    fn remade(&self, id: i64) {
+    fn remade(&self, db: &Db, id: i64) {
         let state = self.state::<AppState>();
         state.clips.stop(id);
-        state.clips.queue_once(id);
+        state.clips.queue_once(db, id);
     }
 
-    fn added(&self, id: i64) {
-        self.state::<AppState>().clips.queue(id);
+    fn added(&self, db: &Db, id: i64) {
+        self.state::<AppState>().clips.queue(db, id);
     }
 
     /// A cut redone holds its clip again rather than deleting it
@@ -468,13 +468,13 @@ fn restore_bar<M: Made>(
         match step {
             BarStep::Remake(id, want) => {
                 remake(db, id, want)?;
-                queue.remade(id);
+                queue.remade(db, id);
             }
             BarStep::Rename(id, title) => db.rename_clip(id, title)?,
             BarStep::Remove(id) => queue.remove(db, id)?,
             BarStep::Add(want) => {
                 if let Some(id) = add(db, want)? {
-                    queue.added(id);
+                    queue.added(db, id);
                 }
             }
         }

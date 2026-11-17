@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use tauri::Manager;
+use vodscribe_core::asked::Queue;
 use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
@@ -41,6 +42,9 @@ pub(crate) type Ask = (i64, f64, f64);
 pub(crate) struct Footage {
     /// Stretches to fetch.
     waiting: Mutex<VecDeque<Ask>>,
+    /// The edits each stretch waiting or being fetched was asked for, whose
+    /// places (`Db::keep_place`) a failed fetch takes away.
+    askers: Mutex<Vec<(Ask, i64)>>,
     wake: Condvar,
     /// Held while a section downloads, so the queue and a render don't fetch the same one.
     fetching: Mutex<()>,
@@ -236,7 +240,9 @@ impl Footage {
         let thread = std::thread::Builder::new().name("footage".into()).spawn(move || {
             let state = app.state::<AppState>();
             tidy(&app, false);
-            state.footage.ask(left_unfinished(&app, &left));
+            for (edit, stretches) in left_unfinished(&app, &left) {
+                state.footage.ask(stretches, edit);
+            }
             // And now and then, so what's unused goes though nothing more is fetched.
             let every = app.clone();
             let tidying = std::thread::Builder::new().name("footage-tidy".into()).spawn(move || {
@@ -275,12 +281,23 @@ impl Footage {
                 };
                 let result = ensure(&app, vod_id, start, end, &stop, &|_| {});
                 *state.footage.current.lock().unwrap() = None;
+                let askers = state.footage.askers_of((vod_id, start, end));
                 // What's done with goes, after each.
                 tidy(&app, false);
                 // Stopped (the VOD removed) is no failure.
                 let error = result.err().filter(|e| !vodscribe_core::is_canceled(e));
                 if let Some(e) = &error {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
+                    // Not asked again at each start, for good: it waits for
+                    // its edit to ask (opened again), as a failed video
+                    // download waits for "Keep video". A quit's stop isn't
+                    // a failure.
+                    let db = state.db.lock().unwrap();
+                    if !db.writes_stopped() {
+                        for edit in askers {
+                            let _ = db.forget_asked(Queue::Footage, edit);
+                        }
+                    }
                 }
                 crate::page::emit(&app, "footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
             }
@@ -321,6 +338,7 @@ impl Footage {
     /// waiting, and the download under way.
     pub(crate) fn stop_vod(&self, vod_id: i64) {
         self.waiting.lock().unwrap().retain(|&(v, _, _)| v != vod_id);
+        self.askers.lock().unwrap().retain(|&((v, _, _), _)| v != vod_id);
         if let Some(((v, _, _), stop)) = &*self.current.lock().unwrap()
             && *v == vod_id
         {
@@ -328,15 +346,45 @@ impl Footage {
         }
     }
 
-    /// Fetches the footage of each stretch (VOD, start, end), after what's asked already.
-    pub(crate) fn ask(&self, stretches: impl IntoIterator<Item = (i64, f64, f64)>) {
+    /// Fetches the footage of each stretch (VOD, start, end) edit `edit`
+    /// lacks, after what's asked already; whether any wasn't asked already.
+    fn ask(&self, stretches: Vec<Ask>, edit: i64) -> bool {
         let mut waiting = self.waiting.lock().unwrap();
-        for (vod, start, end) in stretches {
-            if !waiting.contains(&(vod, start, end)) {
-                waiting.push_back((vod, start, end));
+        let mut askers = self.askers.lock().unwrap();
+        let mut added = false;
+        for ask in stretches {
+            if !askers.contains(&(ask, edit)) {
+                askers.push((ask, edit));
+            }
+            if !waiting.contains(&ask) {
+                waiting.push_back(ask);
+                added = true;
             }
         }
         self.wake.notify_one();
+        added
+    }
+
+    /// The edits stretch `ask` was asked for, no longer waiting: its fetch
+    /// is over.
+    fn askers_of(&self, ask: Ask) -> Vec<i64> {
+        let waiting = self.waiting.lock().unwrap();
+        let mut askers = self.askers.lock().unwrap();
+        if waiting.contains(&ask) {
+            return Vec::new();
+        }
+        let (theirs, others) = askers.drain(..).partition(|(a, _)| *a == ask);
+        *askers = others;
+        theirs.into_iter().map(|(_, edit)| edit).collect::<Vec<_>>()
+    }
+
+    /// Fetches the footage of each of `stretches` that edit `edit` lacks,
+    /// after what's asked already: the edit's place kept in `db` for a start
+    /// after a quit (`Db::keep_place`), unless it's all asked already.
+    pub(crate) fn ask_for(&self, db: &Db, edit: i64, stretches: Vec<Ask>) {
+        if self.ask(stretches, edit) {
+            db.keep_place(Queue::Footage, edit);
+        }
     }
 }
 
@@ -519,29 +567,35 @@ pub(crate) fn ensure_as(
     result
 }
 
-/// What the queue was fetching when the app last stopped: the footage
-/// missing of each edit with a piece in a section that was downloading
-/// (`left`), as opening the edit asks for it (`player::edit_timeline`).
-/// Clips, renders, transcriptions and videos fetch their own as their
-/// queues take them up again.
-fn left_unfinished(app: &AppHandle, left: &[Ask]) -> Vec<Ask> {
-    if left.is_empty() {
-        return Vec::new();
-    }
+/// What the queue was fetching or had waiting when the app last stopped:
+/// the footage each listed edit it was asked for lacks still, by edit, in
+/// the order the edits asked (`Db::ordered_as_asked`), as opening the edit asks for it
+/// (`player::edit_timeline`); and, after, the footage lacking of each edit
+/// with a piece in a section that was downloading (`left`), which a
+/// version before the asked order left. Clips, renders, transcriptions and
+/// videos fetch their own as their queues take them up again.
+fn left_unfinished(app: &AppHandle, left: &[Ask]) -> Vec<(i64, Vec<Ask>)> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let Ok(edits) = db.edits(crate::edits::made_now(app)) else { return Vec::new() };
-    let mut asks = Vec::new();
+    let asked = db.asked(Queue::Footage).unwrap_or_default();
+    let mut lacking: Vec<(i64, Vec<Ask>)> = Vec::new();
     for edit in edits {
+        if !asked.contains(&edit.id) && left.is_empty() {
+            continue;
+        }
         let Ok(pieces) = crate::edits::pieces(app, &db, edit.id) else { continue };
         let in_left = |p: &vodscribe_core::edits::EditPiece| {
             left.iter().any(|&(vod, from, to)| vod == p.vod_id && p.start < to && p.end > from)
         };
-        if pieces.iter().any(in_left) {
-            asks.extend(crate::edits::missing(app, &db, &pieces));
+        if asked.contains(&edit.id) || pieces.iter().any(in_left) {
+            let missing = crate::edits::missing(app, &db, &pieces);
+            if !missing.is_empty() {
+                lacking.push((edit.id, missing));
+            }
         }
     }
-    asks
+    db.ordered_as_asked(Queue::Footage, lacking, |(edit, _)| *edit)
 }
 
 /// Deletes section `path`, no longer needed (its VOD's video is kept now).

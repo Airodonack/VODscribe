@@ -492,7 +492,7 @@ fn a_make_the_library_did_not_record_goes() {
     // (its file, the next unrecorded make, is the same path) ...
     next.reached();
     // ... before the command's queue.
-    app.state().clips.queue_once(clip.id);
+    app.state().clips.queue_once(&app.db(), clip.id);
     app.invoke("delete_clip", json!({ "id": clip.id })).unwrap();
     next.open();
     eventually("the clips' queue idle", || {

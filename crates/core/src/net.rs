@@ -249,17 +249,71 @@ fn is_public(ip: std::net::IpAddr) -> bool {
 /// known. Reads fail when `cancel` is set (within `CANCEL_POLL`) or when no
 /// data arrives for `STALL_TIMEOUT`, rather than blocking on a dead connection.
 pub fn get<'a>(url: &str, cancel: &'a AtomicBool) -> Result<(impl Read + 'a, Option<u64>)> {
+    let body = get_from(url, 0, cancel)?;
+    Ok((body.reader, body.len))
+}
+
+/// A body as `get_from` opens it.
+pub struct Body<'a> {
+    reader: GuardedReader<'a>,
+    /// Its length, if known: from `from` on, if `ranged`.
+    pub len: Option<u64>,
+    /// The server sent part of the file (206): else the whole file, from
+    /// its start.
+    pub ranged: bool,
+    /// Where that part starts in the file, as its `Content-Range` says.
+    pub start: Option<u64>,
+}
+
+/// Where a `Content-Range` (`bytes <first>-<last>/<size>`) starts.
+pub(crate) fn range_start(content_range: &str) -> Option<u64> {
+    content_range.trim().strip_prefix("bytes ")?.split('-').next()?.trim().parse().ok()
+}
+
+impl Read for Body<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+/// `get`, asking for the file from byte `from` on (`Range: bytes=<from>-`)
+/// when it isn't 0. A server that honours it answers with the rest
+/// (`Body::ranged`); one that doesn't, with all of it.
+pub fn get_from<'a>(url: &str, from: u64, cancel: &'a AtomicBool) -> Result<Body<'a>> {
+    let range = (from > 0).then(|| format!("bytes={from}-"));
     // A test's recorded answer (`testkit::net`), read as a body is.
     #[cfg(any(test, feature = "testkit"))]
-    if let Some(answer) = crate::testkit::net::answer(url) {
-        let body = answer.with_context(|| format!("GET {}", redact(url)))?;
-        let len = Some(body.len() as u64);
-        let (tx, rx) = mpsc::sync_channel::<io::Result<Vec<u8>>>(2);
-        let _ = tx.send(Ok(body));
-        let _ = tx.send(Ok(Vec::new()));
-        return Ok((GuardedReader { rx, pending: Vec::new(), offset: 0, eof: false, cancel }, len));
+    {
+        let headers: Vec<(String, String)> = range.iter().map(|r| ("Range".to_string(), r.clone())).collect();
+        if let Some(answer) = crate::testkit::net::answer(url, &headers) {
+            let answer = answer.with_context(|| format!("GET {}", redact(url)))?;
+            let (len, ranged, start) = (Some(answer.body.len() as u64), answer.status == 206, answer.start);
+            let (tx, rx) = mpsc::sync_channel::<io::Result<Vec<u8>>>(2);
+            // Held partway (`Net::holds_partway`), the rest comes once its
+            // gate opens; from a thread of its own, as a slow site's would.
+            std::thread::spawn(move || {
+                let mut body = answer.body;
+                if let Some((at, gate)) = answer.hold {
+                    let rest = body.split_off(at.min(body.len()));
+                    if tx.send(Ok(body)).is_err() {
+                        return;
+                    }
+                    gate.wait();
+                    body = rest;
+                }
+                let _ = tx.send(Ok(body)).and_then(|()| tx.send(Ok(Vec::new())));
+            });
+            let reader = GuardedReader { rx, pending: Vec::new(), offset: 0, eof: false, cancel };
+            return Ok(Body { reader, len, ranged, start });
+        }
     }
-    let resp = agent().get(url).call().with_context(|| format!("GET {}", redact(url)))?;
+    let mut request = agent().get(url);
+    if let Some(range) = &range {
+        request = request.header("Range", range);
+    }
+    let resp = request.call().with_context(|| format!("GET {}", redact(url)))?;
+    let ranged = resp.status().as_u16() == 206;
+    let start = resp.headers().get("content-range").and_then(|v| v.to_str().ok()).and_then(range_start);
     let len = resp.body().content_length();
     let mut body = resp.into_body().into_reader();
 
@@ -283,7 +337,8 @@ pub fn get<'a>(url: &str, cancel: &'a AtomicBool) -> Result<(impl Read + 'a, Opt
             }
         }
     });
-    Ok((GuardedReader { rx, pending: Vec::new(), offset: 0, eof: false, cancel }, len))
+    let reader = GuardedReader { rx, pending: Vec::new(), offset: 0, eof: false, cancel };
+    Ok(Body { reader, len, ranged, start })
 }
 
 struct GuardedReader<'a> {
@@ -352,6 +407,38 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Reads `body` into `out`, hashing each byte into `hasher`, after the
+/// `len` bytes there are already, and at most `limit` more (None: to its
+/// end); `on_progress` hears the bytes in all after each read. Returns
+/// that count; on a failed read, what came is in `out` already.
+fn copy_hashed(
+    body: impl Read,
+    out: &mut impl Write,
+    hasher: &mut Sha256,
+    mut len: u64,
+    limit: Option<u64>,
+    cancel: &AtomicBool,
+    on_progress: &mut impl FnMut(u64),
+) -> io::Result<u64> {
+    let mut reader = ProgressReader::new(body.take(limit.unwrap_or(u64::MAX)), cancel, |_| {});
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => return Ok(len),
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                out.flush()?;
+                return Err(e);
+            }
+        };
+        hasher.update(&buf[..n]);
+        out.write_all(&buf[..n])?;
+        len += n as u64;
+        on_progress(len);
+    }
+}
+
 /// Downloads `url` to `dest`, checking it against a pinned SHA-256 (and size,
 /// when known). Nothing appears at `dest` unless it matches. `on_progress`
 /// receives bytes so far.
@@ -361,35 +448,20 @@ pub fn download_verified(
     size: Option<u64>,
     sha256: &str,
     cancel: &AtomicBool,
-    on_progress: impl FnMut(u64),
+    mut on_progress: impl FnMut(u64),
 ) -> Result<()> {
     let part = dest.with_extension("part");
     let result = (|| -> Result<()> {
         let (body, _) = get(url, cancel)?;
-        let mut reader = ProgressReader::new(body, cancel, on_progress);
         let mut out = File::create(&part)?;
         let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 1 << 16];
-        let mut len = 0u64;
-        loop {
-            let n = match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e.into()),
-            };
-            hasher.update(&buf[..n]);
-            out.write_all(&buf[..n])?;
-            len += n as u64;
-            if size.is_some_and(|size| len > size) {
-                break;
-            }
-        }
+        // One byte past the size, to tell a longer file.
+        let len = copy_hashed(body, &mut out, &mut hasher, 0, size.map(|s| s + 1), cancel, &mut on_progress)?;
         out.flush()?;
         let hash = hex(&hasher.finalize());
         if size.is_some_and(|size| len != size) || hash != sha256 {
             eprintln!("{}: got {len} bytes, sha256 {hash}", redact(url));
-            bail!("A download was damaged or changed on the way, so VODscribe threw it away. Try again.");
+            return Err(Damaged.into());
         }
         Ok(())
     })();
@@ -404,6 +476,155 @@ pub fn download_verified(
         }
     }
 }
+
+/// A download that arrived whole but didn't match its pinned size and
+/// SHA-256.
+#[derive(Debug)]
+struct Damaged;
+
+impl std::fmt::Display for Damaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("A download was damaged or changed on the way, so VODscribe threw it away. Try again.")
+    }
+}
+
+impl std::error::Error for Damaged {}
+
+/// Where `download_resumable` keeps what it has of `dest`: beside it, its
+/// whole name and `.part`.
+pub fn part_of(dest: &Path) -> std::path::PathBuf {
+    let mut part = dest.as_os_str().to_owned();
+    part.push(".part");
+    part.into()
+}
+
+/// Whether `path` is a plain file of its own: not a link (to a file
+/// elsewhere), which a download would write through.
+fn plain_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+}
+
+/// The part file at `part`, for reading what it has and writing on: made
+/// if it isn't there; anything there that isn't a plain file of its own (a
+/// link) taken away first, never written through.
+fn open_part(part: &Path) -> io::Result<File> {
+    if fs::symlink_metadata(part).is_ok() && !plain_file(part) {
+        fs::remove_file(part)?;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    // And one made there meanwhile isn't followed either.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
+    options.open(part)
+}
+
+/// `download_verified`, carrying on from what an earlier try left
+/// (`part_of(dest)`: a quit, a crash, the network gone): the bytes there are
+/// hashed, the rest asked for from where they end (`get_from`), and hashed
+/// as they come. A 206 whose `Content-Range` doesn't start there isn't
+/// used: the whole file is asked for again. Reads stop at the file's size.
+/// Its size and SHA-256 are checked over the whole file before it's renamed
+/// to `dest`, so nothing at `dest` was ever unchecked. A `dest` already
+/// there is checked again the same way, as if it were the part. A server
+/// that sends the whole file again has it written from the start. A body
+/// that ends before the file does keeps what came, for the next try to
+/// carry on from; the file whole and not matching (junk a power cut left,
+/// say) is deleted and downloaded once more from nothing, and then it
+/// fails. Stopped or failed on the way, what it has stays, for the next
+/// try. `on_progress` receives the bytes of the file it has so far.
+pub fn download_resumable(
+    url: &str,
+    dest: &Path,
+    size: u64,
+    sha256: &str,
+    cancel: &AtomicBool,
+    mut on_progress: impl FnMut(u64),
+) -> Result<()> {
+    let part = part_of(dest);
+    if plain_file(dest) {
+        fs::rename(dest, &part)?;
+    }
+    let had = fs::symlink_metadata(&part).map_or(0, |m| m.len());
+    let mut result = resume(url, &part, size, sha256, cancel, &mut on_progress);
+    if had > 0 && result.as_ref().is_err_and(|e| e.is::<Damaged>()) {
+        let _ = fs::remove_file(&part);
+        result = resume(url, &part, size, sha256, cancel, &mut on_progress);
+    }
+    match result {
+        Ok(()) => Ok(fs::rename(&part, dest)?),
+        Err(e) if e.is::<Damaged>() => {
+            let _ = fs::remove_file(&part);
+            Err(e)
+        }
+        Err(_) if cancel.load(Ordering::Relaxed) => Err(crate::Canceled.into()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Whether `e` is the server refusing the range asked (416).
+fn range_refused(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| matches!(c.downcast_ref(), Some(ureq::Error::StatusCode(416))))
+}
+
+/// One try of `download_resumable`: what `part` has, then the rest.
+fn resume(
+    url: &str,
+    part: &Path,
+    size: u64,
+    sha256: &str,
+    cancel: &AtomicBool,
+    on_progress: &mut impl FnMut(u64),
+) -> Result<()> {
+    let mut out = open_part(part)?;
+    // No more than the file's size: a longer one is junk, started over.
+    if out.metadata()?.len() > size {
+        out.set_len(0)?;
+    }
+    let mut hasher = Sha256::new();
+    let mut len = copy_hashed(&mut out, &mut io::sink(), &mut hasher, 0, None, cancel, &mut |_| {})?;
+    // What it had, if anything: nothing to tell before the first byte.
+    if len > 0 {
+        on_progress(len);
+    }
+    if len < size {
+        let mut body = match get_from(url, len, cancel) {
+            // The file there is shorter than what it has: what it has isn't of it.
+            Err(e) if len > 0 && range_refused(&e) => return Err(Damaged.into()),
+            body => body?,
+        };
+        let rest = body.ranged && body.start == Some(len);
+        if len > 0 && !rest {
+            // The whole file, written from its start: as sent, or asked
+            // for again in place of a part that isn't the rest.
+            if body.ranged {
+                drop(body);
+                body = get_from(url, 0, cancel)?;
+            }
+            out.set_len(0)?;
+            hasher = Sha256::new();
+            len = 0;
+        }
+        if body.ranged && body.start.is_some_and(|start| start != len) {
+            return Err(Damaged.into());
+        }
+        io::Seek::seek(&mut out, io::SeekFrom::Start(len))?;
+        len = copy_hashed(body, &mut out, &mut hasher, len, Some(size - len), cancel, on_progress)?;
+        out.flush()?;
+        if len < size {
+            bail!("A download ended before it was whole. Try again: it carries on from where it stopped.");
+        }
+    }
+    let hash = hex(&hasher.finalize());
+    if hash != sha256 {
+        eprintln!("{}: got {len} bytes, sha256 {hash}", redact(url));
+        return Err(Damaged.into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod resume;
 
 #[cfg(test)]
 mod tests {
