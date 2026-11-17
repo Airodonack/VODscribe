@@ -11,6 +11,7 @@ mod adding;
 mod list;
 mod reading;
 mod removing;
+mod sharing_the_video;
 mod transcribing;
 
 /// The app with the transcription worker it runs faked and its model

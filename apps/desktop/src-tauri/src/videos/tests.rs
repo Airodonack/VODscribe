@@ -198,36 +198,39 @@ fn keep_video_on_a_vod_whose_video_is_kept_downloads_nothing_again() {
 }
 
 /// On a site without its own player, "Keep video" (and Play, which asks for
-/// it) is refused while transcribing all of the VOD downloads its video
-/// already, though the row shows another of its requests, and isn't
-/// refused while only a stretch's sound downloads (videos.rs
-/// `downloading_to_transcribe`: "Whether VOD `vod`'s video is downloading
-/// already, into the same file: a site without its own player,
-/// transcribing all of it"; "Only a request for all of it downloads the
-/// video (a stretch, its sound alone), whichever of its requests the row
-/// shows"). Moved up from videos.rs's
-/// `keeping_a_video_waits_only_for_a_transcription_downloading_it`. Each
-/// request is put at its stage in one go, so the transcription's queue
-/// never sees it waiting.
+/// it) isn't refused while transcribing all of the VOD downloads its video:
+/// it's told to play once that's in, and then has the video kept; nor while
+/// only a stretch's sound downloads, which streams as ever (videos.rs
+/// `keep_video`: "Unless transcribing all of it has the file: then it
+/// waits for that (`try_turn`), and plays once it's in"; CHANGELOG.md,
+/// 0.7.4 Fixes: "Play and transcription share one download."). Was
+/// `keep_video_is_refused_only_while_transcribing_all_of_it_downloads_the_video`,
+/// before 0.7.4's sharing (vods/tests/sharing_the_video.rs has the rest).
 #[test]
-fn keep_video_is_refused_only_while_transcribing_all_of_it_downloads_the_video() {
+fn keep_video_while_transcribing_all_of_it_downloads_the_video_waits_for_that() {
     let app = TestApp::new();
-    let whole = a_rumble_vod(&app, "r1");
     let part = a_rumble_vod(&app, "r2");
     app.db()
         .atomically(|db| {
-            let stretch = db.request(whole.id, 100.0, Some(130.0))?.id;
-            db.set_stretch_status(stretch, Status::Transcribing, 0.1, None)?;
-            let all = db.request(whole.id, 0.0, None)?.id;
-            db.set_stretch_status(all, Status::Downloading, 0.1, None)?;
+            // At its stage in one go, so the transcription's queue never sees it waiting.
             let stretch = db.request(part.id, 100.0, Some(130.0))?.id;
             db.set_stretch_status(stretch, Status::Downloading, 0.1, None)
         })
         .unwrap();
-    assert_eq!(keep(&app, whole.id), Err(json!("Its video is already downloading, to transcribe it.")));
-    assert_eq!(progress_of(&app, whole.id), Vec::<Value>::new());
     assert_eq!(keep(&app, part.id), Ok(Value::Null), "refused while a stretch's sound alone downloads");
+    assert_eq!(progress_of(&app, part.id)[0]["streamed"], true);
     kept(&app, part.id);
+    let whole = a_rumble_vod(&app, "r1");
+    let begun = Gate::new();
+    app.yt_dlp.holds(&begun);
+    app.invoke("transcribe_stretch", json!({ "vodId": whole.id, "start": 0.0, "end": null })).unwrap();
+    begun.reached();
+    assert_eq!(keep(&app, whole.id), Ok(Value::Null));
+    let told = progress_of(&app, whole.id);
+    assert_eq!((told[0]["progress"].as_f64(), told[0]["streamed"].as_bool()), (Some(0.0), Some(false)), "{told:?}");
+    begun.open();
+    kept(&app, whole.id);
+    assert_eq!(over(&app, whole.id)["error"], Value::Null);
 }
 
 /// A VOD from a site without its own player, which says how long it is,

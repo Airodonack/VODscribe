@@ -238,6 +238,9 @@ impl Drop for TestApp {
         state.storyboards.close();
         state.footage.close();
         state.worker.close();
+        // The process-wide turns at its kept videos' files: an app started
+        // on this folder again, as after a quit, starts with none.
+        crate::videos::forget_turns(&self.paths());
         // Last: the queues above tell it of their changes.
         state.job_list.close();
         // With every thread that reads the state joined, nothing holds a
@@ -425,6 +428,14 @@ impl TestApp {
     /// on meanwhile (`clock`) to have the wait run out.
     pub(crate) fn holds_work_waits(&self, gate: &Gate) {
         self.holds(Held::WorkWaits, gate);
+    }
+
+    /// Each queue from now (Play's downloads, or transcription's) that passes
+    /// over a download of a VOD's kept video, the other writing that file
+    /// (videos.rs `try_turn`), waits at `gate` with the queue let go of,
+    /// once each time it looks again, before it waits for more to do.
+    pub(crate) fn holds_video_waits(&self, gate: &Gate) {
+        self.holds(Held::VideoWaits, gate);
     }
 
     /// VOD `vod_id` has work running that doesn't stop when told, till
@@ -1080,6 +1091,9 @@ enum Held {
     /// A wait for a VOD's work to stop, the work still running
     /// (`TestApp::holds_work_waits`).
     WorkWaits,
+    /// A queue passing over a download of a VOD's kept video, the other
+    /// writing it (`TestApp::holds_video_waits`).
+    VideoWaits,
     /// Work that doesn't stop when told (`TestApp::busy_till`): never waited
     /// at, only opened as the app ends.
     Busy,
@@ -1136,6 +1150,13 @@ pub(crate) fn in_a_part(app: &AppHandle) {
 /// there if its test holds those waits (`TestApp::holds_work_waits`).
 pub(crate) fn work_waits(app: &AppHandle) {
     hold(Held::WorkWaits, &app.state::<AppState>().paths.clips());
+}
+
+/// A queue has passed over a download of a VOD's kept video, the other
+/// writing it: it waits there if its test holds those
+/// (`TestApp::holds_video_waits`).
+pub(crate) fn video_waits(app: &AppHandle) {
+    hold(Held::VideoWaits, &app.state::<AppState>().paths.clips());
 }
 
 /// An edit's plan is worked out: it waits there if its test holds plans

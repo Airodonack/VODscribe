@@ -5,4 +5,5 @@
 - `tests/list.rs`: listing and ordering VODs.
 - `tests/removing.rs`: removing VODs, which ends their transcription and chat download, erasing them, and deleting their videos.
 - `tests/transcribing.rs`: asking for a VOD's transcription.
+- `tests/sharing_the_video.rs`: Play and transcribing all of a VOD from a site without its own player, which download the same file, one waiting for the other.
 - `tests/reading.rs`: reading a VOD's transcript and captions, the names `from:` suggests, showing and opening its file, and playing a Twitch clip or a Kick VOD.

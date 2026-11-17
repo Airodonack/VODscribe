@@ -542,6 +542,39 @@ fn a_vod_whose_video_was_deleted_downloads_it_again_when_played_where_its_site_h
     assert!(near(video_of(&app, vod.id).duration, 60.0));
 }
 
+/// The same while its download, the video recorded, is still ending (the
+/// page told it's over, the queue not yet done with it): played again, it
+/// downloads again, a new download, not the one ending (videos.rs `record`:
+/// "Recorded, the download is only ending: Play asked for again, once
+/// Delete video has forgotten it, is a new download";
+/// vods.rs `delete_video`: "elsewhere is downloaded again when played").
+#[test]
+fn a_vod_whose_video_was_deleted_as_its_download_ended_downloads_it_again_when_played() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tauri::Listener;
+    let app = TestApp::new();
+    let vod = app.add_site_vod("rumble", "v1", "A talk", 60.0);
+    let gate = Gate::new();
+    {
+        let (held, first, id) = (gate.clone(), AtomicBool::new(true), vod.id);
+        // Its "over", sent on the queue's thread as the job ends.
+        app.handle().listen_any("video-progress", move |e| {
+            let v: Value = serde_json::from_str(e.payload()).unwrap_or(Value::Null);
+            if v["id"] == id && v["progress"].is_null() && first.swap(false, Ordering::SeqCst) {
+                held.wait();
+            }
+        });
+    }
+    keep_video(&app, vod.id);
+    gate.reached();
+    app.invoke("delete_video", json!({ "id": vod.id })).unwrap();
+    assert!(!app.db().vod(vod.id).unwrap().unwrap().media);
+    app.invoke("keep_video", json!({ "id": vod.id })).unwrap();
+    gate.open();
+    eventually("its video kept again", || app.db().vod(vod.id).unwrap().is_some_and(|v| v.media));
+    assert!(near(video_of(&app, vod.id).duration, 60.0));
+}
+
 /// A removed VOD's history goes with it: undo in its view finds nothing to
 /// put back (vods.rs `delete_vod`'s `history.forget`; history.rs
 /// `forget`: "Forgets `doc`'s history (it's deleted)"; history.rs, its module doc:

@@ -7,10 +7,13 @@
 //! in a format that plays here; "Delete video" removes it.
 //!
 //! One download at a time, in a queue of its own, beside transcription's.
+//! Transcribing all of a VOD from a site without its own player downloads
+//! the same file: whichever of the two would start second waits in its
+//! queue till the other is done (`try_turn`), as others go ahead of it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -68,6 +71,11 @@ impl Videos {
         self.0.close();
     }
 
+    /// Has the queue look again for a job that can begin (`Jobs::wake`).
+    fn wake(&self) {
+        self.0.wake();
+    }
+
     /// Held while a VOD's video files are deleted, and by a download as it
     /// begins and as it records its file, so neither happens in the middle of
     /// the other: a delete never takes a download's files, nor leaves a
@@ -80,9 +88,37 @@ impl Videos {
     /// the downloads the app was making when it last stopped (`left_unfinished`).
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let unfinished = left_unfinished(&app);
-        self.0.run("videos", move |(id, height), stop| {
+        // A download begins with its turn at its VOD's kept video file; one
+        // whose turn a transcription has waits in its place, the next going
+        // ahead (`Jobs::run_when`), and begins once that's done (`Turn`'s drop).
+        let (taker, teller) = (app.clone(), app.clone());
+        let newly_passed: Arc<Mutex<Vec<i64>>> = Arc::default();
+        let passed = newly_passed.clone();
+        let take = move |(id, _): &(i64, u32)| match try_turn(&taker, *id, Writer::Play) {
+            Ok(turn) => Some(turn),
+            Err(newly) => {
+                if newly {
+                    passed.lock().unwrap().push(*id);
+                }
+                None
+            }
+        };
+        // Each passed over is shown downloading, to play once it's in.
+        let told = move || {
+            for id in std::mem::take(&mut *newly_passed.lock().unwrap()) {
+                waiting_progress(&teller, id, 0.0);
+            }
+            #[cfg(test)]
+            crate::testkit::video_waits(&teller);
+        };
+        self.0.run_when("videos", take, told, move |(id, height), turn: Turn, stop| {
             let state = app.state::<AppState>();
+            // Its turn held till what it downloaded is dealt with.
+            turn.begin();
             let result = download(&app, id, height, stop);
+            // Over, whatever came of it: Play asked for again from here (the
+            // page is told it's over below) is a new download (`record`).
+            stop.store(true, Ordering::Relaxed);
             let error = match result {
                 Ok(()) => None,
                 // Stopped: what was downloaded goes, rather than lie unseen in the kept videos.
@@ -112,6 +148,7 @@ impl Videos {
                     let _ = db.set_video_wanted(id, None);
                 }
             }
+            drop(turn);
             // Done (the VOD now says it has its video), stopped or failed.
             // The VOD first: told the download's over while the VOD doesn't
             // say it has its video yet, the page of one from a site without a
@@ -155,6 +192,7 @@ impl Videos {
             self.0.take_waiting(|_| true)
         };
         for (id, _) in taken {
+            unpass(&state.paths, id);
             crate::page::emit(app, "video-progress", VideoProgress::over(id, None));
         }
         self.0.stop_running(|_| true);
@@ -185,7 +223,12 @@ fn left_unfinished(app: &AppHandle) -> Vec<(i64, u32)> {
 fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     let paths = &state.paths;
-    let Some(vod) = begin(&state.db, &state.videos, id)? else { return Ok(()) };
+    let Some(vod) = begin(&state.db, &state.videos, id)? else {
+        // Kept meanwhile, by a transcription of all of it that had the file
+        // first (`try_turn`): a player waiting for it plays it now.
+        refile_kept(app, id);
+        return Ok(());
+    };
     let bin = paths.bin();
     let yt_dlp = tools::find_yt_dlp(&bin).context(fetch::NO_YT_DLP)?;
     let ffmpeg = tools::find_ffmpeg(&bin).context(crate::worker::NO_FFMPEG)?;
@@ -308,6 +351,20 @@ fn begin(db: &Mutex<Db>, videos: &Videos, id: i64) -> Result<Option<Vod>> {
     Ok(db.lock().unwrap().vod(id)?.filter(|vod| !vod.media))
 }
 
+/// A player playing VOD `id` as its video downloads plays the video kept,
+/// if it is (`player::refile`).
+fn refile_kept(app: &AppHandle, id: i64) {
+    let state = app.state::<AppState>();
+    let kept = {
+        let db = state.db.lock().unwrap();
+        let vod = db.vod(id).ok().flatten().filter(|v| v.media);
+        vod.and_then(|v| Some((db.media_path(id).ok().flatten()?, v.info.duration?)))
+    };
+    if let Some((path, duration)) = kept {
+        crate::player::refile(app, id, Path::new(&path), duration);
+    }
+}
+
 /// Records `file`, just downloaded, as VOD `id`'s kept video.
 fn record(db: &Mutex<Db>, videos: &Videos, paths: &Paths, id: i64, file: &Path, stop: &AtomicBool) -> Result<()> {
     let _files = videos.files();
@@ -323,6 +380,11 @@ fn record(db: &Mutex<Db>, videos: &Videos, paths: &Paths, id: i64, file: &Path, 
         return Ok(());
     }
     db.set_media_path(id, Some(&file.to_string_lossy()))?;
+    // Recorded, the download is only ending: Play asked for again, once
+    // Delete video has forgotten it, is a new download (`Jobs::push_new`
+    // takes a running job stopped as ending), not this one, which wouldn't
+    // download it again. Under the library's lock, with `keep_video`'s push.
+    stop.store(true, Ordering::Relaxed);
     Ok(())
 }
 
@@ -344,9 +406,6 @@ pub(crate) async fn keep_video(
     if vod.source_path.is_some() || vod.media {
         return Ok(());
     }
-    if downloading_to_transcribe(&state.db.lock().unwrap(), &vod).map_err(err)? {
-        return Err("Its video is already downloading, to transcribe it.".into());
-    }
     let queued = |(v, _): &(i64, u32)| *v == id;
     {
         // Recorded, for a start after a quit to carry it on at this height.
@@ -361,8 +420,13 @@ pub(crate) async fn keep_video(
         })
         .map_err(err)?;
     }
-    // As `download` begins: a site without its own player streams it, if it says how long it is.
-    let streamed = pipeline::keeps_video(&vod.info.platform) && vod.info.duration.is_some_and(|d| d > 0.0);
+    // As `download` begins: a site without its own player streams it, if it
+    // says how long it is. Unless transcribing all of it has the file: then
+    // it waits for that (`try_turn`), and plays once it's in. A transcription
+    // taking the file after this look has it shown so as it's passed over.
+    let streamed = pipeline::keeps_video(&vod.info.platform)
+        && vod.info.duration.is_some_and(|d| d > 0.0)
+        && !transcribing(&state.paths, id);
     crate::page::emit(&app, "video-progress", VideoProgress { id, progress: Some(0.0), error: None, streamed });
     Ok(())
 }
@@ -378,13 +442,151 @@ fn transcribing_all(db: &Db, vod: &Vod) -> Result<bool> {
     Ok(pipeline::keeps_video(&vod.info.platform) && db.requests(vod.id)?.iter().any(downloads))
 }
 
-/// Whether VOD `vod`'s video is downloading already, into the same file: a
-/// site without its own player, transcribing all of it (`pipeline::audio_for`).
-fn downloading_to_transcribe(db: &Db, vod: &Vod) -> Result<bool> {
-    // Only a request for all of it downloads the video (a stretch, its sound
-    // alone), whichever of its requests the row shows.
-    let downloading = |s: &Stretch| s.is_whole() && s.status == vodscribe_core::db::Status::Downloading;
-    Ok(pipeline::keeps_video(&vod.info.platform) && db.requests(vod.id)?.iter().any(downloading))
+/// Who writes each VOD's kept video file (`Paths::source_video_stem`) now,
+/// by the media folder it's in (`Paths::media`): Play's download (or Keep
+/// video's), or transcribing all of a VOD from a site without its own
+/// player, which downloads the same file (`pipeline::audio_for`); and which
+/// of them were passed over for it, waiting. One for the process, since the
+/// tests open many libraries at once.
+static TURNS: Mutex<Turns> = Mutex::new(Turns { writing: Vec::new(), passed: Vec::new() });
+
+/// `TURNS`: each a media folder, a VOD, and what writes its file or waits to.
+struct Turns {
+    writing: Vec<(PathBuf, i64, Writer)>,
+    passed: Vec<(PathBuf, i64, Writer)>,
+}
+
+fn turns() -> MutexGuard<'static, Turns> {
+    TURNS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What writes a VOD's kept video file (`TURNS`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Writer {
+    Play,
+    Transcription,
+}
+
+/// A VOD's turn to write its kept video file, till it's dropped; its queues
+/// then look again for what waited for it.
+pub(crate) struct Turn {
+    app: AppHandle,
+    media: PathBuf,
+    id: i64,
+    /// It waited for the other's turn (`try_turn`).
+    after_other: bool,
+}
+
+impl Turn {
+    /// The download with this turn begins: having waited for the other,
+    /// done, it finds the video kept (`begin`, `audio_for` then use it), or
+    /// the other was stopped, failed or removed, and what it left (a failed
+    /// or paused download's part file) goes, so this one downloads the
+    /// video itself, whole, as with no other. Unless the app is quitting:
+    /// those are left for the next start, as after a crash.
+    pub(crate) fn begin(&self) {
+        if !self.after_other {
+            return;
+        }
+        let state = self.app.state::<AppState>();
+        let _files = state.videos.files();
+        let db = state.db.lock().unwrap();
+        if !db.writes_stopped() && db.media_path(self.id).ok().flatten().is_none() {
+            pipeline::remove_media(&state.paths, self.id);
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        turns().writing.retain(|(media, id, _)| !(*media == self.media && *id == self.id));
+        if let Some(state) = self.app.try_state::<AppState>() {
+            state.videos.wake();
+            state.worker.wake();
+        }
+    }
+}
+
+/// Takes VOD `id`'s turn to write its kept video file, as `who`, if the
+/// other isn't writing it. Decided for 0.7.4: whichever download of the
+/// file starts second waits for the first and uses its file. One that
+/// can't is passed over, waiting in its queue as others go ahead, and
+/// begins once the other's turn is done (`Turn`'s drop wakes both queues):
+/// `Err`, saying whether it's newly passed over.
+fn try_turn(app: &AppHandle, id: i64, who: Writer) -> std::result::Result<Turn, bool> {
+    let media = app.state::<AppState>().paths.media();
+    let mut turns = turns();
+    let here = |(m, v, w): &(PathBuf, i64, Writer)| *m == media && *v == id && *w == who;
+    if turns.writing.iter().any(|(m, v, _)| *m == media && *v == id) {
+        let newly = !turns.passed.iter().any(here);
+        if newly {
+            turns.passed.push((media.clone(), id, who));
+        }
+        return Err(newly);
+    }
+    let after_other = turns.passed.iter().any(here);
+    turns.passed.retain(|t| !here(t));
+    turns.writing.push((media.clone(), id, who));
+    Ok(Turn { app: app.clone(), media, id, after_other })
+}
+
+/// Transcribing all of VOD `id`, from a site without its own player,
+/// downloads its video into the kept video's file (`pipeline::audio_for`):
+/// its turn at that file (`try_turn`), or None while Play's download writes
+/// it. Done, the transcription takes its sound from the video kept. The turn
+/// is held till the transcription's download is dealt with (worker.rs
+/// `cancel` among it).
+pub(crate) fn turn_to_transcribe(app: &AppHandle, id: i64) -> Option<Turn> {
+    try_turn(app, id, Writer::Transcription).ok()
+}
+
+/// Whether `who` writes VOD `id`'s kept video file, in the library at `paths`.
+fn writes(paths: &Paths, id: i64, who: Writer) -> bool {
+    let media = paths.media();
+    turns().writing.iter().any(|(m, v, w)| *m == media && *v == id && *w == who)
+}
+
+/// Whether Play's download (or Keep video's) is writing VOD `id`'s kept
+/// video file, in the library at `paths`: the files there are its own.
+pub(crate) fn played(paths: &Paths, id: i64) -> bool {
+    writes(paths, id, Writer::Play)
+}
+
+/// Whether transcribing all of VOD `id` is writing its kept video file, in
+/// the library at `paths`: the files there are its own.
+fn transcribing(paths: &Paths, id: i64) -> bool {
+    writes(paths, id, Writer::Transcription)
+}
+
+/// Whether Play of VOD `id` waits for transcribing all of it to download
+/// its video (`try_turn`), in the library at `paths`.
+pub(crate) fn play_waits(paths: &Paths, id: i64) -> bool {
+    let media = paths.media();
+    turns().passed.iter().any(|(m, v, w)| *m == media && *v == id && *w == Writer::Play)
+}
+
+/// Forgets the turns of the library at `paths` (`TURNS`), its queues
+/// closed: an app started on its folder again starts with none, as a new
+/// process does.
+#[cfg(test)]
+pub(crate) fn forget_turns(paths: &Paths) {
+    let media = paths.media();
+    let mut turns = turns();
+    turns.writing.retain(|(m, _, _)| *m != media);
+    turns.passed.retain(|(m, _, _)| *m != media);
+}
+
+/// Play of VOD `id` no longer waits: taken out of the queue.
+fn unpass(paths: &Paths, id: i64) {
+    let media = paths.media();
+    turns().passed.retain(|(m, v, w)| !(*m == media && *v == id && *w == Writer::Play));
+}
+
+/// Play of VOD `id`, waiting for transcribing all of it to download its
+/// video, is shown that download's `progress`, to play once it's in.
+pub(crate) fn waiting_progress(app: &AppHandle, id: i64, progress: f64) {
+    let waiting = VideoProgress { id, progress: Some(progress), error: None, streamed: false };
+    crate::page::emit(app, "video-progress", waiting);
 }
 
 /// Stops VOD `id`'s video download, discarding what's downloaded so far, or
@@ -414,7 +616,11 @@ fn stop(db: &Mutex<Db>, videos: &Videos, paths: &Paths, id: i64) -> bool {
     // video forgotten while it was queued (Delete all leaves those of a VOD
     // queued again meanwhile) or a download's parts a quit left: without a
     // video kept, they'd stay untracked.
-    if taken && db.lock().unwrap().media_path(id).ok().flatten().is_none() {
+    // Not while transcribing all of it downloads them, though: they're its.
+    if taken {
+        unpass(paths, id);
+    }
+    if taken && db.lock().unwrap().media_path(id).ok().flatten().is_none() && !transcribing(paths, id) {
         pipeline::remove_media(paths, id);
     }
     videos.0.stop_running(queued)

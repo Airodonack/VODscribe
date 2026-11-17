@@ -237,6 +237,43 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         ended: impl Fn(&J) -> T + Send + 'static,
         after_unlock: impl Fn(J, T) + Send + 'static,
     ) -> Result<()> {
+        self.run_with(name, |_| Some(()), || {}, move |job, (), stop| work(job, stop), ended, after_unlock)
+    }
+
+    /// As `run`, but a job begins only with what `take` gives it, under the
+    /// queue's lock (a VOD's turn at its file: videos.rs `try_turn`): one it
+    /// gives nothing is passed over, left waiting in its place, and the next
+    /// taken, so it holds back none of the others. When none waiting can
+    /// begin, `passed` is told, with the queue let go of, once each time the
+    /// queue looks again; `wake` has it look again.
+    pub(crate) fn run_when<G: Send + 'static>(
+        &self,
+        name: &str,
+        take: impl Fn(&J) -> Option<G> + Send + 'static,
+        passed: impl Fn() + Send + 'static,
+        work: impl Fn(J, G, &AtomicBool) + Send + 'static,
+    ) -> Result<()> {
+        self.run_with(name, take, passed, work, |_| (), |_, ()| {})
+    }
+
+    /// Has the queue's thread look again for a job that can begin (`run_when`).
+    pub(crate) fn wake(&self) {
+        let (queue, wake) = &*self.shared;
+        // Under the lock: a look under way finishes first, then hears this.
+        let _queue = queue.lock().unwrap();
+        wake.notify_all();
+    }
+
+    /// `run_ended` and `run_when` together.
+    fn run_with<G: Send + 'static, T>(
+        &self,
+        name: &str,
+        take: impl Fn(&J) -> Option<G> + Send + 'static,
+        passed: impl Fn() + Send + 'static,
+        work: impl Fn(J, G, &AtomicBool) + Send + 'static,
+        ended: impl Fn(&J) -> T + Send + 'static,
+        after_unlock: impl Fn(J, T) + Send + 'static,
+    ) -> Result<()> {
         // A second thread would run two jobs at once, and `running` holds one.
         let again = self.started.swap(true, Ordering::Relaxed);
         debug_assert!(!again, "the {name} queue's thread was started twice");
@@ -246,27 +283,37 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         let shared = self.shared.clone();
         let watcher = self.watcher.clone();
         let thread = std::thread::Builder::new().name(name.into()).spawn(move || {
-            let (queue, wake) = &*shared;
+            let (lock, wake) = &*shared;
             loop {
-                let (job, stop) = {
-                    let mut queue = queue.lock().unwrap();
-                    let job = loop {
+                let (job, given, stop) = {
+                    let mut queue = lock.lock().unwrap();
+                    let mut told = false;
+                    let (job, given) = loop {
                         if queue.closed {
                             return;
                         }
-                        if let Some(job) = queue.waiting.pop_front() {
-                            break job;
+                        let first = queue.waiting.iter().enumerate().find_map(|(at, j)| take(j).map(|g| (at, g)));
+                        if let Some((at, given)) = first {
+                            break (queue.waiting.remove(at).expect("found"), given);
+                        }
+                        if !queue.waiting.is_empty() && !told {
+                            told = true;
+                            drop(queue);
+                            passed();
+                            queue = lock.lock().unwrap();
+                            continue;
                         }
                         queue = wake.wait(queue).unwrap();
+                        told = false;
                     };
                     let stop = Arc::new(AtomicBool::new(false));
                     queue.running = Some((job.clone(), stop.clone()));
-                    (job, stop)
+                    (job, given, stop)
                 };
                 tell(&watcher);
-                work(job.clone(), &stop);
+                work(job.clone(), given, &stop);
                 let said = {
-                    let mut queue = queue.lock().unwrap();
+                    let mut queue = lock.lock().unwrap();
                     queue.running = None;
                     ended(&job)
                 };

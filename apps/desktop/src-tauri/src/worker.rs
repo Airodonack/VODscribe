@@ -100,6 +100,7 @@ impl Worker {
                     Stage::Download => tr_tx.clone(),
                     Stage::Transcribe => dl_tx.clone(),
                 },
+                turn: None,
             };
             let name = match stage {
                 Stage::Download => "download",
@@ -290,6 +291,9 @@ struct Ctx {
     paths: Paths,
     queue: Arc<Mutex<Queue>>,
     wake_other: Sender<()>,
+    /// The job's turn at its VOD's kept video file, if it downloads that
+    /// (videos.rs `turn_to_transcribe`): held till the job is finished.
+    turn: Option<crate::videos::Turn>,
 }
 
 impl Ctx {
@@ -299,36 +303,52 @@ impl Ctx {
 }
 
 fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
+    // Whether a request passed over (`Picked::passed`) was told of since the last wake.
+    let mut told = false;
     loop {
         // Pick and register the job in one step; see `Queue`.
-        let picked = {
+        let (picked, passed) = {
             let mut queue = ctx.queue.lock().unwrap();
             if queue.closed {
                 return;
             }
-            let next = if queue.held { Ok(None) } else { next_job(stage, &ctx) };
-            next.unwrap_or_else(|e| {
+            let next = if queue.held { Ok(Picked::default()) } else { next_job(stage, &ctx) };
+            let next = next.unwrap_or_else(|e| {
                 eprintln!("queue: {e:#}");
-                None
-            })
-            // The download stage marks a request Ready a moment before it lets
-            // go of it; the other stage's wake follows.
-            .filter(|(_, stretch)| queue.jobs.iter().all(|j| j.stretch_id != stretch.id))
-            .map(|(vod, stretch)| {
-                let flag = Arc::new(AtomicBool::new(false));
-                let reason = Arc::new(Mutex::new(None));
-                let job = Job { stretch_id: stretch.id, vod_id: vod.id, flag: flag.clone(), reason: reason.clone() };
-                queue.jobs.push(job);
-                (vod, stretch, flag, reason)
-            })
+                Picked::default()
+            });
+            let picked = next
+                .job
+                // The download stage marks a request Ready a moment before it lets
+                // go of it; the other stage's wake follows.
+                .filter(|(_, stretch, _)| queue.jobs.iter().all(|j| j.stretch_id != stretch.id))
+                .map(|(vod, stretch, turn)| {
+                    let flag = Arc::new(AtomicBool::new(false));
+                    let reason = Arc::new(Mutex::new(None));
+                    let job =
+                        Job { stretch_id: stretch.id, vod_id: vod.id, flag: flag.clone(), reason: reason.clone() };
+                    queue.jobs.push(job);
+                    (vod, stretch, turn, flag, reason)
+                });
+            (picked, next.passed)
         };
-        let Some((vod, stretch, flag, reason)) = picked else {
-            // Sleep until something is queued, a stage finishes, or setup completes.
+        let Some((vod, stretch, turn, flag, reason)) = picked else {
+            if passed && !told {
+                // A test holds it here once (`TestApp::holds_video_waits`).
+                told = true;
+                #[cfg(test)]
+                crate::testkit::video_waits(&ctx.app);
+                continue;
+            }
+            // Sleep until something is queued, a stage finishes, setup
+            // completes, or a turn one was passed over for is done.
             if rx.recv().is_err() {
                 return;
             }
+            told = false;
             continue;
         };
+        ctx.turn = turn;
 
         // Gone already (a VOD removed with its video and added back is
         // listed again, not gone: `Db::add_vod`), it isn't erased under it.
@@ -348,6 +368,8 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
             queue.jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
             finished
         };
+        // Its files dealt with (`cancel`): Play's download may write them now.
+        ctx.turn = None;
         if let Err(e) = finished {
             eprintln!("queue: {e:#}");
         }
@@ -356,25 +378,48 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
     }
 }
 
-fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<(Vod, Stretch)>> {
+/// What a stage's look for its next request found.
+#[derive(Default)]
+struct Picked {
+    /// The request, its VOD, and its turn at the VOD's kept video file if it
+    /// downloads that.
+    job: Option<(Vod, Stretch, Option<crate::videos::Turn>)>,
+    /// One was passed over: Play's download writes the file it would.
+    passed: bool,
+}
+
+fn next_job(stage: Stage, ctx: &Ctx) -> Result<Picked> {
     let bin = ctx.paths.bin();
     if tools::find_ffmpeg(&bin).is_none() {
-        return Ok(None);
+        return Ok(Picked::default());
     }
     // Without the video downloader, only local files can be fetched; online VODs wait.
     let has_yt_dlp = tools::find_yt_dlp(&bin).is_some();
     match stage {
         Stage::Download => {
             if ctx.db.count_stretches(Status::Ready)? >= MAX_READY {
-                return Ok(None);
+                return Ok(Picked::default());
             }
-            ctx.db.next_stretch(Status::Queued, !has_yt_dlp)
+            // All of a VOD from a site without its own player downloads its
+            // video, into the file Play's download writes: it begins with its
+            // turn at that file, and while Play's download has it, waits in
+            // its place as the next request goes ahead (videos.rs `try_turn`).
+            let (mut turn, mut passed) = (None, false);
+            let found = ctx.db.next_stretch_where(Status::Queued, !has_yt_dlp, |vod, stretch| {
+                if !(stretch.is_whole() && vod.source_path.is_none() && pipeline::keeps_video(&vod.info.platform)) {
+                    return true;
+                }
+                turn = crate::videos::turn_to_transcribe(&ctx.app, vod.id);
+                passed |= turn.is_none();
+                turn.is_some()
+            })?;
+            Ok(Picked { job: found.map(|(vod, stretch)| (vod, stretch, turn)), passed })
         }
         Stage::Transcribe => {
             if !model::is_installed(&ctx.paths.model_dir(), &model::CPU_MODEL) {
-                return Ok(None);
+                return Ok(Picked::default());
             }
-            ctx.db.next_stretch(Status::Ready, false)
+            Ok(Picked { job: ctx.db.next_stretch(Status::Ready, false)?.map(|(v, s)| (v, s, None)), passed: false })
         }
     }
 }
@@ -431,7 +476,8 @@ pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read 
 /// other request of its VOD left, the VOD's work files go too, and, if it
 /// asked for all of the VOD, so does a partly downloaded video where
 /// downloading it is part of transcribing; a video kept whole, or downloaded
-/// on request (videos.rs), stays. A stretch's own section never downloads
+/// on request (videos.rs), stays, as do the files of one downloading on
+/// request now (`videos::played`). A stretch's own section never downloads
 /// the video: a download there is "Keep video"'s, or Play's. A stretch
 /// already done isn't a request: it's left as it is.
 pub fn cancel(db: &Db, paths: &Paths, stretch_id: i64) -> Result<()> {
@@ -445,7 +491,8 @@ pub fn cancel(db: &Db, paths: &Paths, stretch_id: i64) -> Result<()> {
     }
     pipeline::remove_work_files(&paths.work(), vod_id);
     db.set_audio_path(vod_id, None)?;
-    if whole && db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform) && !v.media) {
+    let partly = db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform) && !v.media);
+    if whole && partly && !crate::videos::played(paths, vod_id) {
         pipeline::remove_media(paths, vod_id);
     }
     Ok(())
@@ -480,16 +527,25 @@ fn download(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, prog
     // A kept video (sites without embeds) in a format this computer plays, as tall as the settings allow.
     let height = Settings::load(&ctx.paths.settings()).video_height();
     let playable = vodscribe_core::playable::Playable::load(&ctx.paths.playable());
-    let found = pipeline::audio_for(
-        &mut ctx.db,
-        vod,
-        stretch,
-        &tools,
-        &ctx.paths,
-        Some((&playable, height)),
-        flag,
-        reporter(&app, vod.id, stretch.id, progress),
-    )?;
+    // Its turn at the kept video's file, if it downloads that (`next_job`).
+    if let Some(turn) = &ctx.turn {
+        turn.begin();
+    }
+    // Play of it waiting for this download shows how far it is.
+    let relays = ctx.turn.is_some();
+    let paths = ctx.paths.clone();
+    let mut last_relayed: Option<Instant> = None;
+    let mut report = reporter(&app, vod.id, stretch.id, progress);
+    let report = |status: Status, p: f64| {
+        report(status, p);
+        let due = last_relayed.is_none_or(|at| at.elapsed() >= PROGRESS_INTERVAL);
+        if relays && status == Status::Downloading && due && crate::videos::play_waits(&paths, vod.id) {
+            last_relayed = Some(Instant::now());
+            crate::videos::waiting_progress(&app, vod.id, p);
+        }
+    };
+    let found =
+        pipeline::audio_for(&mut ctx.db, vod, stretch, &tools, &ctx.paths, Some((&playable, height)), flag, report)?;
     // The waveform, read while the audio is here: a VOD from a site with its
     // own player doesn't keep it once transcribed. A section's levels go at
     // their place; whole audio just downloaded is read anew over them; a

@@ -33,7 +33,10 @@ let progress = () => {};
 /** @type {(ids: number[]) => void} */
 let listed = () => {};
 globalThis.fake = {
-  api: { videoDownloads: () => new Promise((resolve) => (listed = resolve)) },
+  api: {
+    videoDownloads: () => new Promise((resolve) => (listed = resolve)),
+    keepVideo: () => Promise.resolve(),
+  },
   events: {
     /** @param {typeof progress} cb */
     videoProgress: (cb) => ((progress = cb), Promise.resolve(() => {})),
@@ -50,4 +53,18 @@ test("a download that ended before the list of downloads answers isn't shown wai
   listed([3, 4]);
   await settle();
   assert.deepEqual([...videoDownloads.progress], [[4, 0]]);
+});
+
+// Play while transcribing all of a VOD downloads its video (src-tauri
+// videos.rs `take_turn`): Play waits for that download, said to play once
+// it's in, and ends without an error once the video is kept.
+test("play behind a transcription's download shows it downloading, then plays", async () => {
+  videoDownloads.start();
+  await videoDownloads.keep(7);
+  progress({ id: 7, progress: 0, error: null, streamed: false });
+  assert.equal(videoDownloads.progress.get(7), 0);
+  assert.ok(videoDownloads.playsOnceIn.has(7), "shown as playing only once it's in");
+  progress({ id: 7, progress: null, error: null, streamed: false });
+  assert.ok(!videoDownloads.progress.has(7) && !videoDownloads.playsOnceIn.has(7));
+  assert.ok(!videoDownloads.errors.has(7), "an error shown");
 });

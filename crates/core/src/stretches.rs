@@ -300,21 +300,34 @@ impl Db {
     /// computer only, if `local_only`. Taking a VOD out of the list ends its
     /// requests; one left on it anyway isn't taken up.
     pub fn next_stretch(&self, status: Status, local_only: bool) -> Result<Option<(Vod, Stretch)>> {
-        let id: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT s.id FROM stretches s JOIN vod_order o ON o.vod_id = s.vod_id JOIN vods v ON v.id = s.vod_id
-                 LEFT JOIN asked a ON a.queue = ?3 AND a.job = s.id
-                 WHERE s.status = ?1 AND (?2 = 0 OR v.source_path IS NOT NULL OR v.received_ext IS NOT NULL)
-                 ORDER BY a.at IS NULL, a.at, s.id LIMIT 1",
-                params![status.as_str(), local_only, Queue::Transcribe.as_str()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let Some(stretch) = id.map(|id| self.stretch(id)).transpose()?.flatten() else { return Ok(None) };
+        self.next_stretch_where(status, local_only, |_, _| true)
+    }
+
+    /// `next_stretch`, the first of them that `take` takes, in the same
+    /// order: one it passes over keeps its place for a later look.
+    pub fn next_stretch_where(
+        &self,
+        status: Status,
+        local_only: bool,
+        mut take: impl FnMut(&Vod, &Stretch) -> bool,
+    ) -> Result<Option<(Vod, Stretch)>> {
+        let mut ids = self.conn.prepare(
+            "SELECT s.id FROM stretches s JOIN vod_order o ON o.vod_id = s.vod_id JOIN vods v ON v.id = s.vod_id
+             LEFT JOIN asked a ON a.queue = ?3 AND a.job = s.id
+             WHERE s.status = ?1 AND (?2 = 0 OR v.source_path IS NOT NULL OR v.received_ext IS NOT NULL)
+             ORDER BY a.at IS NULL, a.at, s.id",
+        )?;
+        let ids =
+            ids.query_map(params![status.as_str(), local_only, Queue::Transcribe.as_str()], |r| r.get::<_, i64>(0))?;
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE id = ?1");
-        let vod = self.conn.query_row(&sql, [stretch.vod_id], |r| vod_from_row(r, &self.files))?;
-        Ok(Some((vod, stretch)))
+        for id in ids {
+            let Some(stretch) = self.stretch(id?)? else { continue };
+            let vod = self.conn.query_row(&sql, [stretch.vod_id], |r| vod_from_row(r, &self.files))?;
+            if take(&vod, &stretch) {
+                return Ok(Some((vod, stretch)));
+            }
+        }
+        Ok(None)
     }
 
     pub fn count_stretches(&self, status: Status) -> Result<usize> {

@@ -30,6 +30,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Remove says its clips are deleted. It said their files stayed in your Videos folder.
   - Removing keeps a stretch two edits share. Remove and delete the video failed, removing nothing, when two edits used the same moments of a VOD.
   - Removing during transcription deletes the video. A VOD an edit used, removed with its video while being transcribed, kept its video and files.
+  - Play and transcription share one download. On sites without their own player, the video comes down once.
+  - Play after Delete video downloads again. A video deleted and played just as its download ended never came back.
   - Added back VODs play in edits again. A VOD removed with its video while an edit used it stayed a gap there, without its chat, after it was added back.
   - Stopping a transcription no longer freezes VODscribe. It could freeze while another VOD was being removed.
 
