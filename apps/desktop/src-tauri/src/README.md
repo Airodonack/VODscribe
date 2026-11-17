@@ -44,6 +44,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `page.rs`: sends the page its events, from any thread.
 - `webview.rs`: the window's WebKitGTK view on Linux.
 - `receive.rs`: files dropped with no path, written into the library.
+- [`receive`](receive): its tests.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.
 - `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes, with fake drags out of the window and drops onto it, a PATH and a screen of the test's, started again after a quit.
 - [`testkit`](testkit): the app kit's own tests.
