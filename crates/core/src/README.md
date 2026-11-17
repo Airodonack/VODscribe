@@ -59,6 +59,7 @@ One module per subject.
 - `time.rs`: time in flicks, a whole number per frame at every common rate.
 - [`time`](time): time's tests.
 - `clipboard.rs`: what Ctrl+C copies and Ctrl+V puts back.
+- [`clipboard`](clipboard): its tests.
 - `annotations.rs`: importing a VOD's published annotations, and fetching streamer cards.
 - [`annotations`](annotations): its tests.
 - `annotations_filter.rs`: the Bloom filter of published VODs, so the host never learns the library.
