@@ -23,6 +23,8 @@ use vodscribe_core::testkit::{Gate, Reply, Request, yt_dlp};
 use super::*;
 use crate::testkit::TestApp;
 
+mod import;
+
 const HOST: &str = "https://dl.vodscribe.com";
 
 /// Where YouTube video `id`'s VODscription is published.

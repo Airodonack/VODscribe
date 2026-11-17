@@ -2,9 +2,22 @@
 
 use super::*;
 
+/// A library of its own, in memory.
+fn library() -> Db {
+    Db::open(std::path::Path::new(":memory:")).unwrap()
+}
+
+/// VOD `vod_id`'s marks as (kind, start, text, source), in time order.
+fn marks_of(db: &Db, vod_id: i64) -> Vec<(String, f64, Option<String>, String)> {
+    db.marks(vod_id).unwrap().into_iter().map(|m| (m.kind, m.start, m.text, m.detail.source)).collect()
+}
+
+/// db.rs `MIGRATE_V33` ("else an annotations file's `recorded_at` (`set_start_if_unknown`). A chat always
+/// replaces the others; the others never replace anything"); `Source::recorded_at` ("an import keeps it as
+/// the VOD's `started_at` when nothing better says").
 #[test]
 fn a_files_recorded_at_is_when_the_vod_started_only_if_nothing_better_says() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let db = library();
     let started = |id: i64| db.vod(id).unwrap().unwrap().info.started_at;
     // Nothing says: the file does.
     let (vod, _) = db.import_annotations(&file("twitch", "v123"), None).unwrap();
@@ -28,15 +41,23 @@ fn a_files_recorded_at_is_when_the_vod_started_only_if_nothing_better_says() {
     assert_eq!(odd.info.started_at, None);
 }
 
+/// CHANGELOG.md, 0.7.0: "A VOD can come with annotations." ("They bring its transcript, chapters,
+/// highlights, who's speaking, what the stream is doing, and its chat"); `annotations.rs`'s module doc
+/// ("its transcript, all of it transcribed; its chapters and highlights as marks from the import …; its
+/// cast and activity; and its chat, if given") and `import_annotations` ("adding the VOD if the library
+/// doesn't have it (from a site …). Returns the VOD, and whether it was added"). The VOD added has the
+/// file's title and channel, and the day it was published from `recorded_at` ("YYYY-MM-DD, from an ISO
+/// 8601 time").
 #[test]
 fn an_import_adds_the_vod_transcribed_with_its_marks_cast_and_chat() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let db = library();
     let chat = [message(2.0, "hi"), message(4.0, "KEKW")];
     let (vod, created) = db.import_annotations(&file("twitch", "v123"), Some(&chat)).unwrap();
     assert!(created);
     assert_eq!(vod.info.url, "https://www.twitch.tv/videos/123");
     assert_eq!(vod.info.duration, Some(60.0));
     assert_eq!(vod.info.published.as_deref(), Some("2026-10-01"));
+    assert_eq!((vod.info.title.as_str(), vod.info.channel.as_deref()), ("A stream", Some("Marlowe")));
     assert_eq!(vod.transcribed, Transcribed::All);
     assert!(!vod.outdated, "an imported transcript isn't from an older model");
     assert_eq!(vod.chat, ChatStatus::Done);
@@ -67,27 +88,47 @@ fn an_import_adds_the_vod_transcribed_with_its_marks_cast_and_chat() {
     assert_eq!(db.chat(vod.id).unwrap().len(), 2);
     let found = db.search("general", &Default::default(), 10).unwrap();
     assert_eq!(found.hits.len(), 1, "imported lines are searched");
+    // The day it was published is read only from a time written as one ("YYYY-MM-DD, from an ISO 8601 time").
+    for (id, odd) in [("pubdate0001", "sometime soon"), ("pubdate0002", "20261-0-01T18:00:00Z")] {
+        let mut dated = file("youtube", id);
+        dated.source.recorded_at = Some(odd.into());
+        assert_eq!(db.import_annotations(&dated, None).unwrap().0.info.published, None, "{odd}");
+    }
 }
 
+/// `annotations.rs`'s module doc ("its cast and activity"); `Annotations::contexts` and `CastMember`'s
+/// `streamer`, `player` and `account`, each read as `format.rs`'s specs say, kept by the import as read;
+/// `vod_annotations` gives them back, leaving out what a member hasn't.
 #[test]
-fn a_cast_members_card_and_the_vods_contexts_are_read_and_kept_through_an_import() {
+fn an_import_keeps_the_cast_and_the_contexts_as_read() {
     let mut json = serde_json::to_value(file("youtube", "abcdefghijk")).unwrap();
     json["cast"] = serde_json::json!([
-        { "name": "Marlowe", "role": "streamer", "streamer": " marlowe-01 " },
-        { "name": "Ada", "role": "friend", "streamer": "../ada" },
-        { "name": "Bo", "role": "friend", "streamer": "Bo" },
+        { "name": "Marlowe", "role": "streamer", "streamer": " marlowe-01 ", "player": " Marlowe Plays ",
+          "account": { "platform": "Twitch", "login": " marlowe_plays " } },
+        { "name": "Ada", "role": "friend", "streamer": "../ada", "account": { "platform": "youtube", "login": "@ada.makes" } },
+        { "name": "Bo", "role": "friend", "streamer": "Bo", "player": 3, "account": { "platform": "vimeo", "login": "bo" } },
         { "name": "Cy", "role": "friend", "streamer": 7 }
     ]);
     json["contexts"] = serde_json::json!(["nopixel", " nopixel", "No Pixel", 3, "gta_rp"]);
-    let annotations = from_value(json).expect("a card or context that can't be read isn't fatal");
+    let annotations = from_value(json).expect("a card, player, account or context that can't be read isn't fatal");
     let cards: Vec<_> = annotations.cast.iter().map(|m| m.streamer.as_deref()).collect();
     assert_eq!(cards, [Some("marlowe-01"), None, None, None], "trimmed; a path, a capital or a number left out");
-    assert_eq!(annotations.contexts, ["nopixel", "gta_rp"], "each once, what isn't an id left out");
 
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let db = library();
     let (vod, _) = db.import_annotations(&annotations, None).unwrap();
     let kept = db.vod_annotations(vod.id).unwrap().unwrap();
-    assert_eq!((kept.cast, kept.contexts), (annotations.cast.clone(), annotations.contexts.clone()));
+    assert_eq!(
+        (&kept.cast, &kept.contexts),
+        (&annotations.cast, &annotations.contexts),
+        "the import keeps them as read"
+    );
+    assert_eq!(kept.activity, annotations.activity);
+    assert_eq!(
+        serde_json::to_value(&kept.cast[1]).unwrap(),
+        serde_json::json!({ "name": "Ada", "aliases": [], "role": "friend",
+                            "account": { "platform": "youtube", "login": "@ada.makes" } }),
+        "and leaves out what's not there"
+    );
     // A file with none: none kept, and none said.
     let (plain, _) = db.import_annotations(&file("youtube", "bcdefghijkl"), None).unwrap();
     let kept = db.vod_annotations(plain.id).unwrap().unwrap();
@@ -114,92 +155,33 @@ fn a_streamer_card_is_there_not_there_or_fails() {
     assert!(asked.iter().all(|l| l.starts_with("GET /streamers/")), "{asked:?}");
 }
 
+/// `Annotations::povs` ("Other points of view: cast members' own VODs that ran alongside this one"), read as
+/// `format.rs`'s specs say and kept by the import; `annotations.rs`'s module doc ("Importing again replaces
+/// what the last import brought"): imported again without them, the VOD has none.
 #[test]
-fn a_cast_members_player_and_account_are_read_and_kept_through_an_import() {
-    let mut json = serde_json::to_value(file("youtube", "abcdefghijk")).unwrap();
-    json["cast"] = serde_json::json!([
-        { "name": "Marlowe", "role": "streamer", "player": " Marlowe Plays ",
-          "account": { "platform": "Twitch", "login": " marlowe_plays " } },
-        { "name": "Ada", "role": "friend", "account": { "platform": "youtube", "login": "@ada.makes" } },
-        { "name": "Bo", "role": "friend", "player": 3, "account": { "platform": "vimeo", "login": "bo" } },
-        { "name": "Cy", "role": "friend", "player": "", "account": { "platform": "kick", "login": "../cy" } },
-        { "name": "Di", "role": "friend", "account": { "platform": "kick", "login": "@di" } },
-        { "name": "Ed", "role": "friend", "account": "ed" },
-        { "name": "Fi", "role": "friend", "account": { "platform": "twitch", "login": "." } },
-        { "name": "Gu", "role": "friend", "account": { "platform": "kick", "login": ".." } },
-        { "name": "Hal", "role": "friend", "account": { "platform": "youtube", "login": "@..." } },
-        { "name": "Io", "role": "friend", "account": { "platform": "twitch", "login": "i.o" } }
-    ]);
-    let annotations = from_value(json).expect("a player or account that can't be read isn't fatal");
-    let cast = &annotations.cast;
-    assert_eq!(cast[0].player.as_deref(), Some("Marlowe Plays"), "trimmed");
-    let twitch = Account { platform: "twitch".into(), login: "marlowe_plays".into() };
-    assert_eq!(cast[0].account.as_ref(), Some(&twitch), "the platform in lower case, the login trimmed");
-    assert_eq!(cast[1].account.as_ref().map(|a| a.login.as_str()), Some("@ada.makes"), "a YouTube handle");
-    assert_eq!((cast[2].player.as_deref(), cast[2].account.as_ref()), (None, None), "an unknown platform");
-    assert_eq!((cast[3].player.as_deref(), cast[3].account.as_ref()), (None, None), "a login that's a path");
-    assert_eq!(cast[4].account, None, "an @ is YouTube's only");
-    assert_eq!(cast[5].account, None);
-    for (i, login) in [(6, "."), (7, ".."), (8, "@...")] {
-        assert_eq!(cast[i].account, None, "a login of only dots ({login}) is a path's");
-    }
-    assert_eq!(cast[9].account.as_ref().map(|a| a.login.as_str()), Some("i.o"), "a dot in a name is one");
-
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-    let (vod, _) = db.import_annotations(&annotations, None).unwrap();
-    let kept = db.vod_annotations(vod.id).unwrap().unwrap().cast;
-    assert_eq!(kept, annotations.cast, "the import keeps them as read");
-    let stored = serde_json::to_value(&kept).unwrap();
-    assert_eq!(
-        stored[1],
-        serde_json::json!({ "name": "Ada", "aliases": [], "role": "friend",
-        "account": { "platform": "youtube", "login": "@ada.makes" } }),
-        "and leaves out what's not there"
-    );
-}
-
-#[test]
-fn other_points_of_view_are_read_and_kept_through_an_import() {
-    let pov = |player: &str, platform: &str, id: &str, start: &str, duration: f64| {
-        serde_json::json!({ "player": player, "account": { "platform": "twitch", "login": "burn" },
-                            "video": { "platform": platform, "id": id }, "start": start, "duration": duration })
-    };
+fn an_import_keeps_the_other_points_of_view_and_the_next_replaces_them() {
     let mut json = serde_json::to_value(file("twitch", "v123")).unwrap();
-    assert!(from_value(json.clone()).unwrap().povs.is_empty(), "a file may leave them out");
     json["povs"] = serde_json::json!([
-        pov(" Burn ", "Twitch", " v2906773722 ", "2026-10-01T17:30:00Z", 7200.0),
-        pov("", "twitch", "v1", "2026-10-01T17:30:00Z", 60.0),
-        pov("Burn", "vimeo", "1", "2026-10-01T17:30:00Z", 60.0),
-        pov("Burn", "twitch", "../v1", "2026-10-01T17:30:00Z", 60.0),
-        pov("Burn", "twitch", "v1", "yesterday", 60.0),
-        pov("Burn", "twitch", "v1", "2026-10-01T17:30:00Z", -1.0),
-        { "player": "Burn", "account": { "platform": "vimeo", "login": "burn" },
-          "video": { "platform": "twitch", "id": "v1" }, "start": "2026-10-01T17:30:00Z", "duration": 60.0 },
+        { "player": " Burn ", "account": { "platform": "twitch", "login": "burn" },
+          "video": { "platform": "Twitch", "id": " v2906773722 " }, "start": "2026-10-01T17:30:00Z", "duration": 7200.0 },
         "Burn"
     ]);
-    let annotations = from_value(json.clone()).expect("a point of view that can't be read isn't fatal");
-    let burn = Pov {
-        player: "Burn".into(),
-        account: Account { platform: "twitch".into(), login: "burn".into() },
-        video: Video { platform: "twitch".into(), id: "v2906773722".into() },
-        start: "2026-10-01T17:30:00Z".into(),
-        duration: 7200.0,
-    };
-    assert_eq!(annotations.povs, std::slice::from_ref(&burn), "trimmed, the platform in lower case, the rest left out");
-    json["povs"] = serde_json::json!("none");
-    assert!(from_value(json).unwrap().povs.is_empty(), "a list that isn't one is none");
-
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let annotations = from_value(json).unwrap();
+    assert_eq!(annotations.povs.len(), 1);
+    let db = library();
     let (vod, _) = db.import_annotations(&annotations, None).unwrap();
-    assert_eq!(db.vod_annotations(vod.id).unwrap().unwrap().povs, [burn]);
-    // Imported again without them: none any more.
+    assert_eq!(db.vod_annotations(vod.id).unwrap().unwrap().povs, annotations.povs);
     db.import_annotations(&file("twitch", "v123"), None).unwrap();
     assert!(db.vod_annotations(vod.id).unwrap().unwrap().povs.is_empty());
 }
 
+/// CHANGELOG.md, 0.7.0: "Newer annotations keep your own changes." ("They replace what the last ones
+/// brought, but your own marks stay, and so does an imported chapter or highlight you renamed or moved");
+/// `annotations.rs`'s module doc ("Importing again replaces what the last import brought") and
+/// `import_marks`. Its transcript, cast and chat are the new file's too.
 #[test]
 fn importing_again_replaces_the_import_and_keeps_the_users_marks() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let db = library();
     let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
     assert_eq!(vod.chat, ChatStatus::Pending, "with no chat file, the site's chat is fetched as for any VOD");
     let mine = db.add_mark(vod.id, "highlight", 30.0, Some("mine")).unwrap();
@@ -233,9 +215,14 @@ fn importing_again_replaces_the_import_and_keeps_the_users_marks() {
     assert_eq!(db.chat(vod.id).unwrap().len(), 1, "the new chat in place of none");
 }
 
+/// CHANGELOG.md, 0.7.0: "Newer annotations keep your own changes." ("an imported chapter or highlight you
+/// renamed or moved, without the newer annotations adding their copy beside yours"); db.rs `MIGRATE_V35`
+/// ("kept when the user changes it, so the next import doesn't add that one again beside theirs"). Decided
+/// for 0.7.4: a re-import keeps that rule. Once the user's copy is deleted, nothing stands in for the
+/// file's, which the next import brings again.
 #[test]
 fn an_imported_mark_the_user_changed_is_not_imported_again() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let db = library();
     let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
     let find = |text: &str| db.marks(vod.id).unwrap().into_iter().find(|m| m.text.as_deref() == Some(text)).unwrap();
     // "Middle" renamed, "Big laugh" moved, then undone to the state after both (as undo does).
@@ -262,9 +249,12 @@ fn an_imported_mark_the_user_changed_is_not_imported_again() {
     assert_eq!(find("Middle").detail.source, SOURCE);
 }
 
+/// db.rs `MarkDetail::source` ("annotations" for one an import brought, "which the next import replaces"):
+/// undo puts a mark back as it was, an imported one as imported, with what the import gave it, so the next
+/// import still replaces it.
 #[test]
 fn undo_puts_imported_marks_back_as_imported() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let db = library();
     let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
     let before = db.mark_states(vod.id).unwrap();
     db.add_mark(vod.id, "cut", 3.0, None).unwrap();
@@ -276,25 +266,121 @@ fn undo_puts_imported_marks_back_as_imported() {
     assert_eq!(db.marks(vod.id).unwrap().len(), 3);
 }
 
+/// `import_annotations` ("adding the VOD if the library doesn't have it (from a site; a file on this
+/// computer is added first)"): a file's VOD on this computer the library hasn't is not added, and the
+/// import says to add it first.
 #[test]
-fn an_import_onto_a_vod_already_there_or_one_that_cannot_be_added() {
-    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+fn a_file_on_this_computer_is_added_before_its_vodscription_is_imported() {
+    let db = library();
     let err = db.import_annotations(&file("local", "/videos/a.mp4"), None).unwrap_err();
     assert_eq!(err.to_string(), "Add the video file first, then import its annotations.");
-    let err = db.import_annotations(&file("vimeo", "1"), None).unwrap_err();
-    assert!(err.to_string().contains("not one from vimeo"));
     assert!(db.vods().unwrap().is_empty(), "nothing added");
+}
 
+/// `import_annotations` ("adding the VOD if the library doesn't have it (from a site …)") and `watch_url`
+/// ("None for a platform it can't be added for that way", "a Kick link" made with its channel): a VOD of
+/// another site, or a Kick VOD whose channel the file doesn't say, isn't added, and the import says why.
+#[test]
+fn a_vodscription_adds_only_a_youtube_twitch_or_kick_vod_it_can_link_to() {
+    let db = library();
+    let err = db.import_annotations(&file("vimeo", "1"), None).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Annotations can only add a YouTube, Twitch or Kick VOD, not one from vimeo: add the VOD first."
+    );
+    let mut kick = file("kick", "01a169a1-9aa8-7653-8a9e-390e694cc11a");
+    kick.source.channel = None;
+    let err = db.import_annotations(&kick, None).unwrap_err();
+    assert_eq!(err.to_string(), "The annotations file doesn't say the Kick VOD's channel.");
+    assert!(db.vods().unwrap().is_empty(), "nothing added");
+    // Its link is the site's own, as one added by its link has.
+    kick.source.channel = Some("Marlowe".into());
+    let (vod, _) = db.import_annotations(&kick, None).unwrap();
+    assert_eq!(vod.info.url, "https://kick.com/marlowe/videos/01a169a1-9aa8-7653-8a9e-390e694cc11a");
+    let (vod, _) = db.import_annotations(&file("youtube", "noa29qsTc4g"), None).unwrap();
+    assert_eq!(vod.info.url, "https://www.youtube.com/watch?v=noa29qsTc4g");
+}
+
+/// `import_annotations` ("adding the VOD if the library doesn't have it"; "Returns the VOD, and whether it
+/// was added") and the module doc's list of what an import makes the VOD's: one the library has is that VOD,
+/// not added again, and keeps the details it has (its title among them), now transcribed whole.
+#[test]
+fn an_import_onto_a_vod_the_library_has_keeps_that_vod_and_its_details() {
+    let db = library();
+    let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+    let (imported, created) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
+    assert_eq!((imported.id, created), (vod.id, false));
+    assert_eq!(imported.info.title, "VOD abc", "the library's title stays");
+    assert_eq!(imported.transcribed, Transcribed::All);
+    assert_eq!(db.vods().unwrap().len(), 1);
+}
+
+/// Unstated: no source says an import is refused while the VOD is transcribed or waits to be (only the
+/// refusal's own words, "stop that first, then import its annotations"). Kept from before as what the app
+/// does, for the owner to decide.
+#[test]
+fn unstated_an_import_is_refused_while_the_vod_is_transcribed_or_waits_to_be() {
+    let db = library();
     let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
     db.request(vod.id, 0.0, None).unwrap();
     let err = db.import_annotations(&file("youtube", "abc"), None).unwrap_err();
     assert!(err.to_string().starts_with("That VOD is being transcribed"));
     assert!(db.marks(vod.id).unwrap().is_empty(), "nothing imported");
-    db.clear_stretches(vod.id).unwrap();
-    let (imported, created) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
-    assert_eq!((imported.id, created), (vod.id, false));
-    assert_eq!(imported.info.title, "VOD abc", "the library's title stays");
-    assert_eq!(imported.transcribed, Transcribed::All);
+}
+
+/// `annotations.rs`'s module doc ("and its chat, if given"): imported again with no chat, the VOD keeps
+/// the chat it has, and its status.
+#[test]
+fn an_import_without_a_chat_leaves_the_vods_chat_as_it_was() {
+    let db = library();
+    let (vod, _) = db.import_annotations(&file("twitch", "v123"), Some(&[message(2.0, "hi")])).unwrap();
+    db.import_annotations(&file("twitch", "v123"), None).unwrap();
+    assert_eq!(db.chat(vod.id).unwrap().len(), 1);
+    assert_eq!(db.vod(vod.id).unwrap().unwrap().chat, ChatStatus::Done);
+}
+
+/// `annotations.rs` `usable` ("A time from the file that can stand as one: finite and not before the
+/// start"): a line, chapter or highlight at a time that can't stand as one isn't imported, the rest are.
+#[test]
+fn a_line_or_mark_at_a_time_that_cannot_stand_as_one_is_left_out() {
+    let mut odd = file("twitch", "v123");
+    odd.transcript.segments[0].start = -1.0;
+    odd.transcript.segments[1].end = f64::INFINITY;
+    odd.transcript.segments.push(AnnotatedSegment {
+        start: 30.0,
+        end: 31.0,
+        text: "still here".into(),
+        words: vec![],
+        speaker: None,
+    });
+    odd.chapters[1].start = f64::NAN;
+    odd.highlights[0].start = -0.5;
+    let db = library();
+    let (vod, _) = db.import_annotations(&odd, None).unwrap();
+    let lines: Vec<_> = db.lines(vod.id).unwrap().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["still here"]);
+    assert_eq!(marks_of(&db, vod.id), [("chapter".into(), 0.0, Some("Start".into()), SOURCE.into())]);
+}
+
+/// `import_annotations` ("The replaced lines' and messages' words, out of the search indexes"), as db.rs
+/// `tidy_index` says ("which otherwise stay in the file"): imported again, the words of the lines and
+/// messages it replaced aren't left in the library's file.
+#[test]
+fn a_reimport_leaves_no_words_it_replaced_in_the_library_file() {
+    let dir = crate::TempDir::new("reimport");
+    let path = dir.join("library.sqlite");
+    let db = Db::open(&path).unwrap();
+    let mut first = file("twitch", "v123");
+    first.transcript.segments[1].text = "the zanzibarquokka spoke".into();
+    db.import_annotations(&first, Some(&[message(2.0, "a quokkazanzibar here")])).unwrap();
+    assert_eq!(db.search("zanzibarquokka", &Default::default(), 10).unwrap().hits.len(), 1);
+    db.import_annotations(&file("twitch", "v123"), Some(&[message(2.0, "hi")])).unwrap();
+    assert!(db.search("zanzibarquokka", &Default::default(), 10).unwrap().hits.is_empty());
+    drop(db);
+    let bytes =
+        [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()].concat();
+    let has = |word: &[u8]| bytes.windows(word.len()).any(|w| w == word);
+    assert!(!has(b"zanzibar") && !has(b"quokka"), "a replaced line's or message's words in the file");
 }
 
 use std::io::{Read as _, Write as _};
@@ -378,6 +464,7 @@ fn a_vod_an_import_adds_has_its_sites_shape_of_id_and_channel() {
         ("youtube", "noa29qsTc4/", "Marlowe"),
         ("twitch", "v12x", "Marlowe"),
         ("twitch", "../123", "Marlowe"),
+        ("kick", "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz", "Marlowe"),
     ];
     for (platform, id, channel) in refused {
         let mut odd = file(platform, id);
@@ -385,6 +472,12 @@ fn a_vod_an_import_adds_has_its_sites_shape_of_id_and_channel() {
         let err = db.import_annotations(&odd, None).unwrap_err().to_string();
         assert!(err.starts_with("The annotations file's VOD isn't one"), "{platform} {id} {channel}: {err}");
     }
+    // Named as the site writes its name.
+    let err = db.import_annotations(&file("kick", "../../x?"), None).unwrap_err().to_string();
+    assert_eq!(
+        err,
+        "The annotations file's VOD isn't one Kick could have: its id or channel isn't the shape of Kick's."
+    );
     assert!(db.vods().unwrap().is_empty(), "nothing added");
     for (platform, id) in [("kick", kick), ("youtube", "noa29qsTc4g"), ("twitch", "v2901646294"), ("twitch", "123")] {
         let (vod, created) = db.import_annotations(&file(platform, id), None).unwrap();
