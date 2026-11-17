@@ -352,23 +352,24 @@ fn a_chats_fetch_says_how_far_it_has_got() {
     assert!(fetched.unwrap());
     assert!(rises_to_whole(&progress), "Kick: {progress:?}");
 
-    // Stopped with the last three of four slices done, the first not begun: carried on, it's whole at the end.
+    // Stopped with the last three of four slices done, the first not begun: carried on, it's whole at the end. The
+    // first slice's first page is refused once the others are done. A stop, as quitting gives, wouldn't do: it
+    // reaches the slices only when `in_slices` next looks at it, and the first slice, let go, can finish before then.
     let (vod, history) = kick_of_own(2400.0, &all);
     let net = Net::new();
     let asked = counting(&net, &history);
     net.kick_vod(&vod);
     let first = Gate::new();
-    net.holds(&format!("{history}{}", us(FAKE_START + 600.0)), &first);
+    let first_page = format!("{history}{}", us(FAKE_START + 600.0));
+    net.holds(&first_page, &first).answers(&first_page, 403);
     let info = kick_vod(&vod, 2400.0);
     let (db, id) = library_of(&info);
-    let stop = AtomicBool::new(false);
     std::thread::scope(|s| {
-        let fetching = s.spawn(|| fetched_with_progress(&info, &db, id, &stop).0);
+        let fetching = s.spawn(|| fetched_with_progress(&info, &db, id, &AtomicBool::new(false)).0);
         first.reached();
         eventually("the other three slices' pages asked", || asked.load(Ordering::Relaxed) >= 3 * 31);
-        stop.store(true, Ordering::Relaxed);
         first.open();
-        assert!(fetching.join().unwrap().is_err_and(|e| crate::is_canceled(&e)));
+        assert!(fetching.join().unwrap().is_err_and(|e| !crate::is_canceled(&e)));
     });
     drop(net);
     let net = Net::new();
