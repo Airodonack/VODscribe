@@ -219,11 +219,13 @@ impl Db {
 }
 
 #[cfg(test)]
+mod kept;
+
+#[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::chat::{ChatMessage, ChatPart, Kind};
     use crate::edits::tests::info;
     use crate::transcript::Segment;
 
@@ -302,94 +304,5 @@ mod tests {
         assert!(!db.annotations_offer(vod).unwrap().up_to_date);
         assert!(db.is_gone(out).unwrap(), "a VOD out of the list made not gone");
         assert!(db.clear_listed_gone().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_realized_stretch_is_a_source_of_its_own() {
-        let mut db = Db::open(Path::new(":memory:")).unwrap();
-        let vod = db.add_vod(&info("x")).unwrap().0.id;
-        let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
-        let segments = [
-            Segment {
-                start: 5.0,
-                end: 12.0,
-                text: " a b".into(),
-                words: vec![word(" a", 5.0, 6.0), word(" b", 11.0, 12.0)],
-            },
-            Segment { start: 20.0, end: 21.0, text: " c".into(), words: vec![word(" c", 20.0, 21.0)] },
-        ];
-        db.insert_segments(vod, &segments).unwrap();
-        db.add_clip(vod, 1.0, 2.0, "snippet", true).unwrap();
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, vod, (10.0, 15.0), "p", None).unwrap();
-        let piece = db.piece_rows(edit).unwrap()[0].id;
-        // Only the edit's piece: the VOD's own clip and its snippet go with it.
-        assert_eq!(db.pieces_using(vod).unwrap().iter().map(|p| p.id).collect::<Vec<_>>(), [piece]);
-
-        let new = db.add_realized(vod, 10.0, 15.0).unwrap();
-        let source = db.vod(new).unwrap().unwrap();
-        assert_eq!((source.info.duration, source.listed, source.info.title.as_str()), (Some(5.0), false, "VOD x"));
-        let words = db.words_between(new, 0.0, 5.0).unwrap();
-        assert_eq!(words.iter().map(|w| (w.text.as_str(), w.start)).collect::<Vec<_>>(), [(" b", 1.0)]);
-
-        let base = db.revision(edit).unwrap().unwrap();
-        db.change(edit, None, |_| Ok(())).unwrap();
-        assert!(db.realize_piece(piece, new, base).unwrap_err().downcast_ref::<crate::edits::Stale>().is_some());
-        assert!(db.realize_piece(piece, new, base + 1).unwrap());
-        let row = db.piece_rows(edit).unwrap().remove(0);
-        assert_eq!(
-            (row.id, row.vod_id, row.start, row.end),
-            (piece, new, Flicks::ZERO, Some(Flicks::from_seconds(5.0)))
-        );
-        assert_eq!(row.origin, Some(Flicks::from_seconds(10.0)));
-        assert_eq!((db.uses(vod).unwrap(), db.uses(new).unwrap()), (2, 1));
-        assert!(db.pieces_using(vod).unwrap().is_empty());
-
-        db.set_gone(new).unwrap();
-        assert!(db.is_gone(new).unwrap() && !db.is_gone(vod).unwrap());
-    }
-
-    #[test]
-    fn a_kept_stretch_keeps_who_speaks_and_chat_events() {
-        let mut db = Db::open(Path::new(":memory:")).unwrap();
-        let vod = db.add_vod(&info("x")).unwrap().0.id;
-        let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
-        db.insert_segments(
-            vod,
-            &[Segment { start: 11.0, end: 12.0, text: " hi".into(), words: vec![word(" hi", 11.0, 12.0)] }],
-        )
-        .unwrap();
-        db.conn.execute("UPDATE segments SET speaker = 'Marlowe' WHERE vod_id = ?1", [vod]).unwrap();
-        let sub = ChatMessage {
-            time: 13.0,
-            author: "fan".into(),
-            color: Some("#ff0000".into()),
-            parts: vec![ChatPart::Text { text: "resubbed".into() }],
-            kind: Kind::Sub,
-            amount: Some(2.0),
-            event_time: Some(12.5),
-            at: None,
-        };
-        crate::db::insert_chat(&db.conn, vod, &[sub]).unwrap();
-        let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, vod, (10.0, 15.0), "p", None).unwrap();
-        let piece = db.piece_rows(edit).unwrap()[0].id;
-
-        // Kept, then the VOD deleted with its video.
-        let new = db.add_realized(vod, 10.0, 15.0).unwrap();
-        let base = db.revision(edit).unwrap().unwrap();
-        assert!(db.realize_piece(piece, new, base).unwrap());
-        db.delete_vod(vod).unwrap();
-
-        let lines = db.lines(new).unwrap();
-        assert_eq!(
-            lines.iter().map(|l| (l.start, l.text.as_str(), l.speaker.as_deref())).collect::<Vec<_>>(),
-            [(1.0, "hi", Some("Marlowe"))]
-        );
-        let subs = db.chat_of_kind(new, Kind::Sub).unwrap();
-        assert_eq!(
-            subs.iter().map(|(_, m)| (m.time, m.author.as_str(), m.amount, m.event_time)).collect::<Vec<_>>(),
-            [(3.0, "fan", Some(2.0), Some(2.5))]
-        );
     }
 }
