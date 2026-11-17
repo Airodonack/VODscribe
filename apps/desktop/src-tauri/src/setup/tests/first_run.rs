@@ -306,8 +306,11 @@ fn an_update_unlike_its_signed_checksum_keeps_the_yt_dlp_it_had() {
     let refused = ask(&app, "update_yt_dlp").unwrap_err();
     assert!(refused.as_str().is_some_and(|e| e.contains("A download was damaged or changed on the way")), "{refused}");
     assert_eq!(std::fs::read(app.yt_dlp.path()).unwrap(), b"the yt-dlp before");
+    // Anything named after yt-dlp but yt-dlp itself (yt-dlp.exe on Windows) is a download left over.
+    let program = app.yt_dlp.path().file_name().unwrap().to_owned();
     let left: Vec<_> = std::fs::read_dir(app.paths().bin()).unwrap().map(|e| e.unwrap().file_name()).collect();
-    assert!(!left.iter().any(|n| n.to_string_lossy().starts_with("yt-dlp.")), "half a download left: {left:?}");
+    let leftover = |n: &std::ffi::OsString| *n != program && n.to_string_lossy().starts_with("yt-dlp.");
+    assert!(!left.iter().any(leftover), "half a download left: {left:?}");
 }
 
 /// Setup doesn't start while yt-dlp is being updated, and says so
