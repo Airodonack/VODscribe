@@ -14,6 +14,12 @@ use vodscribe_core::footage::Source;
 use vodscribe_player::clock::Player;
 use vodscribe_player::timeline::{Sound, Stretch, Timeline};
 
+/// A site's footage played from between its first decode time and its
+/// first shown frame plays, rather than waiting there (clock.rs
+/// `Player::snap`: "a site's footage can start off the frame grid
+/// (Twitch's, where its first frame shows, 0.067 s in its millisecond
+/// times ...)"; CHANGELOG.md, 0.4.0: "YouTube's and Twitch's players keep
+/// the playhead in step").
 #[test]
 fn played_from_before_its_first_shown_frame_it_plays() {
     let dir = std::env::temp_dir().join(format!("vodscribe-shown-later-{}", std::process::id()));

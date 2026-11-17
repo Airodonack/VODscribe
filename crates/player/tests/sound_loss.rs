@@ -24,6 +24,9 @@ fn shell(command: &str) {
     assert!(status.is_ok_and(|s| s.success()), "{command} failed");
 }
 
+/// The time goes on when the sound output goes away while playing (sound.rs:
+/// "With no output to be had ... there's no sound and the player keeps
+/// time by the computer's clock").
 #[test]
 #[ignore = "takes the sound output away: run by hand"]
 fn the_time_goes_on_when_the_sound_output_goes() {

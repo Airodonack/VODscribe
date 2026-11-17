@@ -492,18 +492,31 @@ fn storyboard_maps_to_keyframes(path: &Path, want: &Want) {
     }
 }
 
+/// A screen recording, a keyframe every five seconds, opens, seeks, steps
+/// and plays out frame-exact (CHANGELOG.md, 0.4.0: "smooth, frame-exact (, and . step a frame)").
 #[test]
 fn a_long_gop_screen_recording() {
     let Some(path) = file_or_skip(Kind::LongGop) else { return };
     plays_as_it_should(&path, &Want::constant((256, 144), 60.0, 20.0, 5.0), 7.3);
 }
 
+/// The same in MPEG-TS, which ffmpeg seeks in without an index: a seek or
+/// a step shows the frame there, not the next keyframe's (CHANGELOG.md,
+/// 0.6.0 Fixes: "Seeking in .ts files shows the right frame. In an MPEG-TS
+/// video file, moving the playhead or stepping a frame showed one from up
+/// to a few seconds later, the next keyframe, and stepping there stood
+/// still on it.").
 #[test]
 fn a_long_gop_in_mpeg_ts() {
     let Some(path) = file_or_skip(Kind::LongGopTs) else { return };
     plays_as_it_should(&path, &Want::constant((256, 144), 60.0, 20.0, 5.0), 7.3);
 }
 
+/// A variable-rate MP4 plays at the rate the probe reads, its average
+/// (decode.rs `Video::from`: "ffmpeg is told that rate: left to itself it
+/// makes a variable-rate file constant at the stream's nominal rate, which
+/// can differ from the average the probe reads, and the frames would be
+/// stamped at the wrong speed").
 #[test]
 fn a_variable_rate_mp4_plays_at_its_average_rate() {
     // A design limit: the player decodes at one rate, the probe's (ffmpeg's
@@ -516,6 +529,11 @@ fn a_variable_rate_mp4_plays_at_its_average_rate() {
     plays_as_it_should(&path, &vfr(45.0), 2.7);
 }
 
+/// A variable-rate Matroska file plays at the rate the probe reads, its
+/// fastest part's (decode.rs `Video::from`: "ffmpeg is told that rate: left to itself it
+/// makes a variable-rate file constant at the stream's nominal rate, which
+/// can differ from the average the probe reads, and the frames would be
+/// stamped at the wrong speed").
 #[test]
 fn a_variable_rate_mkv_plays_at_its_fastest_rate() {
     // Matroska has no average: ffmpeg reads the rate as 60, the fastest
@@ -534,6 +552,9 @@ fn vfr(fps: f64) -> Want {
     want
 }
 
+/// A phone's video, its display matrix saying turn it, shows as stored
+/// (decode.rs `start`: "Rotated phone videos are read as stored: the frame
+/// size stays the probe's").
 #[test]
 fn a_rotated_phone_video_shows_as_stored() {
     // As the storyboard's plan chose (-noautorotate everywhere the player
@@ -543,6 +564,8 @@ fn a_rotated_phone_video_shows_as_stored() {
     plays_as_it_should(&path, &Want::constant((256, 144), 30.0, 3.0, 1.0), 1.5);
 }
 
+/// A video whose frames are stored upright shows upright (decode.rs
+/// `start`: "the frame size stays the probe's").
 #[test]
 fn a_video_turned_for_real_shows_upright() {
     let Some(path) = file_or_skip(Kind::Transposed) else { return };
@@ -551,6 +574,9 @@ fn a_video_turned_for_real_shows_upright() {
     plays_as_it_should(&path, &want, 1.5);
 }
 
+/// A one-pixel video plays at its own size (decode.rs `Video::from`: "Frames are scaled to the probe's size ...
+/// so each is the size read"; CHANGELOG.md, 0.4.0: "VODscribe's own player
+/// plays your files").
 #[test]
 fn a_one_pixel_video() {
     let Some(path) = file_or_skip(Kind::Pixel) else { return };
@@ -559,6 +585,9 @@ fn a_one_pixel_video() {
     plays_as_it_should(&path, &want, 0.4);
 }
 
+/// A video of odd sides, 17 by 11, plays at its own size (decode.rs `Video::from`: "Frames are scaled to the probe's size ...
+/// so each is the size read"; CHANGELOG.md, 0.4.0: "VODscribe's own player
+/// plays your files").
 #[test]
 fn an_odd_sized_video() {
     let Some(path) = file_or_skip(Kind::Odd17x11) else { return };
@@ -567,36 +596,56 @@ fn an_odd_sized_video() {
     plays_as_it_should(&path, &want, 0.4);
 }
 
+/// A video of odd height in 4:2:0 plays at its own size (decode.rs `Video::from`: "Frames are scaled to the probe's size ...
+/// so each is the size read"; CHANGELOG.md, 0.4.0: "VODscribe's own player
+/// plays your files").
 #[test]
 fn an_odd_height_in_yuv420p() {
     let Some(path) = file_or_skip(Kind::OddHeight) else { return };
     plays_as_it_should(&path, &Want::constant((64, 37), 30.0, 1.0, 1.0), 0.4);
 }
 
+/// A strip 4096 by 8 plays at its own size (decode.rs `Video::from`: "Frames are scaled to the probe's size ...
+/// so each is the size read"; CHANGELOG.md, 0.4.0: "VODscribe's own player
+/// plays your files").
 #[test]
 fn a_strip_4096_by_8() {
     let Some(path) = file_or_skip(Kind::Strip4096x8) else { return };
     plays_as_it_should(&path, &Want::constant((4096, 8), 30.0, 1.0, 10.0), 0.4);
 }
 
+/// A 4K video plays at its own size (decode.rs `Video::from`: "Frames are scaled to the probe's size ...
+/// so each is the size read"; CHANGELOG.md, 0.4.0: "VODscribe's own player
+/// plays your files").
 #[test]
 fn a_short_4k_video() {
     let Some(path) = file_or_skip(Kind::Uhd) else { return };
     plays_as_it_should(&path, &Want::constant((3840, 2160), 30.0, 1.0, 10.0), 0.4);
 }
 
+/// A file whose first frame is at 10 s opens on that frame and plays
+/// frame-exact from it (decode.rs: "Frames come at the file's own rate, each stamped with its
+/// time in the file"; CHANGELOG.md, 0.7.0: "A file or a kept video shows its
+/// first frame").
 #[test]
 fn a_file_starting_at_10_s() {
     let Some(path) = file_or_skip(Kind::Offset) else { return };
     plays_as_it_should(&path, &Want::constant((256, 144), 30.0, 3.0, 1.0), 1.5);
 }
 
+/// An MP4 with B-frames and no edit list, its first frame shown after
+/// its first decoded, opens on that frame and plays frame-exact (decode.rs: "Frames come at the file's own rate, each stamped with its
+/// time in the file"; CHANGELOG.md, 0.7.0: "A file or a kept video shows its
+/// first frame").
 #[test]
 fn b_frames_in_an_mp4_without_an_edit_list() {
     let Some(path) = file_or_skip(Kind::BFramesMp4) else { return };
     plays_as_it_should(&path, &Want::constant((256, 144), 30.0, 3.0, 1.0), 1.5);
 }
 
+/// MPEG-TS with B-frames, starting at 1.4 s, opens on its first frame and
+/// seeks to the frame there (CHANGELOG.md, 0.6.0 Fixes: "Seeking in .ts
+/// files shows the right frame.").
 #[test]
 fn b_frames_in_mpeg_ts_starting_at_1_4_s() {
     let Some(path) = file_or_skip(Kind::BFramesTs) else { return };
@@ -629,11 +678,19 @@ fn sound_alone(kind: Kind) {
     assert!(storyboard::make(ffmpeg(), &path, &board, &stop, |_| true).unwrap().is_none(), "a storyboard of sound");
 }
 
+/// An MP3 is refused alone and plays out in a timeline, then ends
+/// (clock.rs `Player::open_file`: "no picture in the file"; CHANGELOG.md,
+/// 0.4.1 Fixes: "a sound-only file played from its last second could stay
+/// "playing" for good instead of ending").
 #[test]
 fn an_mp3() {
     sound_alone(Kind::Mp3);
 }
 
+/// An M4A is refused alone and plays out in a timeline, then ends
+/// (clock.rs `Player::open_file`: "no picture in the file"; CHANGELOG.md,
+/// 0.4.1 Fixes: "a sound-only file played from its last second could stay
+/// "playing" for good instead of ending").
 #[test]
 fn an_m4a() {
     sound_alone(Kind::M4a);
@@ -711,11 +768,19 @@ fn cut_short(kind: Kind) {
     }
 }
 
+/// A Matroska recording stopped by a crash plays to the cut and on to its
+/// length, then ends
+/// (clock.rs `run`: "The file ran out before the stretch's end: the time
+/// passes the rest").
 #[test]
 fn a_matroska_recording_cut_short() {
     cut_short(Kind::TruncatedMkv);
 }
 
+/// An MP4 with its index in front, cut short, plays to the cut and on to
+/// its length, then ends
+/// (clock.rs `run`: "The file ran out before the stretch's end: the time
+/// passes the rest").
 #[test]
 fn an_mp4_with_its_index_in_front_cut_short() {
     cut_short(Kind::TruncatedMp4);
@@ -723,6 +788,8 @@ fn an_mp4_with_its_index_in_front_cut_short() {
 
 /// An MP4 whose index (at its end) was cut off can't be read at all: the
 /// probe says so, and it isn't opened.
+/// A file with neither a picture nor sound to be read is refused, saying
+/// so (decode.rs `probe`: "has no picture and no sound").
 #[test]
 fn an_mp4_cut_before_its_index() {
     let Some(path) = file_or_skip(Kind::TruncatedNoIndex) else { return };
@@ -731,12 +798,20 @@ fn an_mp4_cut_before_its_index() {
     assert!(Player::open_file(ffmpeg(), &path).is_err());
 }
 
+/// An MP4 with B-frames and an edit list, as ffmpeg writes one, opens on
+/// its first frame and plays frame-exact (decode.rs: "Frames come at the file's own rate, each stamped with its
+/// time in the file"; CHANGELOG.md, 0.7.0: "A file or a kept video shows its
+/// first frame").
 #[test]
 fn b_frames_in_an_mp4_with_an_edit_list() {
     let Some(path) = file_or_skip(Kind::BFramesEditList) else { return };
     plays_as_it_should(&path, &Want::constant((256, 144), 30.0, 3.0, 1.0), 1.5);
 }
 
+/// An MP4 whose edit list hides its first half second, as a trimmed file
+/// does, opens on the first frame it shows (decode.rs: "Frames come at the file's own rate, each stamped with its
+/// time in the file"; CHANGELOG.md, 0.7.0: "A file or a kept video shows its
+/// first frame").
 #[test]
 fn an_mp4_whose_first_half_second_is_hidden() {
     let Some(path) = file_or_skip(Kind::NegativeStart) else { return };

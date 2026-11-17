@@ -412,54 +412,9 @@ pub mod stand_in {
         }
     }
 
-    /// The stand-in takes its samples in real time, as a device would, so
-    /// the time follows the clock (sound_idle.rs: "A stand-in output
-    /// (`sound::stand_in`) takes the samples in real time, so the time
-    /// follows it as it would a device's"): a wake-up late by however much
-    /// is made up by the next chunks, which are due at once.
-    #[test]
-    fn the_stand_in_keeps_the_clocks_pace_when_its_wake_ups_run_late() {
-        let begun = Instant::now();
-        let mut pace = Pace::starting(begun);
-        let mut now = begun;
-        let mut chunks = 0u32;
-        // A second of chunks, each sleep running 20 ms late.
-        while now < begun + Duration::from_secs(1) {
-            chunks += 1;
-            let wait = pace.asked(now);
-            if !wait.is_zero() {
-                now += wait + Duration::from_millis(20);
-            }
-        }
-        let played = CHUNK_TIME * chunks;
-        let behind = (now - begun).saturating_sub(played);
-        assert!(behind <= CHUNK_TIME + Duration::from_millis(20), "{played:?} played in {:?}", now - begun);
-        // On time, a chunk's time apart.
-        let mut pace = Pace::starting(begun);
-        assert_eq!(pace.asked(begun), CHUNK_TIME);
-        assert_eq!(pace.asked(begun + CHUNK_TIME), CHUNK_TIME);
-    }
+    #[cfg(test)]
+    mod tests;
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn underruns_are_told_once_per_stretch_of_play_and_only_while_playing() {
-        let underruns = AtomicU64::new(0);
-        // Paused (silence): counted, never told, and dropped once playing.
-        underruns.fetch_add(4, Ordering::Relaxed);
-        assert_eq!(told(&underruns, false, false), None);
-        assert_eq!(told(&underruns, false, true), None);
-        // Playing: told once, at the end of the stretch, then counted anew.
-        underruns.fetch_add(2, Ordering::Relaxed);
-        assert_eq!(told(&underruns, true, true), None);
-        underruns.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(told(&underruns, true, false), Some(3));
-        assert_eq!(told(&underruns, false, false), None);
-        // A stretch without any: nothing told.
-        assert_eq!(told(&underruns, false, true), None);
-        assert_eq!(told(&underruns, true, false), None);
-    }
-}
+mod tests;

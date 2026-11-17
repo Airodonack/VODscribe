@@ -27,6 +27,10 @@ fn stays_paused(what: &str) {
     assert_eq!(stand_in::asked(), asked, "{what}: the stream asked for samples");
 }
 
+/// The sound output stream stops while nothing plays and starts again on
+/// Play, the time following it (sound.rs: "The output stream runs only
+/// while there's sound to play: paused, it's stopped, so an idle player
+/// costs the computer no wakeups and can't underrun").
 #[test]
 fn the_stream_is_paused_while_paused_and_play_resumes_it() {
     let dir = std::env::temp_dir().join(format!("vodscribe-sound-idle-{}", std::process::id()));

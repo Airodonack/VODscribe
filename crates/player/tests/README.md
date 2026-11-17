@@ -1,7 +1,11 @@
 # vodscribe-player tests
 
-Each test makes its videos with ffmpeg and reads back what the compositor drew, but `fake_decode.rs`, which checks the test kit's fake ffmpeg against the real one. Without ffmpeg on `PATH` they skip what needs it, unless `VODSCRIBE_TESTS_NEED_ALL` is set, as on CI.
+Each test makes its videos with ffmpeg and reads back what was decoded or drawn, but `fake_decode.rs`, which checks the test kit's fake ffmpeg against the real one, and the tests that must force an order (in `playing.rs` and `preview_close.rs`), which hold the fake's decodes at a gate. Without ffmpeg on `PATH` they skip what needs it, unless `VODSCRIBE_TESTS_NEED_ALL` is set, as on CI.
 
+- `playing.rs`: where a seek lands, that it leaves playing or paused as it was, Play at the end, the speed, a timeline changed under it.
+- `resume.rs`: Play after a pause goes on with the decoder it had.
+- `decoding.rs`: video at 23.976, 29.97 and 59.94 fps frame by frame, and the sound at each speed.
+- `timeline.rs`: what plays when, for a VOD as it downloads and an edit's pieces.
 - `frames.rs`: seeks and steps land on exactly the frame asked for.
 - `colours.rs`: every common kind of YUV and RGB comes out the right colour.
 - `media.rs`: awkward files, such as long GOPs, variable frame rates, rotation and odd sizes.
@@ -16,3 +20,4 @@ Each test makes its videos with ffmpeg and reads back what the compositor drew, 
 - `empty.rs`: an edit with no pieces plays nothing and doesn't spin.
 - `fake_decode.rs`: the test kit's fake ffmpeg decodes frames, sound and storyboards as the real one does.
 - `diagnosis.rs`: what the player reports of itself for a stall.
+- [`common`](common): what the tests share.

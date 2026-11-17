@@ -6,39 +6,29 @@
 //! adapter (the compositor is asked for one only), except where
 //! VODSCRIBE_TESTS_NEED_ALL is set (CI).
 
-use std::path::{Path, PathBuf};
+mod common;
+
+use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use common::{FPS, numbered};
 use vodscribe_core::footage::Source;
 use vodscribe_player::clock::{Event, Player};
 use vodscribe_player::compose::{Compositor, Gpu};
 use vodscribe_player::timeline::{Stretch, Timeline};
 
-const FPS: f64 = 30.0;
-
-/// A 4 s video at 30 fps whose frame N is grey 2N. Grey, as the player
-/// decodes to YUV: a grey's luma is the grey itself, where a colour's comes
-/// back from YUV a level or two off.
-fn numbered(dir: &Path) -> Option<PathBuf> {
-    let path = dir.join("numbered.mkv");
-    let made = Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
-        .arg("color=black:s=64x36:r=30:d=4,format=gbrp,geq=r='2*N':g='2*N':b='2*N'")
-        .args(["-c:v", "png"])
-        .arg(&path)
-        .status()
-        .ok()?;
-    made.success().then_some(path)
-}
-
-/// The number of the frame `image` is (`numbered`), read at its middle.
+/// The number of the frame `image` is (`common::numbered`), read at its middle.
 fn number(image: &vodscribe_player::compose::Image) -> u32 {
     let i = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
     (image.rgba[i] as u32).div_ceil(2)
 }
 
+/// A video opens on its first frame, and seeks and steps (, and .) show
+/// exactly the frame asked for, a seek to the very end its last
+/// (CHANGELOG.md, 0.4.0: "smooth, frame-exact (, and . step a frame)";
+/// 0.7.0: "A file or a kept video shows its first frame").
 #[test]
 fn seeks_and_steps_show_exactly_the_frame_asked_for() {
     let dir = std::env::temp_dir().join(format!("vodscribe-frames-{}", std::process::id()));
@@ -89,6 +79,9 @@ fn seeks_and_steps_show_exactly_the_frame_asked_for() {
 /// A re-plan that keeps the stretch under the playhead but changes the one
 /// after: playing on into it shows the new one's footage, not what was
 /// readied for the old.
+/// (clock.rs `Player::set_timeline`: "the threads take the new one up at
+/// the next stretch"; `Walk::readied`: "a timeline planned again since may
+/// have changed what comes after").
 #[test]
 fn a_replanned_next_stretch_plays_its_own_footage() {
     let dir = std::env::temp_dir().join(format!("vodscribe-replan-{}", std::process::id()));
@@ -155,6 +148,8 @@ fn a_replanned_next_stretch_plays_its_own_footage() {
 /// Play from the last frame, with sound: it plays out and ends, rather than
 /// standing "playing" with the time stopped. (Needs a sound output to show
 /// anything; passes without one.)
+/// (CHANGELOG.md, 0.4.1 Fixes: "On Linux, a sound-only file played from
+/// its last second could stay "playing" for good instead of ending.").
 #[test]
 fn play_from_the_last_frame_ends() {
     let dir = std::env::temp_dir().join(format!("vodscribe-end-{}", std::process::id()));
@@ -195,6 +190,8 @@ fn play_from_the_last_frame_ends() {
 
 /// A video wider than a GPU texture can be plays, scaled down, rather than
 /// failing in the compositor.
+/// (decode.rs `MAX_SIDE`: "a GPU texture can be no larger than 8192 ...
+/// and a frame 4096 across is already more than a screen shows").
 #[test]
 fn an_oversized_video_plays_scaled_down() {
     let dir = std::env::temp_dir().join(format!("vodscribe-wide-{}", std::process::id()));

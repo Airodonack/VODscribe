@@ -396,23 +396,4 @@ impl Audio {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slow_speeds_chain_atempo_within_its_range() {
-        assert_eq!(tempo(2.0), "atempo=2");
-        assert_eq!(tempo(0.5), "atempo=0.5");
-        assert_eq!(tempo(0.25), "atempo=0.5,atempo=0.5");
-        assert_eq!(tempo(0.3), "atempo=0.5,atempo=0.6");
-    }
-
-    #[test]
-    fn frames_too_large_are_scaled_down_keeping_their_shape() {
-        assert_eq!(within(1920, 1080, MAX_SIDE), (1920, 1080));
-        assert_eq!(within(4096, 2160, MAX_SIDE), (4096, 2160));
-        assert_eq!(within(11520, 5760, MAX_SIDE), (4096, 2048));
-        assert_eq!(within(1080, 9000, MAX_SIDE), (492, 4096));
-        assert_eq!(within(100_000, 1, MAX_SIDE), (4096, 2));
-    }
-}
+mod tests;

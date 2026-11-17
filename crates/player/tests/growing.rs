@@ -38,6 +38,9 @@ fn plan(path: &Path) -> Timeline {
     Timeline::of(&[piece], |_, _, _| if until > 0.0 { vec![(0.0, until, source.clone())] } else { vec![] })
 }
 
+/// An edit's footage still downloading plays as far as it's in and on as
+/// more comes, without a break (clock.rs `Player::set_timeline`: "without a
+/// break where what's under the playhead is the same").
 #[test]
 #[ignore]
 fn footage_still_coming_plays_on_without_a_break() {

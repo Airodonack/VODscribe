@@ -57,6 +57,10 @@ const KINDS: [(&str, &str, &[&str]); 5] = [
     ("PNG, RGB", "format=rgb24", &["-c:v", "png"]),
 ];
 
+/// Every common kind of YUV, and RGB, comes out the colours it was made
+/// from, on the GPU and the CPU alike (decode.rs `rgb_matrix`: "The shader
+/// and `Frame::to_rgb` both convert with it"; `Video::from`: "The range
+/// said outright, as the probe read it").
 #[test]
 fn each_kind_of_yuv_comes_out_the_colours_it_was_made_from() {
     let dir = std::env::temp_dir().join(format!("vodscribe-colours-{}", std::process::id()));

@@ -1,37 +1,27 @@
 //! The preview decoder: the frame at a time without seeking, then played
 //! from without starting another ffmpeg. A video whose every frame's grey
-//! says its number (as tests/frames.rs makes) is previewed and played,
+//! says its number (`common::numbered`) is previewed and played,
 //! and each frame's number read from its luma. Alone in its file: it counts
 //! the decoders started, which other tests would add to. Skipped where
 //! there's no ffmpeg on PATH, except where VODSCRIBE_TESTS_NEED_ALL is set (CI).
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
+
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use common::{number, numbered};
 use vodscribe_player::clock::{Event, Player};
-use vodscribe_player::decode::{Frame, video_starts};
+use vodscribe_player::decode::video_starts;
 
-/// A 4 s video at 30 fps whose frame N is grey 2N.
-fn numbered(dir: &Path) -> Option<PathBuf> {
-    let path = dir.join("numbered.mkv");
-    let made = Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
-        .arg("color=black:s=64x36:r=30:d=4,format=gbrp,geq=r='2*N':g='2*N':b='2*N'")
-        .args(["-c:v", "png"])
-        .arg(&path)
-        .status()
-        .ok()?;
-    made.success().then_some(path)
-}
-
-/// The number of the frame `frame` is, by its luma at the middle: a grey's luma is the grey.
-fn number(frame: &Frame) -> u32 {
-    let (y, _, _) = frame.planes();
-    (y[(frame.height / 2 * frame.width + frame.width / 2) as usize] as u32).div_ceil(2)
-}
-
+/// A preview is the exact frame a seek there would show, the player not
+/// moved, and Play there takes its decoder over, so it starts at once; the
+/// decoder that played previews in its place (CHANGELOG.md, 0.6.0: "rest
+/// the pointer and the picture becomes exactly the frame there, the one
+/// Play would start on, and Play there starts at once, without the wait
+/// while it finds the frame"; clock.rs: "The one that was playing becomes
+/// the preview decoder, with the frames it holds").
 #[test]
 fn a_preview_is_the_exact_frame_and_play_there_takes_its_decoder_over() {
     let dir = std::env::temp_dir().join(format!("vodscribe-preview-{}", std::process::id()));

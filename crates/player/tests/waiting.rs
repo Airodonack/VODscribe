@@ -29,6 +29,11 @@ fn nothing_here() -> Timeline {
     }])
 }
 
+/// A site's VOD's player, where its footage isn't here, stands and says
+/// it's waiting; paused, it isn't waiting (clock.rs
+/// `Player::set_waits_for_footage`: "Whether the time stands where the
+/// footage isn't here, until it is"; CHANGELOG.md, 0.6.0: "it plays in
+/// VODscribe as it comes in, waiting where it hasn't yet").
 #[test]
 fn the_time_waits_for_footage_where_asked_to() {
     let player = Player::open(Path::new("ffmpeg"), nothing_here()).unwrap();
@@ -41,6 +46,10 @@ fn the_time_waits_for_footage_where_asked_to() {
     assert!(!player.waiting_for_footage(), "paused, it isn't waiting");
 }
 
+/// An edit's player passes footage that isn't here, in black (clock.rs
+/// `Inner::waits_for_footage`: "rather than passing it in black (an
+/// edit)"; CHANGELOG.md, 0.5.0: "a piece whose video file you deleted
+/// outside VODscribe ... plays and renders as black and silence").
 #[test]
 fn otherwise_the_time_passes_where_there_is_no_footage() {
     let player = Player::open(Path::new("ffmpeg"), nothing_here()).unwrap();
@@ -49,6 +58,9 @@ fn otherwise_the_time_passes_where_there_is_no_footage() {
     assert!(!player.waiting_for_footage());
 }
 
+/// Playing into footage not here yet, a site's VOD's player stops where
+/// what's here ends and waits there (clock.rs `run`: "it stands at the
+/// stretch's start (begun again there if it ran into it)").
 #[test]
 fn running_into_footage_not_here_it_stops_there_and_waits() {
     let dir = std::env::temp_dir().join(format!("vodscribe-waiting-{}", std::process::id()));
@@ -79,6 +91,11 @@ fn running_into_footage_not_here_it_stops_there_and_waits() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Footage coming in while it waits plays on from where it stood, to the
+/// new end, and a seek past what's in waits there too (clock.rs `run`:
+/// "till a timeline with the footage, or a seek, starts over"; CHANGELOG.md,
+/// 0.6.0: "it plays in VODscribe as it comes in, waiting where it hasn't
+/// yet").
 #[test]
 fn footage_coming_in_while_it_waits_plays_on_from_where_it_stood() {
     let dir = std::env::temp_dir().join(format!("vodscribe-coming-in-{}", std::process::id()));

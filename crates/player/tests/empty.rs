@@ -18,6 +18,10 @@ fn cpu() -> Duration {
     Duration::from_millis(ticks * 10)
 }
 
+/// An edit with no pieces stays paused on Play, and nothing spins waiting
+/// for something to play (clock.rs `Player::play`: "Nothing to play (an
+/// edit with no pieces): it stays paused"; `run_sound`: "wait for a change
+/// ... rather than look again at once").
 #[test]
 fn an_empty_timeline_does_not_play() {
     let player = Player::open(Path::new("ffmpeg"), Timeline::default()).unwrap();

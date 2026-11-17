@@ -70,16 +70,4 @@ impl Overlay {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_boxes_a_screen_could_have_are_sane() {
-        let rect = |x, y, width, height| Rect { x, y, width, height };
-        assert!(rect(10.0, -20.0, 1280.0, 720.0).sane());
-        assert!(!rect(0.0, 0.0, f64::NAN, 720.0).sane());
-        assert!(!rect(0.0, 0.0, -1.0, 720.0).sane());
-        assert!(!rect(0.0, 0.0, 1e12, 720.0).sane());
-        assert!(!rect(f64::INFINITY, 0.0, 10.0, 10.0).sane());
-    }
-}
+mod tests;

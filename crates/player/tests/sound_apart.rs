@@ -10,6 +10,10 @@ use vodscribe_core::footage::Source;
 use vodscribe_player::clock::{Event, Player};
 use vodscribe_player::timeline::{Sound, Stretch, Timeline};
 
+/// A picture and its sound from two files play together as one stretch
+/// (timeline.rs `Stretch::sound`: "Where its sound comes from, if not the
+/// source's file: a file of its own (a site's player gives sound and
+/// picture apart: embed.rs)").
 #[test]
 fn picture_and_sound_from_two_files_play_together() {
     let dir = std::env::temp_dir().join(format!("vodscribe-apart-{}", std::process::id()));

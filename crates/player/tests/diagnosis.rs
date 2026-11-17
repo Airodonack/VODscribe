@@ -11,6 +11,9 @@ use std::time::Duration;
 use vodscribe_player::clock::{Event, Player};
 use vodscribe_player::timeline::Timeline;
 
+/// An empty player says its thread is alive, nothing decoding and nothing
+/// shown (clock.rs `Player::diagnosis`: "What the player's threads are at,
+/// for telling why it stalls ... Never waits long on a lock").
 #[test]
 fn an_empty_player_is_alive_with_nothing_decoding_or_shown() {
     let player = Player::open(Path::new("ffmpeg"), Timeline::default()).unwrap();
@@ -25,6 +28,10 @@ fn an_empty_player_is_alive_with_nothing_decoding_or_shown() {
     assert_eq!(seen.duration, Some(0.0));
 }
 
+/// A seek counts an epoch, and the frame said to show is the one there
+/// (clock.rs `StateSeen::epoch`: "Counted up at every seek and play from
+/// the end"; `Diagnosis::frame_pts`: "The pts (in its file) of the frame
+/// showing").
 #[test]
 fn a_seek_counts_an_epoch_and_the_frame_shown_is_the_one_there() {
     let dir = std::env::temp_dir().join(format!("vodscribe-diagnosis-{}", std::process::id()));

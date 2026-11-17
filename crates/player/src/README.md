@@ -1,6 +1,7 @@
 # vodscribe-player sources
 
 - `lib.rs`: the player, tying the parts below together.
+- `tests.rs`: the player box's own test.
 - `decode.rs`: frames and sound read by ffmpeg, one process per stream.
 - `timeline.rs`: what plays when, for a file or an edit's pieces end to end.
 - `clock.rs`: the player's time, which follows the sound, and the frame showing.
@@ -13,3 +14,4 @@
 - `storyboard.rs`: small keyframe pictures for the timeline's thumbnail.
 - [`storyboard`](storyboard): its tests.
 - [`bin`](bin): a bare window to play a file in.
+- [`clock`](clock), [`compose`](compose), [`decode`](decode), [`sound`](sound): those modules' own tests.

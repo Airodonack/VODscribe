@@ -15,6 +15,9 @@ use vodscribe_player::clock::{Event, Player};
 /// (clock.rs, `Previewer::preview`), and closing the player stops what
 /// it's doing at once (clock.rs, `Player`'s `Drop`; player.rs `close` runs
 /// it on the app's main thread).
+/// (CHANGELOG.md, 0.7.4 Fixes: "Closing the player no longer stalls.
+/// Closing a VOD or switching to another while a timeline thumbnail loaded
+/// froze the window briefly").
 #[test]
 fn closing_the_player_does_not_wait_for_a_preview_being_decoded() {
     let dir = TempDir::new("preview-close");
