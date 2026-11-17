@@ -198,25 +198,4 @@ pub(crate) fn settled(states: impl IntoIterator<Item = State>) -> Option<Result<
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A drag's answer waits while any of its files is still being made,
-    /// and is none once one can't be: all or nothing, as one drop.
-    #[test]
-    fn a_drag_is_answered_once_all_its_files_are_made() {
-        let ready = |p: &str| State::Ready(PathBuf::from(p));
-        assert!(settled(vec![ready("/a"), State::Making(None)]).is_none());
-        assert_eq!(settled(vec![ready("/a"), ready("/b")]), Some(Ok(vec![PathBuf::from("/a"), PathBuf::from("/b")])));
-        assert_eq!(settled(vec![State::Making(Some(0.5)), State::Failed("no".into())]), Some(Err("no".into())));
-        assert_eq!(settled(vec![]), Some(Ok(vec![])));
-    }
-
-    /// An early release is told by its type.
-    #[test]
-    fn an_early_release_says_why() {
-        let e: Box<dyn std::error::Error> = Box::new(ReleasedEarly);
-        assert!(e.is::<ReleasedEarly>());
-        assert_eq!(e.to_string(), "The button was released before the drag could begin.");
-    }
-}
+mod tests;

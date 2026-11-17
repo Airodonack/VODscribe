@@ -4,5 +4,6 @@ Dragging clips out of the window before they're made. Each system's drag starts 
 
 - `mod.rs`: what clips.rs calls (in unit tests, the testkit's drag), and the drag's trace in test builds.
 - `linux.rs`: GTK's drag, its picture, and the release the page never sees.
+- [`linux`](linux): its tests.
 - `macos.rs`: AppKit's drag session from the web view's press.
 - `windows.rs`: OLE's drag, with its picture.

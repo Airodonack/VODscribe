@@ -191,3 +191,6 @@ fn release_button(page: &gtk::Widget) {
     event.set_device(Some(&device));
     gtk::main_do_event(&mut event);
 }
+
+#[cfg(test)]
+mod tests;

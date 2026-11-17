@@ -207,3 +207,4 @@ jobs:
       - run: cargo test --locked -p vodscribe
       - run: cargo test --locked -p vodscribe --features e2e
       - run: cargo test --locked -p dragndrop-target --features fake
+      - run: cargo test --locked -p dragndrop-source

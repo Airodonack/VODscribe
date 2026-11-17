@@ -18,6 +18,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `job_list.rs`: the jobs list the library shows.
 - `clips.rs`: clips' commands, and the queue that cuts them.
 - `resolve.rs`: MP4 clips and edits dropped on DaVinci Resolve on Linux, which can't open them, are held back, and the page offers MOV.
+- [`resolve`](resolve): its tests.
 - `edits.rs`: edits' commands, and their rendering.
 - [`edits`](edits): their tests.
 - `footage.rs`: where a stretch plays from, and the downloads of sections edits need.
@@ -34,6 +35,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - [`clipboard`](clipboard): its tests.
 - `choices.rs`: the page's small choices, read at start and written as they change.
 - `files.rs`: deleting made files, later where Windows still has them open, or at the next start.
+- [`files`](files): its tests.
 - `player.rs`: the app's own player, driven by the page.
 - `screen.rs`: the native surface the player draws on.
 - `embed.rs`, `embed_shim.js`: a site's video drawn in the app's player under the site's; the `embed-takeover` feature only.

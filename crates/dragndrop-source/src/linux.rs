@@ -604,40 +604,4 @@ fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The receiving app is named as its desktop entry names it: the entry
-    /// naming its window's class, else the class.
-    #[test]
-    fn an_app_is_named_by_its_desktop_entry() {
-        let entry = "[Desktop Entry]\nName=Kdenlive\nStartupWMClass=kdenlive\n[Desktop Action new]\nName=New\n";
-        assert_eq!(desktop_entry(entry), (Some("Kdenlive".into()), Some("kdenlive")));
-        assert_eq!(desktop_entry("[Desktop Entry]\nExec=x\n"), (None, None));
-        assert_eq!(desktop_entry("[Desktop Action new]\nName=New\n"), (None, None), "another group's name");
-        assert_eq!(app_name("org.example.NoSuchApp"), "NoSuchApp", "a reverse domain name's last part");
-        assert_eq!(app_name("No-such-app"), "No-such-app");
-    }
-
-    /// The app asking is told by the program its process runs.
-    #[test]
-    fn an_apps_program_is_read_from_its_process() {
-        assert_eq!(program_of(std::process::id()), std::env::current_exe().ok());
-        assert_eq!(program_of(u32::MAX), None);
-    }
-
-    /// Qt's apps are answered at once, GTK 4's held, the others held only
-    /// once it's let go there; one not known is held, as GTK 4's.
-    #[test]
-    fn an_ask_is_held_by_the_toolkit_asking() {
-        assert_eq!(toolkit_in("7f0 r-xp /usr/lib/libQt6Core.so.6\n"), Toolkit::Qt);
-        assert_eq!(toolkit_in("7f0 r-xp /usr/lib/x86_64-linux-gnu/libgtk-4.so.1\n"), Toolkit::Gtk4);
-        assert_eq!(toolkit_in("7f0 r-xp /usr/lib/libgtk-3.so.0\n"), Toolkit::Other);
-        for dropped in [false, true] {
-            assert!(!holds(Some(Toolkit::Qt), dropped));
-            assert!(holds(Some(Toolkit::Gtk4), dropped));
-            assert!(holds(None, dropped));
-            assert_eq!(holds(Some(Toolkit::Other), dropped), dropped);
-        }
-    }
-}
+mod tests;
