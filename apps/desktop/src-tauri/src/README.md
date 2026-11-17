@@ -12,6 +12,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - [`setup`](setup): their tests.
 - `recovery.rs`: the recovery screen's commands, when the library won't open.
 - `worker.rs`: the transcription queue, downloading in one stage and transcribing in another.
+- [`worker`](worker): its tests.
 - `chats.rs`: chat replays, fetched apart from that queue.
 - `jobs.rs`: clips, renders, video downloads and storyboards, one at a time.
 - `job_list.rs`: the jobs list the library shows.
