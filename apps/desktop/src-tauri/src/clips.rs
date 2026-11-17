@@ -677,7 +677,12 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
             }
         };
         let within = (range.0 - source.offset, range.1 - source.offset);
-        let report = |p: f64| report(cut_from + p * (1.0 - cut_from));
+        let report = |p: f64| {
+            report(cut_from + p * (1.0 - cut_from));
+            // (An e2e test may hold it near its end till it's canceled: e2e_hold_cuts.)
+            #[cfg(feature = "e2e")]
+            crate::e2e::hold_cut(p, stop);
+        };
         clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, encoding, stop, report)
     })();
     // (A test holds it here, its encode over and the clip not yet recorded.)

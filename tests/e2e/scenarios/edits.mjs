@@ -928,10 +928,12 @@ export default {
       },
       2 * MINUTE,
     );
-    if (again.file_path === rendered.file_path || existsSync(rendered.file_path))
-      throw new Error(
-        `rendered again as ${again.file_path}, and ${rendered.file_path} is ${existsSync(rendered.file_path) ? "still there" : "gone"}`,
-      );
+    if (again.file_path === rendered.file_path) throw new Error(`rendered again as ${again.file_path}, the same file`);
+    // The one before is deleted once the new one is recorded, so the library
+    // may say "ready" a moment before it's gone (`edits::render_edit`).
+    await until("the file before gone", () => !existsSync(rendered.file_path), 10_000).catch(() => {
+      throw new Error(`rendered again as ${again.file_path}, and ${rendered.file_path} is still there`);
+    });
     await app.invoke("rename_edit", { id: made.id, title: NAME });
     await until("the name back", async () => (await app.invoke("list_edits"))[0]?.title === NAME, 10_000);
     ctx.log(`renamed and rendered again: ${again.file_path}, a new file, the one before gone`);

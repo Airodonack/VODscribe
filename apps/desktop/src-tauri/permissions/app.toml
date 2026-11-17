@@ -101,6 +101,7 @@ permissions = [
   "allow-e2e-player-state",
   "allow-e2e-set-inner-size",
   "allow-e2e-work-busy",
+  "allow-e2e-hold-cuts",
   "allow-screen-under",
   "allow-player-play",
   "allow-player-pause",

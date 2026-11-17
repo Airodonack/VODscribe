@@ -101,8 +101,16 @@ export default {
     await app.toLibrary();
     const [vod] = await app.addFiles([longVideo(dir)]);
 
-    // Three clips of all of it (each half a minute or more to make): one
-    // made, two waiting.
+    // Each cut held near its end till it's canceled (e2e_hold_cuts): the
+    // Cancels below find the one being made still being made, however fast
+    // this computer cuts (a cut can take 9 s, and the drag's wait alone 15
+    // s). A build without the e2e feature can't hold one, and relies on the
+    // cut taking longer.
+    const held = await app.hasE2e();
+    if (held) await app.invoke("e2e_hold_cuts", { hold: true });
+    else log("a build without the e2e feature: the cuts aren't held for the Cancels");
+
+    // Three clips of all of it: one made, two waiting.
     const made = await app.invoke("add_clips", {
       vodId: vod.id,
       ranges: [
@@ -259,6 +267,7 @@ export default {
     for (const m of await app.invoke("list_clips", { vodId: vod.id }))
       if (m.status !== "error" || m.error !== "Canceled") throw new Error(`a clip canceled is ${JSON.stringify(m)}`);
     await until("no part files", () => partFiles().length === 0 || null, 10_000);
+    if (held) await app.invoke("e2e_hold_cuts", { hold: false });
 
     // A site's VOD with its video kept here and a long chat, written into
     // the library while the app is stopped.

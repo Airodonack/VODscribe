@@ -613,6 +613,8 @@ fn commands() -> impl Fn(tauri::ipc::Invoke<Rt>) -> bool + Send + Sync + 'static
         e2e::e2e_set_inner_size,
         #[cfg(feature = "e2e")]
         e2e::e2e_work_busy,
+        #[cfg(feature = "e2e")]
+        e2e::e2e_hold_cuts,
         screen::screen_under,
         player::player_play,
         player::player_pause,

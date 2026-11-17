@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, TcpListener};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -115,6 +115,36 @@ pub(crate) fn e2e_set_inner_size(app: AppHandle, width: f64, height: f64) -> Res
 #[tauri::command]
 pub(crate) fn e2e_work_busy(app: AppHandle, vod_id: i64, ms: u64) {
     app.state::<crate::AppState>().worker.e2e_busy(vod_id, Duration::from_millis(ms));
+}
+
+/// Whether clips being cut are held near their end (`e2e_hold_cuts`).
+static HOLD_CUTS: AtomicBool = AtomicBool::new(false);
+
+/// How far along a held cut stops: late, so its progress is news in the list
+/// for most of its make, as a real one's is.
+const HOLD_FROM: f64 = 0.9;
+
+/// Holds each clip being cut near its end (`hold_cut`), its ffmpeg going,
+/// until it's stopped or `hold` is false again: a test's Cancel then finds
+/// it still being made however fast the computer cuts
+/// (tests/e2e/scenarios/jobs.mjs).
+#[tauri::command]
+pub(crate) fn e2e_hold_cuts(hold: bool) {
+    HOLD_CUTS.store(hold, Ordering::SeqCst);
+}
+
+/// A cut's progress (`clips::cut`), `along` from 0 to 1: once it's
+/// HOLD_FROM along, waits while cuts are held, until `stop` is set. ffmpeg
+/// writes more progress lines after each one this is called for, so a stop
+/// set meanwhile is seen at the next (`tools::encode`), and the clip is
+/// canceled, not made, even if ffmpeg is done by then.
+pub(crate) fn hold_cut(along: f64, stop: &AtomicBool) {
+    if along < HOLD_FROM {
+        return;
+    }
+    while HOLD_CUTS.load(Ordering::SeqCst) && !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Runs `body` (a `Run`) in the main window and waits for its answer:
