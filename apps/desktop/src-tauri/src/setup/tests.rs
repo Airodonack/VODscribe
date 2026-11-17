@@ -3,10 +3,9 @@
 //! install, and the speech models as an install leaves them.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 
 use serde_json::{Value, json};
-use tauri::Listener;
 use vodscribe_core::model::ModelSpec;
 use vodscribe_core::testkit::eventually;
 
@@ -38,22 +37,25 @@ fn turn() -> MutexGuard<'static, ()> {
     TURN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The payloads of an event the page hears, kept from when this is made:
-/// an install's events, which the kit's `heard` doesn't keep.
-struct Heard(Arc<Mutex<Vec<Value>>>);
+/// The payloads of an event the page hears, from when this is made: the
+/// kit's (`TestApp::heard`), kept as each is sent. Not a listener of
+/// Tauri's, which hears an event sent while another thread's is being sent
+/// (the jobs list's, as the add-on's install tells it) only once that one
+/// is done, or at the next with a listener: a test read the progress before
+/// the last of it, and failed (page.rs `sent`).
+struct Heard<'a> {
+    app: &'a TestApp,
+    event: &'static str,
+    from: usize,
+}
 
-impl Heard {
-    fn of(app: &TestApp, event: &'static str) -> Self {
-        let heard = Heard(Arc::default());
-        let kept = heard.0.clone();
-        app.handle().listen_any(event, move |e| {
-            kept.lock().unwrap().push(serde_json::from_str(e.payload()).unwrap_or(Value::Null));
-        });
-        heard
+impl<'a> Heard<'a> {
+    fn of(app: &'a TestApp, event: &'static str) -> Self {
+        Heard { app, event, from: app.heard(event).len() }
     }
 
     fn all(&self) -> Vec<Value> {
-        self.0.lock().unwrap().clone()
+        self.app.heard(self.event).split_off(self.from)
     }
 
     fn last(&self) -> Option<Value> {

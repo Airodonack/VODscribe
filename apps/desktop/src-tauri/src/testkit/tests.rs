@@ -102,10 +102,9 @@ fn the_desktop_hears_what_its_asked_to_open() {
     assert_eq!(app.desktop().opened(), [std::path::PathBuf::from(vod.source_path.unwrap())]);
 }
 
-/// A test that fails while a fake is held at a gate it never opens ends,
-/// failed, rather than waiting on the job its app is closing.
-#[test]
-fn a_test_failing_with_a_fake_held_ends() {
+/// Runs `test`, which fails, on a thread of its own: it ends, failed, and
+/// its app with it, rather than waiting on a job its app is closing.
+fn ends_failed(test: impl FnOnce() + Send + 'static) {
     struct Ended(std::sync::mpsc::Sender<()>);
     impl Drop for Ended {
         fn drop(&mut self) {
@@ -116,6 +115,17 @@ fn a_test_failing_with_a_fake_held_ends() {
     let failing = std::thread::spawn(move || {
         // Dropped last, once the app is.
         let _ended = Ended(ended);
+        test();
+    });
+    assert!(done.recv_timeout(std::time::Duration::from_secs(10)).is_ok(), "the app's end hung");
+    assert!(failing.join().is_err(), "the test failed");
+}
+
+/// A test that fails while a fake is held at a gate it never opens ends,
+/// failed, rather than waiting on the job its app is closing.
+#[test]
+fn a_test_failing_with_a_fake_held_ends() {
+    ends_failed(|| {
         let app = TestApp::new();
         let vod = app.add_video_file("Day 3.mp4", 60.0);
         let halfway = vodscribe_core::testkit::Gate::new();
@@ -124,8 +134,24 @@ fn a_test_failing_with_a_fake_held_ends() {
         halfway.reached();
         panic!("a test failing while ffmpeg is held");
     });
-    assert!(done.recv_timeout(std::time::Duration::from_secs(10)).is_ok(), "the app's end hung");
-    assert!(failing.join().is_err(), "the test failed");
+}
+
+/// A test that fails while the GPU add-on's download is held at the
+/// network ends, failed, too: a cancel doesn't reach a request held there,
+/// so the app's end lets go of the network's holds before it waits for the
+/// download (testkit.rs, `TestApp`'s drop: "The network's holds too").
+#[test]
+fn a_test_failing_with_the_add_ons_download_held_ends() {
+    ends_failed(|| {
+        let app = TestApp::new();
+        let addon = app.addon();
+        addon.served_by(&app.net);
+        let asked = Gate::new();
+        app.net.holds(&addon.files()[0].0, &asked);
+        app.invoke("install_gpu_pack", json!({})).unwrap();
+        asked.reached();
+        panic!("a test failing while the add-on's download is held");
+    });
 }
 
 /// An app started again on the folder of one that quit has its library as

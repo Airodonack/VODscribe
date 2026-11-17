@@ -26,7 +26,7 @@ fn status(app: &TestApp) -> Value {
 /// The GPU add-on installed with its pack there and its model's last file
 /// held as it's asked for, the others finished by an earlier try: the
 /// gate it's held at, once it's there, and what the page hears of it.
-fn held_model(app: &TestApp) -> (Gate, Heard, Heard) {
+fn held_model(app: &TestApp) -> (Gate, Heard<'_>, Heard<'_>) {
     installed_pack(app);
     finished_before(&app.paths().models(), &GPU_MODEL, 4);
     let asked = Gate::new();
@@ -39,7 +39,7 @@ fn held_model(app: &TestApp) -> (Gate, Heard, Heard) {
 
 /// The GPU add-on installed with nothing of it there and its pack's first
 /// download held as it's asked for: the gate, once it's there, and its end.
-fn held_pack(app: &TestApp) -> (Gate, Heard) {
+fn held_pack(app: &TestApp) -> (Gate, Heard<'_>) {
     let asked = Gate::new();
     app.net.holds("https://github.com/k2-fsa/sherpa-onnx/", &asked);
     let done = Heard::of(app, "gpu-done");

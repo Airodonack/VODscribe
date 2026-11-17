@@ -70,6 +70,8 @@ const EVENTS: &[&str] = &[
     "tauri://drag-drop",
     "tauri://drag-enter",
     "restored",
+    "setup-done",
+    "setup-progress",
     "video-progress",
     "vod",
     "vod-progress",
@@ -186,8 +188,12 @@ impl Drop for TestApp {
     fn drop(&mut self) {
         // First, so a job whose fake is held at a gate the test never
         // opened (it failed first) ends, and can be joined; and a drag's
-        // receiver waiting for a file stops.
+        // receiver waiting for a file stops. The network's holds too: the
+        // GPU add-on's download, joined below, may be waiting at one, and a
+        // cancel doesn't reach a request held there (core testkit/net.rs
+        // `respond`), so a test that fails with it held fails rather than hangs.
         self.drags().end();
+        self.net.let_go();
         // The rest is the state of a library that opened: none on the
         // recovery screen.
         let started = self.app.try_state::<AppState>().is_some();
@@ -200,7 +206,6 @@ impl Drop for TestApp {
         }
         self.ffmpeg.end();
         self.yt_dlp.end();
-        self.net.let_go();
         if let Some(worker) = self.worker.get() {
             worker.end();
             let model = self.paths().model_dir();

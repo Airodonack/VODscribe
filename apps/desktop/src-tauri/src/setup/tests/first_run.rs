@@ -37,7 +37,7 @@ fn on_the_path(dir: &Path, name: &str) {
 /// Setup run with the speech model's last file held as it's asked for,
 /// the others finished by an earlier try (`finished_before`): the gate
 /// it's held at, once it's there, and what the page hears of it.
-fn held_setup(app: &TestApp) -> (Gate, Heard, Heard) {
+fn held_setup(app: &TestApp) -> (Gate, Heard<'_>, Heard<'_>) {
     finished_before(&app.paths().models(), &CPU_MODEL, 4);
     let asked = Gate::new();
     app.net.holds(&model_link(&CPU_MODEL, "tokens.txt"), &asked);
