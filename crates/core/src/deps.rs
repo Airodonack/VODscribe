@@ -227,40 +227,4 @@ fn is_member(name: &str, member: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn finds_the_program_in_its_archive() {
-        assert!(is_member("ffmpeg-n9.0-linux64-gpl-9.0/bin/ffmpeg", "/bin/ffmpeg"));
-        assert!(!is_member("ffmpeg-n9.0-linux64-gpl-9.0/bin/ffprobe", "/bin/ffmpeg"));
-        assert!(!is_member("ffmpeg-n9.0/doc/bin/ffmpeg.html", "/bin/ffmpeg"));
-        assert!(is_member("ffmpeg", "ffmpeg"));
-        assert!(!is_member("sub/ffmpeg", "ffmpeg"));
-        assert!(is_member("x\\bin\\ffmpeg.exe", "/bin/ffmpeg.exe"));
-    }
-
-    #[test]
-    fn every_platform_we_build_for_has_both() {
-        // Whatever this machine is, it's one we ship for.
-        assert!(ffmpeg().is_some() && deno().is_some());
-    }
-
-    /// Downloads and unpacks the real ffmpeg and Deno for this machine into
-    /// $VODSCRIBE_TEST_BIN_DIR: `cargo test -p vodscribe-core -- --ignored`.
-    #[test]
-    #[ignore]
-    fn installs_the_pinned_programs() {
-        let dir = PathBuf::from(std::env::var("VODSCRIBE_TEST_BIN_DIR").expect("set VODSCRIBE_TEST_BIN_DIR"));
-        let never = AtomicBool::new(false);
-        for dep in [ffmpeg().unwrap(), deno().unwrap()] {
-            let path = install(&dep, &dir, &never, |_| {}).unwrap();
-            let out = std::process::Command::new(&path)
-                .arg(if dep.name == "deno" { "--version" } else { "-version" })
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "{} doesn't run", dep.name);
-            assert!(fs::read_dir(&dir).unwrap().count() <= 2, "only the programs are left behind");
-        }
-    }
-}
+mod tests;

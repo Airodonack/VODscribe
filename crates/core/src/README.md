@@ -26,8 +26,11 @@ One module per subject.
 - `asr.rs`: runs the speech model through sherpa-onnx.
 - `model.rs`: the speech model's files, pinned by size and SHA-256; `VODSCRIBE_MODELS_URL` overrides their server in debug builds.
 - `gpu.rs`: the optional NVIDIA GPU add-on.
+- [`gpu`](gpu): its tests.
 - `deps.rs`: the pinned ffmpeg and Deno downloads.
+- [`deps`](deps): its tests.
 - `tools.rs`: finds and updates yt-dlp and ffmpeg, asks ffmpeg which encoders it has, and starts programs.
+- [`tools`](tools): its tests.
 - `yt-dlp-signing-key.asc`: the key yt-dlp's releases are checked against.
 - `net.rs`: downloads, with stall and cancel handling.
 - `query.rs`: the search box's language, parsed.

@@ -498,19 +498,4 @@ impl Drop for Claim {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_claim_holds_the_flag_and_says_it_isnt_an_install() {
-        let install = Install::new();
-        let claim = Claim::take(&install).expect("free");
-        assert!(install.running() && install.held.load(Ordering::Relaxed) == CLAIMED);
-        assert!(Claim::take(&install).is_none(), "one holder at a time");
-        drop(claim);
-        assert!(!install.running());
-        // Held by an install (as spawn sets it), it isn't claimed.
-        install.held.store(INSTALLING, Ordering::Relaxed);
-        assert!(Claim::take(&install).is_none() && install.held.load(Ordering::Relaxed) == INSTALLING);
-    }
-}
+mod tests;
