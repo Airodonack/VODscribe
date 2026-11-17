@@ -5,5 +5,5 @@
 - `tests/migrations_late.rs`: upgrades from the clip model on (V22 on), and the libraries releases left.
 - `tests/search.rs`: search over transcripts and chat, and the search's own connection.
 - `tests/search_scripts.rs`: search finding words in every script, as the index keeps them.
-- `tests/chat_store.rs`: chat kept in the library.
+- `tests/chat_store.rs`: chat kept in the library, whether it's fetched, and what the transcript view, minimap and layers read of it.
 - `tests/library.rs`: the library file itself, a broken one set aside.
