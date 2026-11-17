@@ -102,6 +102,42 @@ test("one made before the reply, arriving after it, is older than the reply: not
   assert.ok(driver.time() >= 51, `at ${driver.time()}`);
 });
 
+// clock.rs: "a paused seek shows the frame there"; nativeDriver.ts: "Those
+// after the reply are newer by `seq`". Paused, the new frame's event is the
+// last the player sends: seen in CI (captions-fullscreen), the frame at 2 s
+// came before the seek's reply and the time shown stayed at 0:00.
+test("a paused seek's frame, made after its reply but come before it, is taken after it", async () => {
+  const driver = playing();
+  fakeApp.event(status(0.5, false));
+  driver.seek(2, false);
+  const [seek] = fakeApp.asked;
+  // The reply says the old frame still shows; the new one's event is made after it.
+  const reply = { ...status(2, false), shown: 0.5 };
+  const frame = status(2, false);
+  fakeApp.event(frame);
+  seek.answer(reply);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(driver.shown(), 2, "the frame at the seek was lost");
+  assert.equal(driver.time(), 2);
+});
+
+test("an event held while two commands are out is taken only if newer than the last reply", async () => {
+  const driver = playing();
+  fakeApp.event(status(0.5, false));
+  driver.seek(1, false);
+  driver.seek(2, false);
+  const [first, second] = fakeApp.asked;
+  const firstReply = { ...status(1, false), shown: 0.5 };
+  const firstFrame = status(1, false);
+  const secondReply = { ...status(2, false), shown: 1 };
+  fakeApp.event(firstFrame);
+  first.answer(firstReply);
+  second.answer(secondReply);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(driver.time(), 2, "the first seek's frame, older than the second's reply, put the time back");
+  assert.equal(driver.shown(), 1);
+});
+
 test("a refused seek lets the player's word in again", async () => {
   const driver = playing();
   driver.seek(51, false);

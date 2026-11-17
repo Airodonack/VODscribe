@@ -2,7 +2,7 @@
 // whichever view plays in it: a file's player (NativePlayer.svelte) and an
 // edit's (editPlayer.ts). It keeps what the player last told (its
 // `player-time` events and its commands' replies, the newest by `seq`; while
-// a command is out, its reply alone), runs
+// a command is out, its reply first, then any newer event), runs
 // the time on by the page's clock while the player's runs (after play it
 // stands until the sound starts), and sends what's asked; until the player is
 // open, a seek, play or speed asked is kept for then.
@@ -45,17 +45,20 @@ export class NativeDriver {
   private seeks = 0;
   private seekSettled: number | null = -Infinity;
   /** Commands out whose reply says where the player is. Meanwhile events
-   *  aren't taken: one made before the command, arriving after the page's
-   *  guess, would put the time back where it was (seen in CI); the reply,
-   *  made after, is what's so. Those after the reply are newer by `seq`. */
+   *  aren't taken but held (`held`): one made before the command, arriving
+   *  after the page's guess, would put the time back where it was (seen in
+   *  CI); the reply, made after, is what's so. One made after the reply can
+   *  still come before it (a paused seek's new frame, its last event: seen
+   *  in CI too), so the newest held is taken once the replies are, if it's
+   *  newer by `seq` than they are. */
   private pending = 0;
   /** Opens begun (`opening`): a command's reply sent before the newest is
    *  of what was open then, and says nothing of what opens now. */
   private opens = 0;
-  /** The newest of the player's events while this opens: until the open's
-   *  reply they may be of what it had open before (another VOD's file,
-   *  playing on while this one's is read), so they aren't taken; one made
-   *  after the reply's status is this one's, taken then. */
+  /** The newest of the player's events not taken yet: while this opens
+   *  (until the open's reply they may be of what it had open before, another
+   *  VOD's file playing on while this one's is read), or while a command is
+   *  out (`pending`). One made after the reply is taken then. */
   private held: PlayerStatus | null = null;
 
   constructor(start = 0) {
@@ -63,9 +66,9 @@ export class NativeDriver {
     events
       .playerTime((s) => {
         if (this.gone) return;
-        if (!this.open) {
+        if (!this.open || this.pending) {
           if ((s.seq ?? 0) > (this.held?.seq ?? 0)) this.held = s;
-        } else if (!this.pending) this.tell(s);
+        } else this.tell(s);
       })
       .then((u) => (this.gone ? u() : (this.unlisten = u)));
   }
@@ -97,13 +100,27 @@ export class NativeDriver {
         if (opens !== this.opens) return false;
         this.pending--;
         this.tell(s);
+        this.takeHeld();
         return true;
       },
       () => {
-        if (opens === this.opens) this.pending--;
+        if (opens === this.opens) {
+          this.pending--;
+          this.takeHeld();
+        }
         return false;
       },
     );
+  }
+
+  /** Once no command is out, the newest event held meanwhile, unless the
+   *  replies were newer (`tell` keeps the newest by `seq`). While opening,
+   *  what's held is `opened`'s to take. */
+  private takeHeld() {
+    if (this.pending || !this.open) return;
+    const held = this.held;
+    this.held = null;
+    if (held) this.tell(held);
   }
 
   /** What the page guesses until the player says: at `time`, not running. */
