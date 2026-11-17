@@ -80,7 +80,15 @@ const READ = `
     links: [...card.querySelectorAll(".links li")].map((li) => text(li) + " <" + li.querySelector("a").href + ">"),
     sections: [...card.querySelectorAll("section.context")].map((s) => text(s.querySelector("h3")) + ": " +
       [...s.querySelectorAll("li")].map((li) => text(li) + (li.querySelector("a") ? " <" + li.querySelector("a").href + ">" : "")).join(", ")),
-    picture: img ? (!img.complete ? "loading" : img.naturalWidth > 0 && img.classList.contains("loaded") ? "shown" : "none") : "no img",
+    // Shown once the page has taken its load (CastDisc.svelte's "loaded"), none once it has failed. A picture the
+    // web view has whole but whose load the page hasn't handled yet, as a cached one is for a moment, is loading still.
+    picture: img
+      ? img.naturalWidth > 0 && img.classList.contains("loaded")
+        ? "shown"
+        : img.complete && img.naturalWidth === 0
+          ? "none"
+          : "loading"
+      : "no img",
     empty: [...card.querySelectorAll("ul, li, section, h3, a, .aliases")].filter((el) => !text(el)).map((el) => el.tagName.toLowerCase() + "." + el.className),
     flat: [...card.children, ...card.querySelectorAll("li, h3")].filter((el) => el.getBoundingClientRect().height < 1).map((el) => el.tagName.toLowerCase()),
     gaps: rects.slice(1).map((r, i) => Math.round(r.top - rects[i].bottom)),
