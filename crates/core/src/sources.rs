@@ -32,18 +32,25 @@ impl Db {
     /// be made into a file (`set_media_path`, once it is): the VOD's title,
     /// link and channel, and its transcript and chat in that stretch, moved
     /// to the new source's time (from 0). Not listed. Its id.
+    ///
+    /// Its `platform_id` is `<vod>:<start>-<end>:<id>`: the new source's own
+    /// id, never given again (`vod_ids`), keeps it unique however many
+    /// times, and how soon after one another, the same stretch is kept.
     pub fn add_realized(&self, vod_id: i64, start: f64, end: f64) -> Result<i64> {
         self.atomically(|db| {
+            let id: i64 = db.conn.query_row(
+                "SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids",
+                [],
+                |r| r.get(0),
+            )?;
             db.conn.execute(
                 "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published,
                                    status, progress, added_at, model, chat)
-                 SELECT (SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                        'realized', ?1 || ':' || ?2 || '-' || ?3 || ':' || ?5, url, title, channel, channel_login, channel_url, ?4, thumbnail,
-                        published, 'done', 1.0, ?5, model, chat
+                 SELECT ?6, 'realized', ?1 || ':' || ?2 || '-' || ?3 || ':' || ?6, url, title, channel, channel_login, channel_url, ?4,
+                        thumbnail, published, 'done', 1.0, ?5, model, chat
                  FROM vods WHERE id = ?1",
-                params![vod_id, start, end, end - start, now()],
+                params![vod_id, start, end, end - start, now(), id],
             )?;
-            let id = db.conn.last_insert_rowid();
             let segments: Vec<(f64, f64, String, String, Option<String>)> = {
                 let mut stmt = db.conn.prepare(
                     "SELECT start, end, text, words, speaker FROM segments

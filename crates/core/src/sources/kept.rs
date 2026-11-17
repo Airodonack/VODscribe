@@ -295,7 +295,6 @@ fn a_kept_stretch_no_piece_moved_to_is_a_source_nothing_uses() {
 /// first realizes each stretch other clips use"), as two edits using the same
 /// moments are.
 #[test]
-#[ignore = "disagreement: a second stretch kept from the same range within a second fails on a duplicate platform_id"]
 fn two_pieces_of_the_same_stretch_are_each_kept() {
     let db = Db::open(Path::new(":memory:")).unwrap();
     let vod = db.add_vod(&info("x")).unwrap().0.id;

@@ -330,6 +330,23 @@ fn removing_with_its_video_keeps_only_the_stretches_edits_use_as_videos_of_their
     assert!(app.db().vod(vod.id).unwrap().is_none(), "the rest of it is still there");
 }
 
+/// Removed with its video, a VOD two edits use the same moments of keeps
+/// that stretch for each of them, one kept right after the other (vods.rs
+/// `delete_vod`: "With `delete_video`, it's erased now: first each stretch
+/// other clips use is realized").
+#[test]
+fn removing_with_its_video_keeps_a_stretch_two_edits_use_for_each() {
+    let app = TestApp::new();
+    let vod = a_site_vod(&app);
+    let (one, _) = an_edit(&app, vod.id, 40.0, 45.0);
+    let (two, _) = an_edit(&app, vod.id, 40.0, 45.0);
+    assert_eq!(remove_with_video(&app, vod.id), Value::Null);
+    let (one, two) = (&pieces(&app, one)[0], &pieces(&app, two)[0]);
+    assert_eq!((&one["hole"], &two["hole"]), (&json!(false), &json!(false)));
+    assert_ne!(one["vod_id"], two["vod_id"], "both pieces moved to one kept stretch");
+    assert!(app.db().vod(vod.id).unwrap().is_none(), "the rest of it is still there");
+}
+
 /// A stretch kept from a VOD removed with its video is made in the format
 /// chosen in Settings › Encoding when ffmpeg can't make H.264 (CHANGELOG.md,
 /// 0.7.3 Fixes: "Removing a VOD works without H.264. The stretch an edit
