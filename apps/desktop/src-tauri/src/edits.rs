@@ -664,3 +664,6 @@ pub(crate) async fn edit_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc:
     .map_err(err)?;
     Ok(tauri::ipc::Response::new(bytes))
 }
+
+#[cfg(test)]
+mod tests;

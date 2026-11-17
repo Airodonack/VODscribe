@@ -19,6 +19,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `clips.rs`: clips' commands, and the queue that cuts them.
 - `resolve.rs`: MP4 clips and edits dropped on DaVinci Resolve on Linux, which can't open them, are held back, and the page offers MOV.
 - `edits.rs`: edits' commands, and their rendering.
+- [`edits`](edits): their tests.
 - `footage.rs`: where a stretch plays from, and the downloads of sections edits need.
 - `videos.rs`: downloading a VOD's whole video on request.
 - `storyboards.rs`: keyframe pictures of the footage on this computer.
