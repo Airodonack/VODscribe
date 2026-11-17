@@ -264,12 +264,15 @@ fn record_unpacked(staging: &Path, parts: &[usize]) -> io::Result<()> {
     sync_dir(staging)
 }
 
-/// Writes each file in `dir` and the folder itself to the disk.
+/// Writes each file in `dir` and the folder itself to the disk. On Windows
+/// each is opened for writing: it flushes only a file open for that, and
+/// denies one opened to read ("Access is denied"); elsewhere reading is
+/// enough, and works on a library unpacked read-only.
 fn sync_folder(dir: &Path) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         if entry.file_type()?.is_file() {
-            File::open(entry.path())?.sync_all()?;
+            fs::OpenOptions::new().read(true).write(cfg!(windows)).open(entry.path())?.sync_all()?;
         }
     }
     sync_dir(dir)
