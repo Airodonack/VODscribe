@@ -48,6 +48,8 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `testkit.rs`: the app in a unit test, on Tauri's mock runtime and the core's fakes, with fake drags out of the window and drops onto it, a PATH and a screen of the test's, started again after a quit.
 - [`testkit`](testkit): the app kit's own tests.
 - [`clips`](clips): clips' tests.
+- [`job_list`](job_list): the list of jobs' tests.
+- [`jobs`](jobs): the job queue's tests.
 - [`player`](player): the player commands' tests.
 - [`recovery`](recovery): setting a library aside, and the next start.
 - [`drag_source`](drag_source): dragging clips out before they're made.
