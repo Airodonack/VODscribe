@@ -48,6 +48,7 @@ One module per subject.
 - `clips.rs`: clips cut to the frame with ffmpeg, in the codec and quality Settings picks.
 - [`clips`](clips): clips' tests.
 - `edits.rs`: edits, documents of pieces of VODs.
+- [`edits`](edits): its tests.
 - `render.rs`: renders an edit as one file, encoded as clips are.
 - `footage.rs`: where a stretch's picture and sound come from.
 - [`footage`](footage): its tests.
