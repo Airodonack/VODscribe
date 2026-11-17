@@ -1961,6 +1961,8 @@ fn start_drag(
             // where the drag would go. On Linux `page::emit` would overtake
             // it, and the drop would land nowhere. The drag is over, so
             // nothing holds that queue now.
+            #[cfg(test)]
+            crate::page::sent(&told, "drag-ended", &outcome);
             let _ = told.emit("drag-ended", outcome);
         }
     };

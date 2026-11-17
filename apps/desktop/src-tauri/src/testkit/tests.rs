@@ -6,6 +6,7 @@
 //! its screen is the test's.
 
 use serde_json::json;
+use tauri::Listener;
 
 use super::*;
 
@@ -46,6 +47,33 @@ fn the_desktop_hears_what_its_shown() {
     let shown = app.desktop().shown();
     assert_eq!(shown.len(), 1);
     assert_eq!(Media::read(&shown[0]), Some(app.clip_media(&clip)), "the clip's file, under its name");
+}
+
+/// What the app sends is heard as it's sent, in order: also while another
+/// thread's event (the jobs list's) is still being heard, which Tauri's
+/// listeners would hear only once that one is done.
+#[test]
+fn an_event_sent_while_another_is_being_heard_is_heard_once_sent() {
+    let app = TestApp::new();
+    let gate = Gate::new();
+    // Held while it's heard: this one list, not one of the app's own.
+    let list = json!([{ "kind": "receive", "label": "Day 3.mp4" }]);
+    let held = gate.clone();
+    let wanted = list.to_string();
+    app.handle().listen_any("jobs", move |e| {
+        if e.payload() == wanted {
+            held.wait();
+        }
+    });
+    let (handle, sent) = (app.handle().clone(), list.clone());
+    let jobs = std::thread::spawn(move || crate::page::emit(&handle, "jobs", sent));
+    gate.reached();
+    crate::page::emit(app.handle(), "vod", json!({ "id": 1 }));
+    crate::page::emit(app.handle(), "vod", json!({ "id": 2 }));
+    let heard = (app.heard("jobs").contains(&list), app.heard("vod"));
+    gate.open();
+    jobs.join().unwrap();
+    assert_eq!(heard, (true, vec![json!({ "id": 1 }), json!({ "id": 2 })]));
 }
 
 #[test]

@@ -367,7 +367,10 @@ mod taking {
     impl Window {
         fn tell(&self, event: &str, paths: Option<Vec<PathBuf>>, (x, y): (f64, f64)) {
             let target = tauri::EventTarget::Webview { label: self.label.clone() };
-            let _ = self.app.emit_to(target, event, Payload { paths, position: Position { x, y } });
+            let payload = Payload { paths, position: Position { x, y } };
+            #[cfg(test)]
+            crate::page::sent(&self.app, event, &payload);
+            let _ = self.app.emit_to(target, event, payload);
         }
     }
 
@@ -386,6 +389,8 @@ mod taking {
                 Event::Over { at } => self.tell("tauri://drag-over", None, at),
                 Event::Leave => {
                     let target = tauri::EventTarget::Webview { label: self.label.clone() };
+                    #[cfg(test)]
+                    crate::page::sent(&self.app, "tauri://drag-leave", &());
                     let _ = self.app.emit_to(target, "tauri://drag-leave", ());
                 }
                 Event::Drop { paths, links, at } => {

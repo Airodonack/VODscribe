@@ -52,7 +52,7 @@ assert_eq!(media.cut_from.unwrap().0, vod.source_path.unwrap());
 - `make_clip` makes a clip and waits for its file; `add_clip` only asks for it, and `made` waits.
 - `clips`, `clip` and `db` tell what the library has.
 - `invoke("cancel_job", json!({ "kind": "clip", "id": id }))` calls a command as the page does, with its arguments in camelCase; `invoke_bytes` for one that answers in bytes (`player_still`). Call the command's Rust function through `app.run(...)` when the test needs its typed answer.
-- `heard("clip")` gives the events the page heard, in order.
+- `heard("clip")` gives the events the app has sent the page, in order: each is there once its send returns, so one sent from a thread of the app's own is waited for (`eventually`).
 - `desktop()` tells what the file manager was asked to show or open.
 - `quit()` quits as closing the window does (lib.rs `quit`, which stops what this test's app started and nothing of another test's), and `kill()` ends the app as if it were killed. Each gives back its `Folder`, and `TestApp::on(folder)` starts the app on it again, as after that quit: the start's own steps (lib.rs `open_at_start`: the library opened and settled), its tidying, then the queues taking up what was left, the storyboards' sweep among them.
 - `TestApp::on(folder)` starts on any library: one that won't open starts on the recovery screen, with no state but `library_problem`'s, and one it can't read in full starts saying what didn't (`invoke("not_started")`).

@@ -9,6 +9,9 @@
 //! from another thread goes to the main thread as a GLib source of its own,
 //! which that loop runs too, and is sent from there. Elsewhere it goes as
 //! Tauri sends it.
+//!
+//! In the tests, what the page is sent is kept as it's sent (`sent`), for
+//! the test to read (`TestApp::heard`).
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -17,6 +20,8 @@ use crate::AppHandle;
 
 /// Sends `event` with `payload` to the page.
 pub(crate) fn emit<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    #[cfg(test)]
+    sent(app, event, &payload);
     // (Not in the tests, which have no main loop: `testkit`.)
     #[cfg(all(target_os = "linux", not(test)))]
     if !gtk::is_initialized_main_thread() {
@@ -32,4 +37,16 @@ pub(crate) fn emit<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: 
         return;
     }
     let _ = app.emit(event, payload);
+}
+
+/// Keeps `event` for the test as it's sent (`testkit::Heard`): every way
+/// the app sends the page an event calls this. Not a listener of Tauri's,
+/// which hears an event sent while another thread's is being heard only
+/// once that one's listeners are done, after its sender has gone on.
+#[cfg(test)]
+pub(crate) fn sent<S: Serialize>(app: &AppHandle, event: &str, payload: &S) {
+    use tauri::Manager;
+    if let Some(heard) = app.try_state::<crate::testkit::Heard>() {
+        heard.keep(event, payload);
+    }
 }

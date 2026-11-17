@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tauri::{Listener, Manager};
+use tauri::Manager;
 use vodscribe_core::db::{Clip, ClipStatus, Db, Vod};
 use vodscribe_core::testkit::tools::{self as fakes, At, Fake, Run};
 use vodscribe_core::testkit::{
@@ -44,8 +44,8 @@ use vodscribe_core::testkit::{
 
 use crate::{AppHandle, AppState, CmdResult, Rt, WebviewWindow};
 
-/// The events the page hears from the app (`page::emit`), kept as each
-/// came: every event the app sends is listened to.
+/// The events the page hears from the app (`page::emit`), each kept as it's
+/// sent (`Heard`): the names a test may ask for (`TestApp::heard`).
 const EVENTS: &[&str] = &[
     "annotations-found",
     "annotations-imported",
@@ -75,6 +75,19 @@ const EVENTS: &[&str] = &[
     "yt-dlp-progress",
 ];
 
+/// What the page has been sent, by event, kept by the app as it sends it
+/// (`page::sent`): by the time a send returns, the test reads it, in the
+/// order sent.
+#[derive(Default)]
+pub(crate) struct Heard(Mutex<HashMap<String, Vec<Value>>>);
+
+impl Heard {
+    pub(crate) fn keep(&self, event: &str, payload: &impl serde::Serialize) {
+        let payload = serde_json::to_value(payload).unwrap_or(Value::Null);
+        self.0.lock().unwrap().entry(event.into()).or_default().push(payload);
+    }
+}
+
 /// The app as it runs, for one test.
 pub(crate) struct TestApp {
     app: tauri::App<Rt>,
@@ -94,7 +107,6 @@ pub(crate) struct TestApp {
     /// The graphics card's driver tool on the app's PATH, faked once asked
     /// for (`nvidia_smi`).
     nvidia_smi: OnceLock<NvidiaSmi>,
-    heard: Arc<Mutex<HashMap<String, Vec<Value>>>>,
     /// Where the test's own files go (a VOD's file on this computer),
     /// outside the library's folder.
     files: PathBuf,
@@ -267,14 +279,7 @@ impl TestApp {
             .invoke_handler(crate::commands())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
-        let heard: Arc<Mutex<HashMap<String, Vec<Value>>>> = Arc::default();
-        for &event in EVENTS {
-            let heard = heard.clone();
-            app.listen_any(event, move |e| {
-                let payload = serde_json::from_str(e.payload()).unwrap_or(Value::Null);
-                heard.lock().unwrap().entry(event.into()).or_default().push(payload);
-            });
-        }
+        app.manage(Heard::default());
         app.manage(Desktop::default());
         app.manage(Drags::default());
         app.manage(Clock::default());
@@ -319,7 +324,6 @@ impl TestApp {
             net,
             worker,
             nvidia_smi: OnceLock::new(),
-            heard,
             files,
             dragged: AtomicU64::new(0),
             drags_ended: AtomicUsize::new(0),
@@ -723,7 +727,7 @@ impl TestApp {
     /// The payloads of the events `event` the page has heard so far, in order.
     pub(crate) fn heard(&self, event: &str) -> Vec<Value> {
         assert!(EVENTS.contains(&event), "no event {event} is sent (testkit::EVENTS)");
-        self.heard.lock().unwrap().get(event).cloned().unwrap_or_default()
+        self.app.state::<Heard>().0.lock().unwrap().get(event).cloned().unwrap_or_default()
     }
 
     /// A file on this computer, `name` (with its extension), holding
