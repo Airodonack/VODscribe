@@ -50,6 +50,7 @@ One module per subject.
 - `edits.rs`: edits, documents of pieces of VODs.
 - `render.rs`: renders an edit as one file, encoded as clips are.
 - `footage.rs`: where a stretch's picture and sound come from.
+- [`footage`](footage): its tests.
 - `sources.rs`: the VODs clips are made of, kept while any clip uses them.
 - [`sources`](sources): its tests.
 - `mkv.rs`: how much of a Matroska file still being written is whole.

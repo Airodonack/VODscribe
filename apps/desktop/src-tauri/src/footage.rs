@@ -590,26 +590,4 @@ fn part_file(work: &std::path::Path, prefix: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A section done with (its VOD's video kept from it) while the player
-    /// still reads it, as it does for a moment after `player::refile`, or the
-    /// preview's decoder longer: deleted, or else gone at the next tidying.
-    #[test]
-    fn a_section_still_read_goes_at_the_next_tidying_if_not_now() {
-        let dir = std::env::temp_dir().join(format!("vodscribe-drop-section-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("{}.mkv", footage::section_stem(7, 0.0, 60.0)));
-        std::fs::write(&path, b"section").unwrap();
-        let held = crate::open_as_ffmpeg(&path);
-        drop_section(&path);
-        let left = path.is_file();
-        // The player lets go; then the next tidying, as `tidy` does it.
-        drop(held);
-        footage::tidy(&dir, UNUSED_FOR, u64::MAX, |_| false);
-        let still = path.is_file();
-        let _ = std::fs::remove_dir_all(&dir);
-        assert!(!still, "left after the next tidying (deleted now: {})", !left);
-    }
-}
+mod tests;
