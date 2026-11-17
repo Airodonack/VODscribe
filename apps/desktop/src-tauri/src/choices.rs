@@ -35,3 +35,6 @@ pub(crate) async fn keep_choice(kept: State<'_, Kept>, key: String, value: Strin
     let mut choices = kept.choices.lock().unwrap();
     choices::keep(&kept.path, &mut choices, &key, &value).map_err(err)
 }
+
+#[cfg(test)]
+mod tests;

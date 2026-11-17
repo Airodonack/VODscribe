@@ -16,8 +16,22 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }`),
 );
-const { ACTIONS, bindingOf, buildMap, canonical, caps, conflicts, label, matches, parse, plainest, typesText } =
-  await import("./keymap.ts");
+const {
+  ACTIONS,
+  LEGEND_GROUPS,
+  SCOPES,
+  bindingOf,
+  buildMap,
+  canonical,
+  caps,
+  conflicts,
+  defaultsOf,
+  label,
+  matches,
+  parse,
+  plainest,
+  typesText,
+} = await import("./keymap.ts");
 const { isEscape, markFramesOf, transportKey } = await import("./playerKeys.ts");
 
 /** @typedef {import("./keymap.ts").KeyLike} Press */
@@ -45,6 +59,7 @@ const isOn = (os, overrides = {}) => {
 /** @type {Os[]} */
 const OSES = ["linux", "mac", "windows"];
 
+/** keymap.ts, module doc: "Bindings are written as text, \"Ctrl+Shift+ArrowLeft\", \"Meta+[\", \"Shift+<\", \" \" for Space: the modifiers in the order Ctrl, Alt, Shift, Meta". */
 test("bindings are written one way: Ctrl, Alt, Shift, Meta, then the key", () => {
   assert.equal(canonical("Shift+Ctrl+Z"), "Ctrl+Shift+z");
   assert.equal(canonical("Meta+Shift+ArrowLeft"), "Shift+Meta+ArrowLeft");
@@ -60,6 +75,7 @@ test("bindings are written one way: Ctrl, Alt, Shift, Meta, then the key", () =>
       assert.equal(canonical(b), b, `${action.id} ${b} is written as matched`);
 });
 
+/** keymap.ts, module doc: "A press matches a binding when its key and all four modifiers are the same, so \"b\" and \"Ctrl+b\" are different bindings"; `keyName`: "so Shift or Caps Lock don't change it". */
 test("a press is its key, lower-cased, and exactly its modifiers", () => {
   assert.equal(bindingOf(press("K", "shift")), "Shift+k");
   assert.equal(bindingOf(press("<", "shift")), "Shift+<");
@@ -71,6 +87,7 @@ test("a press is its key, lower-cased, and exactly its modifiers", () => {
   assert.ok(!matches(press("b"), ["Ctrl+b"]));
 });
 
+/** keymap.ts `buildMap`: "its defaults, or the user's own list where `overrides` has one (an empty list: no key). Bindings that aren't are dropped; ids the table doesn't have are left alone" (CHANGELOG.md, 0.6.0: "Every keyboard control can be changed."). */
 test("the user's bindings replace an action's defaults, and only its", () => {
   const map = buildMap("linux", { "play.toggle": ["P", "nonsense key"], "cut.here": [], "gone.action": ["x"] });
   assert.deepEqual(map.get("play.toggle"), ["p"]);
@@ -83,6 +100,7 @@ test("the user's bindings replace an action's defaults, and only its", () => {
   assert.ok(!is(press(" "), "play.toggle"));
 });
 
+/** keymap.ts `label`: "\"⇧⌘Z\" on a Mac, \"Ctrl+Shift+Z\" elsewhere"; `caps`, `plainest`. */
 test("each OS writes keys its own way", () => {
   assert.equal(label("Shift+Meta+z", "mac"), "⇧⌘Z");
   assert.equal(label("Meta+[", "mac"), "⌘[");
@@ -107,6 +125,7 @@ test("each OS writes keys its own way", () => {
   assert.equal(first("linux", "mute.toggle"), "Shift+M");
 });
 
+/** keymap.ts `fullscreen.toggle`: "F, and F11 as on Linux and Windows. Not on a Mac". */
 test("F11 toggles full screen where the system means it to, beside F", () => {
   for (const os of /** @type {Os[]} */ (["linux", "windows"])) {
     assert.ok(isOn(os)(press("F11"), "fullscreen.toggle"), `F11 on ${os}`);
@@ -117,6 +136,7 @@ test("F11 toggles full screen where the system means it to, beside F", () => {
   assert.ok(isOn("mac")(press("f"), "fullscreen.toggle"));
 });
 
+/** keymap.ts `conflicts`: "Keys two actions have by default are shared on purpose", so the defaults name no conflict. */
 test("ids are unique, and the defaults clash nowhere they could both be live", () => {
   const ids = ACTIONS.map((a) => a.id);
   assert.equal(new Set(ids).size, ids.length);
@@ -127,6 +147,7 @@ test("ids are unique, and the defaults clash nowhere they could both be live", (
   }
 });
 
+/** keymap.ts `conflicts`: "The actions other than `id` that `binding` would be taken from: those live at the same time with the binding in `map`" (Settings › Controls' "Used by …"). */
 test("a key taken by an action live at the same time is named", () => {
   const map = buildMap("linux", {});
   /** @param {string} binding @param {ActionId} id @param {Map<ActionId, string[]>} m */
@@ -141,6 +162,7 @@ test("a key taken by an action live at the same time is named", () => {
   assert.deepEqual(ids("k", "frame.back10", buildMap("linux", { "play.toggle": [" "] })), []);
 });
 
+/** keymap.ts `conflicts`: "All of them, not just the first: Delete is four actions' by default, and a key given to another action must leave each of them (Settings › Controls' Replace)." */
 test("a key several actions have is named for each, so Replace takes it from them all", () => {
   // Delete removes four things by default; given to Play, it must leave each,
   // or Delete would go on removing as well as playing.
@@ -430,6 +452,7 @@ function check(os, where, e, now, before, context = "") {
   assert.equal(now, before, label);
 }
 
+/** keymap.ts, module doc: "The defaults are the keys the app has always meant ... Those now do nothing", walked press by press against the handlers' own tests from before the table. */
 test("on every OS, every press does in either player what it did before the map, or nothing", () => {
   for (const os of OSES) {
     const is = isOn(os);
@@ -444,6 +467,7 @@ test("on every OS, every press does in either player what it did before the map,
   }
 });
 
+/** CHANGELOG.md, 0.5.0: "C makes a clip (it was E; E now renders an edit)". */
 test("an edit's E renders, bare, even before its player is there", () => {
   for (const os of OSES) {
     const is = isOn(os);
@@ -454,6 +478,7 @@ test("an edit's E renders, bare, even before its player is there", () => {
   }
 });
 
+/** keymap.ts, module doc: the app's keys (undo, redo, back, forward, search) as before the table. */
 test("on every OS, the app's keys do what they did, in a text field or not, or nothing", () => {
   for (const os of OSES) {
     const is = isOn(os);
@@ -463,6 +488,7 @@ test("on every OS, the app's keys do what they did, in a text field or not, or n
   }
 });
 
+/** keymap.ts `typesText`: "An action of the app's that's given such a key (Search on \"/\") leaves it to the field the user is typing in". */
 test("an app key that types a character leaves it to the text field being typed in", () => {
   // Search given "/": it jumps to the box from anywhere but a text field,
   // where "/" is typed as ever (the box itself, a clip's name, a mark's note).
@@ -477,6 +503,7 @@ test("an app key that types a character leaves it to the text field being typed 
   assert.equal(typesText(press("ArrowLeft")), false);
 });
 
+/** keymap.ts, module doc: "B or Z with Super held as well, Shift+Space, ... Those now do nothing; keymap.test.mjs walks every old press and lists each such one." */
 test("the presses let through by accident before are the ones listed", () => {
   // Runs after the three above, which collected them.
   assert.deepEqual([...met.keys()].sort(), [
@@ -513,4 +540,143 @@ test("the presses let through by accident before are the ones listed", () => {
     'linux ctrl+alt+"b" pane shown or hidden',
   ])
     assert.ok(all.has(example), example);
+});
+
+/** keymap.ts `Action`: "Bindings, the first the one shown; Windows has Linux's
+ *  unless it says." */
+test("Windows has Linux's keys unless an action gives its own", () => {
+  const own = { id: "x", label: "x", scope: "app", defaults: { linux: ["a"], mac: ["b"], windows: ["c"] } };
+  assert.deepEqual(defaultsOf(/** @type {any} */ (own), "linux"), ["a"]);
+  assert.deepEqual(defaultsOf(/** @type {any} */ (own), "mac"), ["b"]);
+  for (const action of ACTIONS) {
+    const { windows } = /** @type {{ windows?: string[] }} */ (action.defaults);
+    assert.deepEqual(defaultsOf(action, "windows"), windows ?? action.defaults.linux, action.id);
+    assert.deepEqual(defaultsOf(action, "linux"), action.defaults.linux, action.id);
+    assert.deepEqual(defaultsOf(action, "mac"), action.defaults.mac, action.id);
+  }
+  assert.deepEqual(defaultsOf(/** @type {any} */ (own), "windows"), ["c"]);
+});
+
+/** keymap.ts `ACTIONS`: "(⌘ for Ctrl where ... metaKey)": a Mac's own keys use ⌘ where the others use Ctrl. */
+test("a Mac's defaults use Meta where the other systems use Ctrl", () => {
+  for (const action of ACTIONS) {
+    for (const b of action.defaults.mac) assert.ok(!parse(b)?.mods.has("Ctrl"), `${action.id} ${b} on a Mac`);
+    for (const b of action.defaults.linux) assert.ok(!parse(b)?.mods.has("Meta"), `${action.id} ${b} on Linux`);
+  }
+});
+
+/** keymap.ts, module doc: "Not in the table, the same everywhere: Escape (cancels, deselects, leaves full screen, closes) ... Tab". */
+test("Escape and Tab are no action's key", () => {
+  for (const action of ACTIONS)
+    for (const os of OSES)
+      for (const b of defaultsOf(action, os))
+        assert.ok(!["Escape", "Tab"].includes(parse(b)?.key ?? ""), `${action.id} ${b}`);
+});
+
+/** keymap.ts `buildMap`: the one way a binding is written, so a key given twice in different ways is one. */
+test("a key given twice, written differently, is one binding", () => {
+  const map = buildMap("linux", { "play.toggle": ["Shift+Ctrl+P", "Ctrl+Shift+p", "Ctrl+Shift+P"] });
+  assert.deepEqual(map.get("play.toggle"), ["Ctrl+Shift+p"]);
+});
+
+/** keymap.ts `SCOPES` and `LEGEND_GROUPS`: "The scopes as the user knows them, in the order Settings › Controls groups the keys by"; the legend's four columns. */
+test("every action is in a scope Settings groups by and a legend column the players show", () => {
+  assert.deepEqual(
+    SCOPES.map((s) => s.scope),
+    ["app", "player", "edit", "mark"],
+  );
+  assert.deepEqual(
+    LEGEND_GROUPS.map((g) => g.group),
+    ["playing", "cutting", "marks", "more"],
+  );
+  for (const action of ACTIONS) {
+    assert.ok(
+      SCOPES.some((s) => s.scope === action.scope),
+      action.id,
+    );
+    if ("legend" in action)
+      assert.ok(
+        LEGEND_GROUPS.some((g) => g.group === action.legend),
+        action.id,
+      );
+  }
+  for (const s of SCOPES)
+    assert.ok(
+      ACTIONS.some((a) => a.scope === s.scope),
+      `${s.heading} has an action`,
+    );
+});
+
+/** keymap.ts `conflicts`: "Empty if none": a key that isn't one, or an action the table lacks, takes nothing from anyone. */
+test("a binding that is none, or an action the table lacks, is taken from no one", () => {
+  const map = buildMap("linux", {});
+  assert.deepEqual(conflicts(map, "Ctrl+", "play.toggle", "linux"), []);
+  assert.deepEqual(conflicts(map, "k", /** @type {ActionId} */ ("no.such.action"), "linux"), []);
+});
+
+/** keymap.ts `conflicts`: a key written another way still names who has it. */
+test("a key is named as taken however it is written", () => {
+  const map = buildMap("linux", {});
+  assert.deepEqual(
+    conflicts(map, "Shift+Ctrl+Z", "cut.here", "linux").map((a) => a.id),
+    ["redo"],
+  );
+});
+
+/** keymap.ts `label`: a binding that isn't one is shown as written. */
+test("a binding that is none is shown as it was written", () => {
+  assert.equal(label("Ctrl+", "linux"), "Ctrl+");
+  assert.deepEqual(caps(["Ctrl+", "k"], "linux"), ["K"]);
+});
+
+/** keymap.ts `SCOPES`: "The scopes as the user knows them, in the order Settings › Controls groups the keys by". */
+test("Settings groups the keys under the headings Everywhere, Playing, In an edit, With a cut or mark selected", () => {
+  assert.deepEqual(
+    SCOPES.map((s) => s.heading),
+    ["Everywhere", "Playing", "In an edit", "With a cut or mark selected"],
+  );
+});
+
+/** keymap.ts `LONE`: "`e.key`s that are a modifier on its own: never a binding's key." */
+test("a modifier pressed on its own, or no key at all, is no binding", () => {
+  for (const key of ["Control", "Shift", "Alt", "AltGraph", "Meta", "OS", ""])
+    assert.equal(bindingOf(press(key)), null, JSON.stringify(key));
+  for (const bad of ["Alt", "AltGraph", "OS", "Meta", "Ctrl+Alt", "Shift+Meta"])
+    assert.equal(canonical(bad), null, bad);
+  assert.equal(matches(press("Alt", "alt"), ["Alt+a"]), false);
+});
+
+/** keymap.ts `parse`: "One character (a letter, a sign, \" \"), or a named key: Enter, ArrowLeft, F2." */
+test("a binding is its modifiers joined by +, then one character or a named key", () => {
+  for (const bad of ["xArrowLeft", "aF2", "Ctrl+ab", "Ctrl+1a"]) assert.equal(canonical(bad), null, bad);
+  for (const good of ["Ctrlz", "Ctrlzz", "Shiftab", "F2", "Enter", "ArrowLeft", "Ctrl+F12", "Alt+Shift+Delete"])
+    assert.equal(canonical(good), good, good);
+});
+
+/** keymap.ts `keyLabel`: the named keys as the user reads them: "Space", "←", "Esc". */
+test("the arrow keys and Escape are written as the user reads them", () => {
+  assert.equal(label("Alt+ArrowUp", "linux"), "Alt+↑");
+  assert.equal(label("Alt+ArrowDown", "linux"), "Alt+↓");
+  assert.equal(label("Escape", "linux"), "Esc");
+  assert.equal(label("Alt+ArrowRight", "mac"), "⌥→");
+});
+
+/** keymap.ts `plainest`: "`bindings` less those that are another of them with more modifiers held (Shift+K beside K)". */
+test("a legend shows the plainest of a key's bindings, and keeps those that aren't another's with more", () => {
+  assert.deepEqual(plainest(["Ctrl+Shift+k", "Ctrl+k"]), ["Ctrl+k"]);
+  // Not the same key, or not the same modifiers plus more: both stay.
+  assert.deepEqual(plainest(["k", "Shift+j"]), ["k", "Shift+j"]);
+  assert.deepEqual(plainest(["Ctrl+k", "Alt+Shift+k"]), ["Ctrl+k", "Alt+Shift+k"]);
+  assert.deepEqual(plainest(["Ctrl+k", "Shift+k"]), ["Ctrl+k", "Shift+k"]);
+  assert.deepEqual(plainest(["k", "k"]), ["k", "k"]);
+  assert.deepEqual(plainest(["Ctrl+", "k"]), ["k"], "a binding that is none isn't shown");
+});
+
+/** keymap.ts `conflicts`: "those live at the same time with the binding in `map`": a map that lacks an action has no key for it. */
+test("an action a map has no keys for takes no key from anyone", () => {
+  const map = new Map([["play.toggle", ["k"]]]);
+  assert.deepEqual(
+    conflicts(/** @type {any} */ (map), "k", "frame.back10", "linux").map((a) => a.id),
+    ["play.toggle"],
+  );
 });
