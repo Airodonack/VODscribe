@@ -12,6 +12,9 @@ import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 
 import { dataDirs } from "./data.mjs";
 
+/** How much `ps` may print, bytes. */
+const PS_MAX = 64 * 2 ** 20;
+
 /**
  * "pid command line" of each process whose command line has the app's local
  * data folder in it, or, with `exe` (the app's binary), whose program is it.
@@ -29,7 +32,8 @@ export function leftovers(exe = null) {
     return out.split(/\r?\n/).filter(Boolean);
   }
   const app = exe ? programs(exe) : new Set();
-  const out = execFileSync("ps", ["-axww", "-o", "pid=,command="], { encoding: "utf8" });
+  // Every command line in full: past execFileSync's 1 MiB on a busy computer (ENOBUFS, 2026-11-16).
+  const out = execFileSync("ps", ["-axww", "-o", "pid=,command="], { encoding: "utf8", maxBuffer: PS_MAX });
   return out
     .split("\n")
     .map((l) => l.trim())
@@ -57,7 +61,7 @@ function programs(exe) {
   }
   // macOS: `comm` is the program's path as it was started (lib/drivers.mjs's
   // bridge starts it by its full path).
-  const out = execFileSync("ps", ["-axww", "-o", "pid=,comm="], { encoding: "utf8" });
+  const out = execFileSync("ps", ["-axww", "-o", "pid=,comm="], { encoding: "utf8", maxBuffer: PS_MAX });
   return new Set(
     out
       .split("\n")

@@ -143,7 +143,10 @@ jobs:
           if [[ "$RUNNER_OS" == Linux ]]; then
             cargo install tauri-driver --version 2.1.0 --locked
             sudo apt-get update
-            sudo apt-get install -y webkit2gtk-driver xvfb xdotool openbox ./build/deb/*.deb
+            sudo apt-get install -y webkit2gtk-driver xvfb xdotool openbox gdb ./build/deb/*.deb
+            # An app that won't quit has its threads' backtraces taken before it's killed
+            # (tests/e2e/lib/threads.mjs): gdb must be let attach to a process it didn't start.
+            sudo sysctl -w kernel.yama.ptrace_scope=0
             echo "APP=/usr/bin/vodscribe" >> "$GITHUB_ENV"
           elif [[ "$RUNNER_OS" == macOS ]]; then
             # The app with the tests' hook, as built (a runner has no Mac's

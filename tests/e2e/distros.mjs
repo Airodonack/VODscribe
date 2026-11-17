@@ -110,11 +110,12 @@ const APT = (image) => ({
   // Nautilus, for the scenarios that drop a clip on a file manager (about 50
   // to 60 s more to install); File Roller, for drop-virtual to drag a video
   // out of a zip (before 43 it can: Ubuntu 22.04's); file, to name the
-  // binary a crash's core is from.
+  // binary a crash's core is from; gdb, for the threads of an app that won't
+  // quit (lib/threads.mjs).
   install:
     `export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && ` +
     `driver=$(apt-cache policy webkit2gtk-driver | grep -q "Candidate: [0-9]" && echo webkit2gtk-driver || echo webkitgtk-webdriver) && ` +
-    `apt-get install -y -qq /pkg/app.deb $driver xvfb xauth openbox xdotool dbus procps nautilus file-roller file $EXTRA >/dev/null`,
+    `apt-get install -y -qq /pkg/app.deb $driver xvfb xauth openbox xdotool dbus procps nautilus file-roller file gdb $EXTRA >/dev/null`,
 });
 const DNF = (image) => ({
   image,
@@ -127,7 +128,7 @@ const DNF = (image) => ({
   // and "h264:" says what came of it.
   install:
     `dnf install -y -q --disablerepo=fedora-cisco-openh264 noopenh264 gstreamer1-plugin-openh264 >/dev/null && ` +
-    `dnf install -y -q /pkg/app.rpm webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth openbox xdotool dbus-daemon procps-ng file $EXTRA >/dev/null && ` +
+    `dnf install -y -q /pkg/app.rpm webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth openbox xdotool dbus-daemon procps-ng file gdb $EXTRA >/dev/null && ` +
     `echo "h264: $(rpm -q openh264 noopenh264 gstreamer1-plugin-openh264 | tr '\\n' ' ')"`,
 });
 // Arch: the libraries the .deb's binaries link, from Arch, and the .deb unpacked over /.
@@ -140,7 +141,7 @@ const PACMAN = (image) => ({
     // links ALSA for the player's sound), and GStreamer's plugins, optional for WebKitGTK there,
     // without which its web process aborts at the first sound ("autoaudiosink not found").
     `pacman -Syu --noconfirm --needed webkit2gtk-4.1 webkitgtk-6.0 gtk3 libsoup3 alsa-lib gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav glycin bubblewrap ` +
-    `xorg-server-xvfb xorg-xauth openbox xdotool dbus libarchive procps-ng file $EXTRA >/dev/null && ` +
+    `xorg-server-xvfb xorg-xauth openbox xdotool dbus libarchive procps-ng file gdb $EXTRA >/dev/null && ` +
     `mkdir -p /tmp/deb && cd /tmp/deb && bsdtar -xf /pkg/app.deb && tar -xf data.tar.* -C / && cd / && ` +
     // pacman's hooks can't all run in a container: GTK's settings schemas by hand.
     `glib-compile-schemas /usr/share/glib-2.0/schemas`,

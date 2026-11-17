@@ -1,10 +1,12 @@
 // The two ways into the app's page, behind one interface: each starts the app
 // and returns { run(body, args, waitMs), screenshot(), focus(), resize(width,
-// height), close(), proc }, where `run` does what WebDriver's "execute script"
+// height), close({ hung }), proc }, where `run` does what WebDriver's "execute script"
 // does (a function body, its `arguments`, the awaited result), `focus` asks
 // for the window to be given the keyboard, `resize` asks for the window's page
 // to be `width` by `height` CSS pixels (without waiting for it to get there),
-// and `proc` is the app's process as far as it's known:
+// `close` ends the session and the app, calling `hung(pid)` first when the
+// app outlives its grace and is about to be killed (run.mjs keeps its
+// threads then, lib/threads.mjs), and `proc` is the app's process as far as it's known:
 // { exe, pid, closedAt, exitedAt, exit } (times in ms since the epoch; null
 // where not known or not yet), for the page dump (lib/dump.mjs).
 //
@@ -460,7 +462,7 @@ export async function webdriver(app, { again = false } = {}) {
         height: height + rect.height - page.height,
       });
     },
-    close: async () => {
+    close: async ({ hung } = {}) => {
       proc.closedAt = Date.now();
       await wd("DELETE", `/session/${session}`).catch(() => {});
       if (!proc.pid) return;
@@ -469,8 +471,10 @@ export async function webdriver(app, { again = false } = {}) {
       // session can't end its app at all.
       if (!lost) await waitFor("the app to exit", async () => proc.exitedAt !== null, EXIT_WAIT).catch(() => {});
       if (proc.exitedAt === null) {
-        if (!lost)
+        if (!lost) {
           console.log(`the app (pid ${proc.pid}) still ran ${EXIT_WAIT / 1000} s after its session closed: killed`);
+          hung?.(proc.pid);
+        }
         try {
           process.kill(proc.pid, "SIGKILL");
         } catch {}
@@ -558,10 +562,14 @@ export async function bridge(app, { listenMs = MINUTE } = {}) {
         })`,
         [{ width, height }],
       ),
-    close: async () => {
+    close: async ({ hung } = {}) => {
       proc.closedAt = Date.now();
       await post("/quit").catch(() => {});
-      await waitFor("the app to quit", async () => exited !== null, 20_000).catch(() => child.kill("SIGKILL"));
+      await waitFor("the app to quit", async () => exited !== null, 20_000).catch(() => {
+        console.log(`the app (pid ${child.pid}) still ran 20 s after it was asked to quit: killed`);
+        hung?.(child.pid);
+        child.kill("SIGKILL");
+      });
     },
     proc,
   };

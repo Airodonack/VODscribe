@@ -16,7 +16,9 @@
 // Each scenario empties the app's data folder first (lib/data.mjs), keeping
 // the tools and speech model; set E2E_RESET_DATA=1 to allow it once there's
 // a library. On failure: the page's errors and a screenshot in E2E_OUT
-// (default tests/e2e/out). Every scenario runs; the exit code says if any failed.
+// (default tests/e2e/out); an app that won't quit, every thread's backtrace
+// first (<scenario>.threads.txt, Linux: lib/threads.mjs). Every scenario
+// runs; the exit code says if any failed.
 //
 // A scenario exports { name, before?(ctx), run(app, ctx), allowErrors?,
 // needs? } (needs: ["network"] runs only with E2E_NETWORK=1): `before` sets up
@@ -89,6 +91,7 @@ import * as os from "./lib/os.mjs";
 import { preflight } from "./lib/preflight.mjs";
 import * as profile from "./lib/profile.mjs";
 import * as screen from "./lib/screen.mjs";
+import { threadDump } from "./lib/threads.mjs";
 import { startFileHost } from "./lib/fileHost.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -223,6 +226,8 @@ async function runTurn({ name, run }) {
   // This run's folder for its measures: <scenario>, then <scenario>-2, …
   const measures = path.join(perfOut, run === 1 ? name : `${name}-${run}`);
   const log = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${name}: ${what}`);
+  // An app that won't quit: its threads, before it's killed (lib/threads.mjs).
+  const hung = (pid) => keepThreads(run === 1 ? name : `${name}-${run}`, pid);
   screen.newScenario();
   // The cores already there: one that appears is this scenario's crash.
   const coresBefore = new Set(drivers.cores());
@@ -285,7 +290,7 @@ async function runTurn({ name, run }) {
       await measurePage();
       const closing = current;
       current = null;
-      await closing?.driver.close();
+      await closing?.driver.close({ hung });
     },
     start: launch,
     skip: (why) => {
@@ -337,7 +342,7 @@ async function runTurn({ name, run }) {
     await measurePage();
     // The app's memory at the end, with its children's (Linux; lib/memory.mjs).
     memory = current ? memoryOf(positionals[0]) : null;
-    await current?.driver.close();
+    await current?.driver.close({ hung });
     // A button or key a failed gesture left down would spoil the next scenario's.
     try {
       os.letGoOfAll();
@@ -406,7 +411,7 @@ function summarize() {
  * so the second's don't overwrite them or read as the same picture.
  */
 function keepFirstAttempt(name, taken) {
-  for (const ext of ["txt", "png"]) {
+  for (const ext of ["txt", "png", "threads.txt"]) {
     const file = path.join(out, `${name}.${ext}`);
     if (existsSync(file)) renameSync(file, path.join(out, `${name}.first.${ext}`));
   }
@@ -566,6 +571,16 @@ async function diagnose(driver, name) {
     writeFileSync(file, png);
     console.error(`  screenshot: ${file}`);
   }
+}
+
+/** An app that outlived its session: every thread's state and backtrace, in E2E_OUT/<run>.threads.txt. */
+function keepThreads(run, pid) {
+  const threads = threadDump(pid);
+  if (!threads) return;
+  mkdirSync(out, { recursive: true });
+  const file = path.join(out, `${run}.threads.txt`);
+  writeFileSync(file, threads);
+  console.error(`  threads: ${file}`);
 }
 
 /**

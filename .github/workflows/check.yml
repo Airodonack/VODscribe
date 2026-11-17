@@ -89,7 +89,7 @@ jobs:
           echo "$HOME/ffmpeg" >> "$GITHUB_PATH"
       # The end-to-end harness's own parts.
       - run: node --test tests/e2e/verify.test.mjs
-      - run: node --test tests/e2e/durations.test.mjs tests/e2e/merge-results.test.mjs tests/e2e/lib/budgets.test.mjs tests/e2e/lib/drivers.test.mjs tests/e2e/lib/fileHost.test.mjs tests/e2e/lib/data.test.mjs tests/e2e/lib/dump.test.mjs tests/e2e/lib/runnerScreen.test.mjs
+      - run: node --test tests/e2e/durations.test.mjs tests/e2e/merge-results.test.mjs tests/e2e/lib/budgets.test.mjs tests/e2e/lib/drivers.test.mjs tests/e2e/lib/fileHost.test.mjs tests/e2e/lib/data.test.mjs tests/e2e/lib/dump.test.mjs tests/e2e/lib/threads.test.mjs tests/e2e/lib/runnerScreen.test.mjs
       # Also catches app code the website's demo stand-ins don't provide.
       - run: pnpm --filter site build
 

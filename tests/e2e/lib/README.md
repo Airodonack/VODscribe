@@ -18,6 +18,7 @@ What the scenarios and the runners share.
 - `runnerScreen.mjs`: whether a runner's screen is clear before the suite.
 - `procs.mjs`: processes the app started that are still running.
 - `dump.mjs`: what a failure leaves to look at, as text.
+- `threads.mjs`: every thread of an app that won't quit, with gdb's backtraces, before it's killed.
 - `memory.mjs`: the app's memory at a scenario's end, on Linux.
 - `durations.mjs`: scenarios' last times, and dealing them out to workers and shards.
 - `budgets.mjs`: the performance budgets, and judging timings against them.
