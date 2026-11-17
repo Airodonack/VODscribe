@@ -94,39 +94,4 @@ pub fn mime(name: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn serves_only_thumbnail_names() {
-        assert_eq!(mime("12.jpg"), Some("image/jpeg"));
-        assert_eq!(mime("12-1791778286978.webp"), Some("image/webp"));
-        assert_eq!(mime("12-.webp"), None);
-        assert_eq!(mime("12-3-4.webp"), None);
-        assert_eq!(mime("3.webp"), Some("image/webp"));
-        assert_eq!(mime("../library.sqlite"), None);
-        assert_eq!(mime("12.part"), None);
-        assert_eq!(mime(".jpg"), None);
-        assert_eq!(mime("1.jpg/../x"), None);
-    }
-
-    #[test]
-    fn removes_only_that_vods_thumbnails() {
-        let dir = crate::TempDir::new("thumbs");
-        for name in ["1.jpg", "1-5.webp", "12-5.webp", "1.part", "notes.txt"] {
-            fs::write(dir.join(name), b"x").unwrap();
-        }
-        remove(&dir, 1);
-        let mut left: Vec<String> =
-            fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
-        left.sort();
-        assert_eq!(left, ["1.part", "12-5.webp", "notes.txt"]);
-    }
-
-    #[test]
-    fn sniffs_images() {
-        assert_eq!(image_ext(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("jpg"));
-        assert_eq!(image_ext(b"RIFF\0\0\0\0WEBPVP8 "), Some("webp"));
-        assert_eq!(image_ext(b"<html>"), None);
-    }
-}
+mod tests;

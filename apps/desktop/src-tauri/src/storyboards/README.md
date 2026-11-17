@@ -1,3 +1,3 @@
 # The storyboards' tests
 
-- `tests.rs`: the specs of `storyboards.rs`: a video deleted while its storyboard is made, the start's sweep beside the queue, the files' names, and an edit's moments found in its pieces' footage.
+- `tests.rs`: the specs of `storyboards.rs`: what's made for a VOD's files and in what order, the timeline's picture at a time for a VOD or an edit, a file's library picture taken from its storyboard, a removed or deleted VOD's storyboards, the start's sweep beside the queue, and the files' names.

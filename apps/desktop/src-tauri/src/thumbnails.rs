@@ -68,3 +68,6 @@ pub(crate) fn cache_missing_thumbnails(app: AppHandle) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

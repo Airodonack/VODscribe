@@ -27,6 +27,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `storyboards.rs`: keyframe pictures of the footage on this computer.
 - [`storyboards`](storyboards): their tests.
 - `thumbnails.rs`: VOD thumbnails for the page.
+- [`thumbnails`](thumbnails): their tests.
 - `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - [`annotations`](annotations): its tests.
 - `history.rs`: undo and redo, per document.
@@ -44,6 +45,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `app_server.rs`: serves the page from `http://localhost` in release builds, since YouTube's and Twitch's players need an http page.
 - [`app_server`](app_server): its tests.
 - `media.rs`: serves local files to the page's `<video>`.
+- [`media`](media): its tests.
 - `loopback.rs`: what those local servers share; they answer on loopback only.
 - [`loopback`](loopback): its tests.
 - `page.rs`: sends the page its events, from any thread.

@@ -64,7 +64,9 @@ One module per subject.
 - `annotations_filter.rs`: the Bloom filter of published VODs, so the host never learns the library.
 - [`annotations_filter`](annotations_filter): its tests.
 - `thumbs.rs`: local copies of VOD thumbnails.
+- [`thumbs`](thumbs): its tests.
 - `peaks.rs`: a VOD's waveform.
+- [`peaks`](peaks): its tests.
 - `playable.rs`: what this computer's web view can play.
 - `settings.rs`: the app's settings.
 - [`settings`](settings): its tests.

@@ -11,4 +11,5 @@
 - `present_macos.rs`: that surface as a layer in the window's view.
 - `present_windows.rs`: that surface as a child window, with GDI where Direct3D is software only.
 - `storyboard.rs`: small keyframe pictures for the timeline's thumbnail.
+- [`storyboard`](storyboard): its tests.
 - [`bin`](bin): a bare window to play a file in.
