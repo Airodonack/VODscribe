@@ -304,9 +304,10 @@ fn at_most_two_downloaded_requests_wait_for_the_transcriber() {
     ready(&app, asked[1]);
     assert_eq!(request(&app, asked[2]).status, Status::Queued);
     assert!(!running(&app).contains(&asked[2]), "a third downloaded");
+    // Their VODs before they run on: a request done is written anew, its row gone.
+    let vods = asked.map(|id| request(&app, id).vod_id);
     gate.open();
-    for id in asked {
-        let vod_id = request(&app, id).vod_id;
+    for vod_id in vods {
         assert_eq!(settled(&app, vod_id).transcribed, Transcribed::All);
     }
 }
