@@ -25,6 +25,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - [`annotations`](annotations): its tests.
 - `history.rs`: undo and redo, per document.
+- [`history`](history): its tests.
 - `clipboard.rs`: Ctrl+C, Ctrl+X and Ctrl+V: what was copied, and the clips a cut holds.
 - [`clipboard`](clipboard): its tests.
 - `choices.rs`: the page's small choices, read at start and written as they change.
